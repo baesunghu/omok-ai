@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3부 공학</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="top">
+<a href="index.html">목차</a>
+<a href="part0.html">0부</a>
+<a href="part1.html">1부</a>
+<a href="part2.html">2부</a>
+<a href="part3.html">3부</a>
+<a href="part4.html">4부</a>
+<a href="part5.html">5부</a>
+<a href="part6.html">6부</a>
+</nav>
+<main>
+<h1>3부. 공학: 약한 노트북에서 돌리기 위한 기술들</h1>
+
+<div class="toc">
+<ol>
+<li><a href="#s0">들어가며: 왜 "공학" 편이 따로 필요한가</a></li>
+<li><a href="#s1">하드웨어 예산부터 계산하기</a></li>
+<li><a href="#s2">C++ 엔진과 pybind11</a></li>
+<li><a href="#s3">GIL과 그 해제</a></li>
+<li><a href="#s4">배치 평가와 가상 손실(virtual loss)</a></li>
+<li><a href="#s5">가상 손실 부호 버그: 1100번이 69번이던 사건</a></li>
+<li><a href="#s6">평가 캐시와 후보 칸 줄이기</a></li>
+<li><a href="#s7">트리 재사용과 같은 국면 재사용</a></li>
+<li><a href="#s8">PCR: 빠른 탐색과 정밀 탐색 섞기, 그리고 틀렸던 계산</a></li>
+<li><a href="#s9">MCTS-Solver와 메이트 거리</a></li>
+<li><a href="#s10">강제 탐색(forced playouts)과 정책 목표 가지치기</a></li>
+<li><a href="#s11">통합 멀티프로세스 대국 풀</a></li>
+<li><a href="#s12">종료와 큐 비우기: 좀비 트레이너 문제</a></li>
+<li><a href="#s13">90수 제한</a></li>
+<li><a href="#s14">무인 운영: 단일 실행 잠금, 워치독, 재시작 스크립트</a></li>
+<li><a href="#s15">로그와 매시간 상태 점검</a></li>
+<li><a href="#s16">웹 대국판: Cloudflare 빠른 터널과 server.py</a></li>
+<li><a href="#s17">여러 게임 묶어 평가하기(cross-game batching)와 부하 측정</a></li>
+<li><a href="#s18">총 연산량 어림: 약 10¹⁸ FLOP</a></li>
+<li><a href="#s19">더 좋은 하드웨어였다면 무엇이 바뀌나</a></li>
+<li><a href="#s20">정리: 연대표와 교훈</a></li>
+</ol>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s0">0. 들어가며: 왜 "공학" 편이 따로 필요한가</h2>
+
+<p>1부와 2부에서 AlphaZero가 <b>무엇을</b> 하는지(신경망이 수를 제안하고, MCTS가 그 제안을 검증하고, 그 결과로 다시 신경망을 학습시키는 순환)를 봤어. 이 3부는 <b>어떻게</b> 그걸 i5-8300H(4코어 8스레드)와 노트북용 GTX 1050 한 대로 46일 안에 돌렸는지를 다뤄.</p>
+
+<p>AlphaZero 논문은 수천 개의 TPU로 학습했어. 우리가 가진 건 그 몇십만분의 일이야. 그래서 이 프로젝트에서 시간의 상당 부분은 "알고리즘을 바꾸는 일"이 아니라 "같은 알고리즘을 덜 낭비하면서 돌리는 일"에 들어갔어. 그리고 이 부분에서 가장 큰 교훈이 나왔어. <b>코드가 빨라 보인다고 해서 맞게 돌고 있다는 보장은 없다</b>는 거야. 대표적인 예가 5절의 가상 손실 부호 버그야. 한 달 넘게 "1100번 탐색"이라고 믿었던 게 실제로는 약 69번의 평가였어.</p>
+
+<div class="box note">
+<b>이 부의 읽는 법.</b> 각 절은 (1) 개념을 처음부터 설명하고, (2) 실제 코드 조각을 보여주고, (3) 대화 기록에 남은 역사(언제, 왜 바뀌었는지)를 붙이는 순서로 되어 있어. 코드는 전부 저장소에서 그대로 인용했어. 숫자 중 기록에서 직접 확인하지 못한 것은 그렇다고 표시했어.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s1">1. 하드웨어 예산부터 계산하기</h2>
+
+<h3>1.1 우리 장비</h3>
+<table>
+<tr><th>부품</th><th>사양</th><th>이 프로젝트에서의 의미</th></tr>
+<tr><td>CPU</td><td>Intel i5-8300H, 4코어 8스레드</td><td>MCTS 트리 탐색(포인터 따라가기, 승리 판정), 입력 변환, 프로세스 관리</td></tr>
+<tr><td>GPU</td><td>노트북 GTX 1050 (최대 약 1.9 TFLOPS, 대화 기록의 어림값)</td><td>신경망 순전파(탐색 중 평가)와 역전파(학습)</td></tr>
+<tr><td>운영체제</td><td>Windows 10</td><td>멀티프로세싱이 <code>fork</code>가 아니라 <code>spawn</code> 방식이라는 제약이 생김(11절)</td></tr>
+</table>
+
+<h3>1.2 한 수를 두는 데 드는 일</h3>
+<p>AlphaZero식 대국에서 한 수를 두려면 MCTS가 N번 시뮬레이션을 해. 각 시뮬레이션은 대략 이렇게 생겼어.</p>
+<pre><code>1. 선택(select): 루트에서 PUCT 점수가 가장 높은 자식을 따라 잎까지 내려간다   [CPU]
+2. 평가(evaluate): 잎 국면을 신경망에 넣어 정책 p와 가치 v를 얻는다         [GPU]
+3. 확장(expand): 잎에 자식 노드를 만들고 p를 사전확률로 넣는다              [CPU]
+4. 역전파(backup): v를 잎에서 루트까지 부호를 바꿔가며 더한다              [CPU]</code></pre>
+<p>우리 설정(<code>_restart_train.py</code>)은 <code>num_simulations=900</code>이고, 웹판의 "어려움"은 1100회야. 한 판이 수십 수니까, 한 판에 신경망 평가가 수만 번 필요해. 대화 기록의 연산량 어림(18절)은 "판당 약 2.5만 번"을 썼어.</p>
+
+<p>여기서 핵심 질문이 생겨. <b>2번(GPU)과 나머지(CPU)를 어떻게 겹쳐서 둘 다 놀지 않게 할까?</b> 이 질문 하나가 이 부 전체의 뼈대야.</p>
+
+<svg viewBox="0 0 640 170" width="100%" role="img" aria-label="CPU와 GPU의 작업이 겹치지 않을 때와 겹칠 때 비교">
+<g font-size="12" fill="currentColor" font-family="sans-serif">
+<text x="5" y="20">순진한 방식 (한 번에 하나씩)</text>
+<rect x="5" y="30" width="60" height="18" fill="none" stroke="currentColor"/><text x="12" y="43">CPU 선택</text>
+<rect x="65" y="30" width="40" height="18" fill="currentColor" opacity="0.25"/><text x="70" y="43">GPU</text>
+<rect x="105" y="30" width="60" height="18" fill="none" stroke="currentColor"/><text x="112" y="43">CPU 선택</text>
+<rect x="165" y="30" width="40" height="18" fill="currentColor" opacity="0.25"/><text x="170" y="43">GPU</text>
+<text x="215" y="43">... GPU가 절반 이상 쉼, 배치 크기 1이라 GPU 효율도 나쁨</text>
+<text x="5" y="90">배치 + 여러 게임 (우리가 간 방향)</text>
+<rect x="5" y="100" width="200" height="18" fill="none" stroke="currentColor"/><text x="12" y="113">게임 1..10의 CPU 선택 (16개씩)</text>
+<rect x="205" y="100" width="70" height="18" fill="currentColor" opacity="0.25"/><text x="210" y="113">GPU 큰 배치</text>
+<rect x="5" y="125" width="200" height="18" fill="none" stroke="currentColor" stroke-dasharray="3 2"/><text x="12" y="138">다른 프로세스들이 동시에 다음 선택</text>
+<text x="290" y="113">GPU 한 번에 수백 개를 처리</text>
+</g>
+</svg>
+
+<!-- ================================================================ -->
+<h2 id="s2">2. C++ 엔진과 pybind11</h2>
+
+<h3>2.1 왜 Python만으로는 안 됐나</h3>
+<p>처음 MCTS는 순수 Python이었어. Python은 쓰기 쉽지만 "작은 일을 엄청 많이" 하는 데 약해. MCTS의 선택 단계는 노드마다 자식 수십 개의 PUCT 점수를 계산하고, 최댓값을 고르고, 포인터를 따라가는 일을 수백만 번 반복해. Python에서는 숫자 하나 더하는 것도 객체 생성, 타입 확인, 참조 카운트 갱신을 동반해. C++에서는 같은 일이 기계어 몇 줄이야.</p>
+
+<h3>2.2 pybind11이란</h3>
+<p><b>pybind11</b>은 C++ 코드를 Python 모듈처럼 <code>import</code> 할 수 있게 해주는 헤더 라이브러리야. C++ 클래스에 몇 줄 표시만 하면, 빌드 결과물(Windows에서는 <code>.pyd</code> 파일, 사실상 DLL)을 Python이 그냥 불러와.</p>
+<p>역할 분담은 이렇게 했어.</p>
+<ul>
+<li><b>C++</b>: 트리 노드, PUCT 선택, 승리 판정, 역전파, 캐시. 즉 "작고 많은 일" 전부.</li>
+<li><b>Python</b>: 신경망(PyTorch). C++이 잎 국면을 모아서 Python 함수(<code>eval_fn</code> 또는 <code>eval_batch_fn</code>)를 콜백으로 부르면, Python이 GPU에 보내고 결과를 돌려줘.</li>
+</ul>
+
+<h3>2.3 역사: MinGW에서 MSVC로</h3>
+<table>
+<tr><th>시점</th><th>일</th></tr>
+<tr><td>2026-08-24</td><td>첫 C++ 엔진 <code>cpp_mcts/mcts_core.cpp</code>. 이 PC에 MSVC(<code>cl.exe</code>)가 없어서 MinGW g++로 빌드. 처음엔 <code>ImportError: DLL load failed</code>가 났고, <code>-static-libgcc -static-libstdc++ -static</code> 정적 링크로 해결. 기록상 순수 탐색 부분 약 4.3배 빨라짐, Python 버전과 결과가 비트 단위로 같은지 검증.</td></tr>
+<tr><td>2026-08-25</td><td>MinGW로 만든 코드는 PyTorch 공식 Windows 바이너리(MSVC 빌드)와 ABI가 달라서 LibTorch를 C++에서 직접 쓸 수 없다는 한계를 확인. 그래서 신경망 호출은 계속 Python 콜백으로 남음.</td></tr>
+<tr><td>이후</td><td>Visual Studio 2022 Build Tools 설치 후 MSVC로 빌드하는 배치 파일 체계로 전환(아래 2.4).</td></tr>
+<tr><td>2026-09-25 ~ 09-28</td><td>메이트 거리, 가상 손실 수정, Solver, 강제 탐색, 같은 국면 재사용이 차례로 들어간 <code>mcts_core_solver.cpp</code>가 최종 엔진이 됨.</td></tr>
+</table>
+
+<div class="box warn">
+<b>ABI란?</b> Application Binary Interface. 컴파일된 코드끼리 함수를 부르는 "기계어 수준의 약속"(구조체 배치, 이름 변환, 예외 처리 방식 등)이야. 같은 C++ 소스라도 MinGW와 MSVC는 이 약속이 달라서, MSVC로 빌드된 LibTorch를 MinGW 코드가 직접 링크할 수 없어. Python을 중간에 끼우면 Python의 C API(이건 양쪽이 공유)를 통해서 우회할 수 있어서 그 방식을 택한 거야.
+</div>
+
+<h3>2.4 빌드 스크립트 읽기</h3>
+<p><code>cpp_mcts\build_mcts_core_solver.bat</code>의 핵심 부분이야.</p>
+<pre><code>set "OUT_NAME=%~1"
+if "%OUT_NAME%"=="" set "OUT_NAME=mcts_core_solver"
+...
+set "PATH=%VSWHERE_DIR%;%PATH%"
+call "%VCVARS%"
+...
+cl.exe /nologo /LD /EHsc /std:c++17 /O2 /MD ^
+    /I"%PY_INCLUDE%" ^
+    /I"%PYBIND_INCLUDE%" ^
+    /DMCTS_MODULE_NAME=%OUT_NAME% ^
+    "%SRC_DIR%mcts_core_solver.cpp" ^
+    /Fo:"%SRC_DIR%%OUT_NAME%.obj" ^
+    /link /LIBPATH:"%PY_LIBS%" /OUT:"%SRC_DIR%%OUT_NAME%.pyd"</code></pre>
+<table>
+<tr><th>옵션</th><th>뜻</th></tr>
+<tr><td><code>vcvars64.bat</code></td><td>MSVC 64비트 컴파일러 환경 변수 설정. 이 PC에서는 <code>vswhere.exe</code>가 PATH에 없어서 실패했기 때문에 그 폴더를 먼저 PATH에 넣는 우회가 들어 있어.</td></tr>
+<tr><td><code>/LD</code></td><td>실행 파일이 아니라 DLL을 만든다(<code>.pyd</code>는 이름만 다른 DLL).</td></tr>
+<tr><td><code>/EHsc</code></td><td>C++ 예외 처리 켜기. pybind11이 Python 예외를 C++ 예외로 옮겨 나르기 때문에 필요.</td></tr>
+<tr><td><code>/std:c++17</code></td><td><code>auto [probs, leaf_value] = ...</code> 같은 구조적 바인딩을 쓰기 때문.</td></tr>
+<tr><td><code>/O2</code></td><td>속도 최적화.</td></tr>
+<tr><td><code>/MD</code></td><td>Python과 같은 C 런타임 DLL을 공유.</td></tr>
+<tr><td><code>/DMCTS_MODULE_NAME=...</code></td><td>모듈 이름을 빌드할 때 정한다. 같은 소스로 시험용 모듈과 배포용 모듈(<code>mcts_core</code>)을 따로 만들 수 있게.</td></tr>
+</table>
+
+<h3>2.5 module_local: 이름 충돌 해결</h3>
+<p>새 엔진을 시험할 때는 기존 엔진(<code>mcts_core</code>)과 새 엔진(<code>mcts_core_solver</code>)을 한 Python 프로세스에 동시에 불러와서 결과를 비교해야 했어. 그런데 두 모듈이 둘 다 <code>MCTSEngine</code>라는 C++ 클래스를 등록하니까 pybind11이 "MCTSEngine already registered" 오류를 냈어. pybind11은 기본적으로 C++ 타입을 <b>전역</b> 레지스트리에 등록하기 때문이야.</p>
+<pre><code>PYBIND11_MODULE(MCTS_MODULE_NAME, m) {
+    // module_local: lets this build be imported side by side with another
+    ...
+    py::class_&lt;MCTSEngine&gt;(m, "MCTSEngine", py::module_local())</code></pre>
+<p><code>py::module_local()</code>은 "이 타입 등록은 이 모듈 안에서만 유효하다"는 표시야. 그래서 두 빌드가 같은 이름의 클래스를 갖고 있어도 서로 부딪치지 않아. 덕분에 "한 프로세스에서 옛 엔진과 새 엔진을 같은 국면에 돌려 비교"하는 검증이 가능했어.</p>
+
+<h3>2.6 엔진이 Python에 보여주는 함수</h3>
+<pre><code>.def("search", ...  "Stateful MCTS search (PUCT) with tree reuse across consecutive same-mover diff-1 calls on this instance",
+      ..., py::arg("BOARD_SIZE"), py::arg("WIN_LENGTH"), py::arg("forced_k") = 0.0)
+.def("search_batched", ... "Stateful batched MCTS search (virtual loss) with tree reuse ...",
+      ..., py::arg("BOARD_SIZE"), py::arg("WIN_LENGTH"), py::arg("eval_batch_size"), py::arg("forced_k") = 0.0)</code></pre>
+<p>반환값은 <code>(target_policy, root_value, candidates)</code> 튜플이야. <code>candidates</code>는 각 후보 수의 <code>action_idx, move, visit_count, prob, q_value, proven</code>을 담은 dict 목록이고, 웹판의 분석 화면이 이걸 그대로 그려.</p>
+
+<!-- ================================================================ -->
+<h2 id="s3">3. GIL과 그 해제</h2>
+
+<h3>3.1 GIL이란</h3>
+<p>CPython(일반 Python)에는 <b>GIL(Global Interpreter Lock)</b>이라는 자물쇠가 하나 있어. "Python 객체를 건드리는 코드는 한 번에 한 스레드만 실행한다"는 규칙이야. 그래서 Python 스레드를 10개 만들어도, Python 코드 자체는 사실상 한 번에 하나씩만 돌아.</p>
+
+<p>예외가 있어. C/C++ 확장 코드가 "나는 지금 Python 객체를 안 건드린다"고 선언하고 GIL을 내려놓으면, 그동안 다른 스레드가 Python 코드를 돌릴 수 있어. PyTorch도 GPU 연산을 기다리는 동안 GIL을 놓아.</p>
+
+<h3>3.2 엔진에서의 해제</h3>
+<pre><code>{
+    py::gil_scoped_release release;      // 이 블록 동안 GIL을 놓는다
+
+    if (!root.is_expanded) {
+        expand_node(&amp;root, root_board, root_player);
+    }
+    ... // 노이즈, 선택, 승리 판정, 역전파 -- 전부 순수 C++
+}</code></pre>
+<p>그리고 신경망을 불러야 하는 순간에만 다시 잡아.</p>
+<pre><code>probs.resize(NUM_CELLS);
+py::gil_scoped_acquire acquire;          // Python 함수를 부르기 직전에만 잡는다
+py::object result = eval_fn(board_to_pyarray(b), player == 1 ? std::string("X") : std::string("O"));</code></pre>
+<p><code>gil_scoped_release</code>/<code>acquire</code>는 C++의 RAII(객체가 만들어질 때 자원을 잡고, 범위를 벗어날 때 자동으로 놓는 패턴)를 써. 그래서 중간에 예외가 나도 GIL 상태가 꼬이지 않아.</p>
+
+<div class="box note">
+<b>그런데 학습 루프는 결국 멀티"프로세스"로 갔어.</b> GIL 해제로 스레드끼리 트리 탐색은 겹칠 수 있지만, 입력 변환·결과 처리 같은 Python 부분은 여전히 한 줄로 서야 해. 그래서 학습 자기대국은 11절의 프로세스 풀로 옮겼어. 프로세스마다 Python 인터프리터가 따로 있으니 GIL도 따로야. 반면 웹 서버(16절)는 스레드 방식이고, 거기서는 GIL 해제가 그대로 중요해.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s4">4. 배치 평가와 가상 손실(virtual loss)</h2>
+
+<h3>4.1 왜 배치가 필요한가</h3>
+<p>GPU는 "한 번에 하나"를 처리할 때 비효율적이야. 11x11 국면 하나를 신경망에 넣는 것과 16개를 넣는 것은 시간이 거의 비슷해. 커널을 띄우는 고정 비용과 CPU↔GPU 복사 비용이 대부분이기 때문이야. 그래서 잎 16개를 모아 한 번에 평가하면 GPU 호출 횟수가 16분의 1로 줄어.</p>
+
+<h3>4.2 문제: 16개를 어떻게 다르게 고르나</h3>
+<p>MCTS는 본래 순차적이야. 1번 시뮬레이션 결과가 역전파된 뒤에야 2번 시뮬레이션이 "어디로 갈지"가 바뀌어. 그런데 배치로 모으려면 1번의 평가 결과가 나오기 전에 2~16번을 골라야 해. 아무 조치 없이 고르면 16개가 전부 <b>같은 잎</b>으로 가. 트리가 아직 안 바뀌었으니까.</p>
+
+<h3>4.3 가상 손실의 아이디어</h3>
+<p>"이 경로는 지금 누가 평가 대기 중이야"라는 표시로, 그 경로의 노드를 <b>일시적으로 나쁘게 보이게</b> 만드는 거야. 방문 수를 1 올리고 가치를 "졌다" 쪽으로 미리 더해두면, 다음 선택은 다른 곳을 고르게 돼. 평가가 끝나면 이 가짜 값을 빼고 진짜 값을 넣어.</p>
+
+<pre><code>선택 단계 (그룹의 각 시뮬레이션마다):
+    경로의 각 노드: n_visits += 1, total_value += (가상 손실)   ← 임시 표시
+그룹 16개 선택 완료 후:
+    경로의 각 노드: n_visits -= 1, total_value -= (가상 손실)   ← 표시 제거
+신경망 한 번 호출로 16개 평가 → 진짜 역전파</code></pre>
+
+<h3>4.4 그룹 단위 루프</h3>
+<pre><code>long hard_cap = 3L * std::max(1, num_simulations);
+long spent = 0;
+while (spent &lt; hard_cap) {
+    if (root.proven != 0) break;  // result already proven: nothing left to search
+    long remaining = (long)num_simulations - counted_root_visits(root);
+    if (remaining &lt;= 0) break;
+    int group_size = (int)std::min&lt;long&gt;(eval_batch_size, remaining);
+    spent += group_size;
+    ...</code></pre>
+<p>운영에서는 <code>eval_batch_size=16</code>이야. 웹 서버에서도 <code>search_batched(..., N, WIN_LENGTH, 16, 0.0)</code>로 16을 넘겨. <code>hard_cap</code>은 Solver(9절)가 증명된 자식의 방문을 "세지 않는" 규칙과 맞물려 루프가 영원히 돌지 않게 하는 안전장치야.</p>
+
+<p>그룹 안에서 같은 국면이 두 번 나오면 한 번만 평가해. <code>key_to_idx</code>로 중복을 걸러내고, 이미 캐시에 있으면 아예 건너뛰어(6절).</p>
+
+<!-- ================================================================ -->
+<h2 id="s5">5. 가상 손실 부호 버그: 1100번이 69번이던 사건</h2>
+
+<h3>5.1 관점(perspective) 규약 복습</h3>
+<p>우리 엔진에서 노드의 <code>mean_value</code>는 <b>그 노드에서 둘 차례인 사람의 관점</b>이야. 부모는 자식을 고를 때 <code>-child-&gt;mean_value</code>를 써. 자식 국면에서 상대가 좋으면(값이 크면) 부모에게는 나쁘니까 부호를 뒤집는 거야.</p>
+<pre><code>static double puct_score(double c_puct, double sqrt_pv, Node* child) {
+    double pb_c = c_puct * sqrt_pv / (1 + child-&gt;n_visits);
+    return -child-&gt;mean_value + pb_c * child-&gt;prior_prob;
+}</code></pre>
+
+<h3>5.2 무엇이 틀렸나</h3>
+<p>가상 손실은 "부모가 이 자식을 덜 고르게" 만들어야 해. 부모는 <code>-mean_value</code>를 보니까, 자식의 <code>mean_value</code>를 <b>올려야</b> 부모 눈에 나빠 보여. 그런데 그 전의 모든 빌드는 <b>빼고</b> 있었어. 결과적으로 가상 손실이 "가상 이득"이 되어, 방금 고른 잎이 더 매력적으로 보였고, 16개 선택이 전부 같은 잎으로 몰렸어.</p>
+
+<pre><code>// Virtual loss must make this node LESS attractive to
+// its parent. A node's mean_value is from ITS OWN
+// mover's perspective and the parent selects on
+// -child-&gt;mean_value, so the pending visit has to push
+// mean_value UP (+VIRTUAL_LOSS). Every earlier build
+// used -VIRTUAL_LOSS, which pulled the parent back to
+// the same leaf: all eval_batch_size selections in a
+// batch landed on one leaf, so 1100 sims at batch 16
+// were only ~69 distinct evaluations (found 2026-09-25:
+// on a must-block position batch 1 put 72% of visits on
+// the block, batch 16 put 1.5%).
+node-&gt;total_value += VIRTUAL_LOSS;
+node-&gt;mean_value = node-&gt;total_value / node-&gt;n_visits;</code></pre>
+
+<p>숫자로 따져보자. 1100 ÷ 16 ≈ 68.75야. 그룹 하나가 사실상 평가 1번이었으니 서로 다른 평가는 약 69번이었던 거야. 방문 수는 1100이 찍히지만, 그 방문은 16개씩 뭉쳐 있었어.</p>
+
+<h3>5.3 어떻게 찾았나 (2026-09-25)</h3>
+<ol>
+<li>그 전부터 이상한 현상이 있었어. 기록(2026-09-24경)에는 "PUCT/배치 탐색 구조가 강한 prior 하나에 방문을 몰아주지 못하고 분산시키는 특성일 수 있음"이라는 가설이 남아 있어.</li>
+<li>방어 업그레이드 작업 중 "반드시 막아야 하는" T자 국면을 조사하다가, <b>배치 크기를 1로 바꿔서 16일 때와 분포가 달라지는지</b> 시험했어. 원리적으로 가상 손실이 맞다면 배치 크기는 결과를 크게 바꾸면 안 돼.</li>
+<li>결과: 배치 1에서는 막는 수에 방문의 72%, 배치 16에서는 1.5%. 버그 확정.</li>
+<li>수정 후 방문이 "16 단위로 뭉치지 않고 제대로 퍼져(192, 158, 126…)" 나오는 것을 확인.</li>
+</ol>
+<p>당시 정리표에는 "가상 손실 부호 버그 수정 | 완료, 검증 통과. 탐색 효율 약 16배 차이"라고 적혀 있어. 그리고 배포 순서를 정할 때, 효과가 너무 커서 다른 변경(메이트 거리, V3 남은 수 헤드)과 섞으면 기여도를 구분할 수 없으니 <b>버그 수정만 먼저 배포</b>하는 쪽을 택했어.</p>
+
+<div class="box warn">
+<b>교훈.</b> 이 버그는 코드가 "느리게" 돌지도, 오류를 내지도 않았어. 오히려 GPU 호출이 적어서 빨랐어. 증상은 오직 "실력이 기대보다 안 오름"이었고, 그건 다른 원인(데이터, 학습률, 가치망)으로도 설명될 수 있었어. 이런 버그를 잡는 방법은 <b>같아야 할 두 설정(배치 1과 16)을 나란히 돌려 비교</b>하는 불변식(invariant) 검사야. 또 그 이전의 Rapfi 측정들도 이 버그가 있는 엔진으로 잰 것이라, 모델 간 상대 비교는 유효하지만 절대 실력은 과소평가되었을 거라는 단서가 기록에 남아 있어.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s6">6. 평가 캐시와 후보 칸 줄이기</h2>
+
+<h3>6.1 평가 캐시</h3>
+<p>한 번의 탐색 안에서 같은 국면이 다른 수순으로 다시 나오는 일은 흔해(오목은 두는 순서만 다르고 결과 국면이 같은 경우가 많아). 그래서 엔진은 국면을 문자열 키로 만들어 결과를 기억해.</p>
+<pre><code>auto cache_key = [&amp;](const std::vector&lt;int8_t&gt;&amp; b, int player) {
+    std::string s;
+    s.reserve(NUM_CELLS + 1);
+    for (auto v : b) s.push_back('0' + v);
+    s.push_back('0' + player);
+    return s;
+};</code></pre>
+<p>칸 121개를 '0','1','2'로 적고 마지막에 둘 차례를 붙인 122글자 키야. 이 캐시는 <code>search</code> 호출마다 새로 만들어지는 지역 변수야. 신경망이 학습으로 바뀌면 옛 평가는 틀린 값이 되니까 오래 들고 있지 않는 거야. 통합 풀(11절)의 워커들도 "프로세스별 캐시를 매 호출(=에폭)마다 초기화"한다고 주석에 적혀 있어.</p>
+
+<h3>6.2 후보 칸: 반경 안의 빈칸만</h3>
+<p>11x11은 빈칸이 최대 121개야. 하지만 돌에서 멀리 떨어진 칸은 거의 의미가 없어. 엔진은 기존 돌로부터 <code>NEIGHBOR_RADIUS</code> 안의 빈칸만 자식으로 만들어(<code>relevant_cells</code>). 판이 비어 있으면 모든 빈칸을 써.</p>
+<p>2026-09-10 개입 기록에는 "250 시뮬레이션에서 반경 2 후보 약 45개면 자식당 방문이 약 5번"이라는 측정이 있어. 이게 시뮬레이션 수를 900으로 올린 이유였어(그때는 가상 손실 버그 때문에 실제 평가가 이보다도 훨씬 적었다는 걸 아직 몰랐지만).</p>
+
+<!-- ================================================================ -->
+<h2 id="s7">7. 트리 재사용과 같은 국면 재사용</h2>
+
+<h3>7.1 아이디어</h3>
+<p>내가 수 A를 두기 위해 탐색하면, 트리 안에는 "A를 둔 뒤 상대가 B를 두면…" 같은 하위 트리가 이미 자라 있어. 자기대국에서는 같은 엔진이 다음 수도 두니까, 실제 둔 수의 자식을 새 루트로 "승격"하면 그 아래 방문을 공짜로 이어받을 수 있어.</p>
+
+<h3>7.2 규칙 (prepare_root)</h3>
+<pre><code>if (diff_count == 1 &amp;&amp;
+    root_board_[diff_idx] == 0 &amp;&amp;
+    new_board[diff_idx] == root_player_) {
+    auto it = root_-&gt;children.find(diff_idx);
+    if (it != root_-&gt;children.end() &amp;&amp; it-&gt;second) {
+        std::unique_ptr&lt;Node&gt; promoted = std::move(it-&gt;second);
+        promoted-&gt;parent = nullptr;
+        root_ = std::move(promoted);
+        ...
+        return true;
+    }
+}</code></pre>
+<p>조건을 풀면 이래.</p>
+<ul>
+<li>이전 루트 국면과 정확히 <b>한 칸</b>만 다르고,</li>
+<li>그 칸이 비어 있다가 <b>이전 루트에서 둘 차례였던 사람</b>의 돌로 채워졌고,</li>
+<li>이전 루트에 그 칸의 자식이 있으면 → 그 자식을 <b>이동(move, 복사 아님)</b>시켜 새 루트로. <code>parent=nullptr</code>로 끊어서 역전파가 이미 해제된 옛 부모로 넘어가지 않게 해.</li>
+</ul>
+<p>그 외 모든 경우(첫 호출, 두 칸 이상 차이, 자식 없음)는 새 트리로 시작해. 게이트·리그 대국처럼 <b>서로 다른 엔진 둘</b>이 번갈아 두면 각 엔진 입장에서 국면이 두 칸씩 달라지니 항상 새로 시작해. 주석에 "gate/league/vs-det matches ... are completely unaffected"라고 명시돼 있어.</p>
+
+<div class="box note">
+<b>잠깐, 자기대국에서는 한 칸 차이가 맞나?</b> 자기대국은 한 엔진 인스턴스가 흑백을 다 두니까, 매 수마다 직전 루트에서 한 수 둔 국면이 들어와. 그래서 "한 칸 차이, 직전 차례 사람의 돌" 조건이 성립해. 그리고 노이즈는 현재 루트의 직계 자식에만, 호출당 한 번 들어가. 한 노드가 루트로 승격되는 건 일생에 한 번뿐이라(승격되면 부모의 자식 목록에서 빠지므로) 같은 노드에 노이즈가 두 번 섞이는 일은 없어.
+</div>
+
+<h3>7.3 같은 국면 재사용 (2026-09-28)</h3>
+<pre><code>// Same position, same mover (2026-09-28): keep the tree, so a caller
+// can run one search in chunks (the analysis board streams every 50
+// sims). Training never re-searches an identical position.
+if (diff_count == 0 &amp;&amp; new_player == root_player_) {
+    return true;
+}</code></pre>
+<p>이건 웹판을 위해 넣은 규칙이야. 국면이 완전히 같으면 트리를 그대로 두고 이어서 탐색해. 그러면 1100번 탐색을 "16번, 32번, 48번 …"처럼 조각내서 부르면서 중간 결과를 화면에 보낼 수 있어. 주석에는 50이라고 적혀 있지만, 실제 <code>server.py</code>는 <code>CHUNK = 16</code>(엔진 배치 크기와 같음)을 써. 처음 50으로 만들었다가 16으로 바꾼 것으로 보여(주석이 갱신되지 않음).</p>
+
+<h3>7.4 예산이 "새 방문"이 아니라 "총 방문"이라는 점</h3>
+<p><code>num_simulations</code>는 "이번 호출에서 새로 할 횟수"가 아니라 "루트가 도달해야 할 방문 수"야(<code>counted_root_visits(root) &gt;= num_simulations</code>이면 종료). 그래서 재사용된 트리가 이미 400번 방문을 갖고 있으면 이번 호출은 나머지만 채워. 이게 다음 절 PCR 계산이 틀린 이유와 직결돼.</p>
+
+<!-- ================================================================ -->
+<h2 id="s8">8. PCR: 빠른 탐색과 정밀 탐색 섞기, 그리고 틀렸던 계산</h2>
+
+<h3>8.1 PCR이란</h3>
+<p><b>Playout Cap Randomization</b>(KataGo, Wu 2019). 자기대국의 각 수마다 동전을 던져서,</p>
+<ul>
+<li>확률 <code>full_search_prob</code>로 <b>정밀 탐색</b>(우리는 900회) → 이 수는 정책 학습 데이터로 기록,</li>
+<li>나머지는 <b>빠른 탐색</b>(<code>fast_sims=150</code>) → 게임을 진행시키기만 하고 정책 데이터로는 안 씀.</li>
+</ul>
+<p>게임 결과(가치 목표)는 모든 수에 쓸 수 있으니, 같은 계산으로 더 많은 판을 끝내서 가치망 데이터를 늘리는 게 목적이야. 현재 설정은 <code>full_search_prob=0.5, fast_sims=150, full_search_prob_other=0.5</code>(리그 대국에도 적용)야.</p>
+
+<h3>8.2 처음의 계산과 그 오류 (2026-09-26)</h3>
+<p>처음 계산은 단순했어. "전체 수의 1/3만 900회, 나머지 150회면 수당 평균 비용이 크게 줄어드니 같은 시간에 2~3배 많은 판"이라는 식이었어. 배포 전 다관점 검토와 시뮬레이션에서 이게 틀렸다는 게 드러났어.</p>
+
+<table>
+<tr><th>상황</th><th>이번 호출에서 실제로 새로 하는 시뮬레이션</th></tr>
+<tr><td>정밀 → 정밀 (PCR 없음)</td><td>직전 탐색의 하위 트리를 물려받아서, 1100회 기준 약 440회만 새 작업(기록의 수치)</td></tr>
+<tr><td>빠른 → 정밀</td><td>직전 빠른 탐색이 150회라 물려받을 하위 트리가 작음 → 거의 1000회 가까이 새로</td></tr>
+</table>
+
+<p>즉 PCR이 없을 때 이미 트리 재사용이 "공짜 할인"을 주고 있었는데, PCR은 그 할인을 깨뜨려. 기록의 결론은 "같은 양의 학습 데이터가 1.4~1.7배의 계산을 먹는다. 얻는 건 속도가 아니라 판 수다"였어.</p>
+
+<pre><code>조정 전: 24판, 정밀 33%  → 약 1.7배 계산
+조정 후: 16판, 정밀 50% (커리큘럼 4, 오프닝 2) → 약 1.4배 계산, 판 수 2배, 학습 데이터 양 동일</code></pre>
+
+<p>실제 배포 후 관찰은 "자기대국 판 수 2배에 시간은 약 10% 증가"였어. 예상(1.4배)보다 나았던 건 11절의 통합 풀이 단계 사이 대기 시간을 없애서 PCR의 추가 비용 대부분을 상쇄했기 때문으로 해석했어.</p>
+
+<div class="box good">
+<b>그래서 PCR을 왜 계속 썼나.</b> 판이 많아지면 학습 데이터 간 상관이 줄어(한 판에서 나온 수들은 서로 비슷하니까). 가치망은 판 결과로 배우니 판 수가 곧 가치망 데이터 수야. 그리고 정책망은 정밀 탐색한 수로만 배우니 질이 떨어지지 않아. "계산 절약 장치"가 아니라 "다양성 장치"로 의미를 고쳐 이해한 거야.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s9">9. MCTS-Solver와 메이트 거리</h2>
+
+<h3>9.1 평균의 함정</h3>
+<p>일반 MCTS는 값을 <b>평균</b>해. 그런데 "이 수를 두면 상대가 바로 5목을 만들 수 있다"는 수를 생각해봐. 상대의 응수가 여러 개고 그중 하나만 이기는 수라면, 평균은 -1이 아니라 -0.86쯤으로 나와. 기록(ep470 측정)에 따르면, 가치망이 막는 수까지 "막아도 진다"(-0.9)로 오판하면 탐색이 막는 수와 안 막는 수를 구분하지 못해 고정 시험 국면 20개 중 3개에서 열린 4를 방치했어.</p>
+
+<h3>9.2 Solver의 규칙 (Winands et al. 2008)</h3>
+<ul>
+<li>확장할 때, 두면 5목이 되는 자식은 즉시 "증명된 승리"로 표시(<code>mark_immediate_wins</code>).</li>
+<li>자식 중 하나라도 (자식의 둘 사람 관점에서) 증명된 패배면 → 이 노드는 증명된 승리.</li>
+<li>모든 자식이 증명된 승리면 → 이 노드는 증명된 패배.</li>
+<li>선택 단계는 대안이 있는 한 증명된 패배 수로 들어가지 않고, 증명된 노드에 도착하면 그 정확한 값을 역전파.</li>
+<li>결과 방문 분포에서는 증명된 패배 수를 지우고, 증명된 승리 루트는 가장 빠른 승리 수만 보고.</li>
+</ul>
+<p>주석에 강조된 점은 "This uses only the game rules (terminal detection), no gomoku tactics"야. 사람이 만든 오목 전술(VCF 등)이 아니라 오직 "5목이면 끝"이라는 규칙만 써. 그래서 AlphaZero의 "규칙 외 지식 없음" 원칙과 충돌하지 않아.</p>
+
+<h3>9.3 공학적 이득</h3>
+<ol>
+<li><b>탐색 조기 종료</b>: <code>if (root.proven != 0) break;</code> 결과가 증명되면 남은 예산을 쓰지 않아. 웹 서버도 증명된 후보가 나오면 조각 탐색을 멈춰.</li>
+<li><b>예산 보정</b>: <code>counted_root_visits</code>는 증명된 패배 자식에 쓴 방문을 빼고 세. 트리 재사용 뒤 반박된 옛 주 수순의 방문이 예산을 갉아먹지 않게.</li>
+<li><b>학습 목표 정리</b>: 지는 수에 방문이 남아 정책 목표를 오염시키지 않음.</li>
+</ol>
+
+<h3>9.4 메이트 거리 (2026-09-25)</h3>
+<pre><code>static const double MATE_DISTANCE_ALPHA = 0.005;
+static const double MATE_DISTANCE_FLOOR = 0.5;
+
+static double mate_scaled(double v, int depth) {
+    double mag = 1.0 - MATE_DISTANCE_ALPHA * depth;
+    if (mag &lt; MATE_DISTANCE_FLOOR) mag = MATE_DISTANCE_FLOOR;
+    return v * mag;
+}</code></pre>
+<p>11x11 자유 규칙 오목은 흑이 거의 다 이기니까, 백 입장에서는 대부분 수순이 -1로 끝나서 "더 오래 버티는 수"를 고를 이유가 없었어. 깊이당 0.005씩 크기를 줄이면(최소 0.5) 늦게 지는 게 조금 덜 나쁘고, 빨리 이기는 게 조금 더 좋아져. 체스 엔진의 "mate in N"과 같은 발상이야. 트리 재사용 뒤에는 재사용된 하위 트리 값이 옛 루트 기준(1~2수 깊이 차이)으로 스케일되어 있다는 작은 오차를 "단순함을 위해 수용"한다고 주석에 적혀 있어.</p>
+
+<!-- ================================================================ -->
+<h2 id="s10">10. 강제 탐색(forced playouts)과 정책 목표 가지치기</h2>
+
+<h3>10.1 문제</h3>
+<p>신경망이 높게 평가한 수인데 첫 평가가 나쁘게 나오면(방어 수나 쌍삼 자리를 가치망이 오판하는 전형적 경우), PUCT는 그 수를 금방 버려. 그러면 그 수가 정말 나쁜지 확인할 기회가 없어.</p>
+
+<h3>10.2 해법 (KataGo Sec. 3.2, 2026-09-27)</h3>
+<p>루트에서만, 사전확률 P(c)인 자식 c가 다음보다 방문이 적으면 먼저 고른다.</p>
+<pre><code>n_forced(c) = sqrt(k * P(c) * N_root)</code></pre>
+<p>예: k=2, P=0.1, N=900이면 sqrt(2×0.1×900)=sqrt(180)≈13.4번은 보장. 학습용 노이즈 탐색에만 k=2를 넘기고, 평가·게이트·재라벨 탐색은 k=0(순수 PUCT)이야. 웹판도 <code>search_batched(..., 16, 0.0)</code>으로 끄고 있어.</p>
+
+<h3>10.3 가지치기</h3>
+<p>강제로 준 방문은 "이 수가 좋아서"가 아니라 "확인용"이니까 학습 목표에서는 빼야 해. <code>build_result</code>는 가장 많이 방문한 자식 c*를 빼고, 각 자식의 방문을 "그 자식의 PUCT가 c*의 PUCT를 넘지 않는 선까지" 줄이되 강제분 이상은 빼지 않고, 1 이하로 남으면 0으로 지워.</p>
+<pre><code>long n_forced = (long)std::floor(std::sqrt(forced_k * ch-&gt;prior_prob * N));
+...
+long pruned = std::max(n - n_forced, n_min);
+if (pruned &gt; n) pruned = n;
+if (pruned &lt;= 1) pruned = 0;
+shown[kv.first] = pruned;</code></pre>
+<p>공학적으로 보면 이건 "적은 시뮬레이션 예산에서 탐색의 맹점을 줄이는 값싼 방법"이야. 시뮬레이션을 두 배로 늘리는 것보다 훨씬 싸.</p>
+
+<!-- ================================================================ -->
+<h2 id="s11">11. 통합 멀티프로세스 대국 풀</h2>
+
+<h3>11.1 이전 구조의 낭비</h3>
+<p><code>selfplay_mp_unified.py</code>의 머리 주석이 문제를 정확히 적어뒀어. 예전에는 한 에폭이 세 단계로 나뉘었어.</p>
+<pre><code>자기대국(멀티프로세스) → vs-Det(스레드) → vs-League(스레드)</code></pre>
+<p>각 단계는 가장 느린 판이 끝나야 끝나. 그래서 단계 끝마다 워커 대부분이 놀았고, 특히 2판짜리 vs-League 단계는 워커 10개 중 8개와 GPU 대부분을 놀렸어(로그상 평가기 평균 배치 30 → 22, 목표 배치 도달률 57%로 하락).</p>
+
+<h3>11.2 새 구조 (2026-09-26)</h3>
+<svg viewBox="0 0 640 210" width="100%" role="img" aria-label="통합 대국 풀 구조: 작업 큐, 워커 10개, GPU 코디네이터">
+<g font-size="12" fill="currentColor" font-family="sans-serif" stroke="currentColor">
+<rect x="10" y="20" width="150" height="160" fill="none"/>
+<text x="20" y="40" stroke="none">작업 큐 (긴 판 먼저)</text>
+<text x="20" y="65" stroke="none">self × 16</text>
+<text x="20" y="85" stroke="none">league × 6</text>
+<text x="20" y="105" stroke="none">vsdet × 0 (현재)</text>
+<text x="20" y="125" stroke="none">... + 종료 표시 None</text>
+<line x1="160" y1="100" x2="220" y2="100"/>
+<rect x="220" y="20" width="170" height="160" fill="none"/>
+<text x="230" y="40" stroke="none">워커 프로세스 10개</text>
+<text x="230" y="65" stroke="none">각자 C++ 엔진 탐색</text>
+<text x="230" y="85" stroke="none">가중치 없음</text>
+<text x="230" y="105" stroke="none">평가 요청에 태그</text>
+<text x="230" y="125" stroke="none">'gen' 또는 'league'</text>
+<line x1="390" y1="100" x2="450" y2="100"/>
+<rect x="450" y="20" width="180" height="160" fill="none"/>
+<text x="460" y="40" stroke="none">GPU 코디네이터 (부모)</text>
+<text x="460" y="65" stroke="none">요청을 모아 flush</text>
+<text x="460" y="85" stroke="none">태그별로 묶어</text>
+<text x="460" y="105" stroke="none">모델당 순전파 1번</text>
+<text x="460" y="125" stroke="none">gen 모델 / league 체크포인트</text>
+</g>
+</svg>
+<ul>
+<li>한 에폭의 모든 대국(자기대국, 커리큘럼·오프닝 시작, vs-Det, vs-League)을 <b>하나의 작업 큐</b>에 넣고, 10개 워커가 긴 판부터 꺼내 둬. 큐가 빌 때까지 워커가 쉬지 않고 GPU는 계속 꽉 찬 배치를 받아.</li>
+<li>워커는 신경망 가중치를 갖지 않아. 평가 요청에 모델 태그를 붙여 보내면, 부모의 코디네이터가 태그별로 묶어 모델마다 한 번씩 순전파해. 그래서 리그 대국의 상대 쪽은 리그 체크포인트로, 나머지는 현재 세대 모델로 평가돼. GPU 메모리에 모델 사본이 10개 생기지 않는 것도 노트북 GPU에선 중요해.</li>
+<li>워커는 게임 로직을 새로 짜지 않고 <b>기존 운영 함수를 그대로</b> 불러. "손으로 옮긴 게임 로직이 조용히 어긋나는 일"을 막기 위한 원칙이야.</li>
+<li>샘플 가중치(이긴 쪽 1.15, vs-Det 1.5, vs-League 1.25)와 순서도 기존 함수와 똑같이 모아.</li>
+</ul>
+
+<h3>11.3 Windows의 spawn</h3>
+<p>Linux의 <code>fork</code>는 부모 메모리를 복사해서 자식을 만들지만, Windows의 <code>spawn</code>은 새 Python을 띄워 스크립트를 <b>다시 import</b>해. 그래서 <code>_restart_train.py</code>에는 이런 주석이 있어.</p>
+<pre><code># Guard required for multiprocessing's "spawn" start method on Windows: a
+# spawned child process re-imports this file as a fresh module to reach the
+# target function passed to it. Without this guard, that re-import used to
+# immediately re-invoke train_mcts_alpha_zero(...) again inside every child
+# process ...
+if __name__ == "__main__":
+    _acquire_single_instance_lock()
+    ...</code></pre>
+<p>이 가드가 없을 때 평가기 프로세스가 60초 안에 준비 신호를 못 보낸 사건이 있었어. 자식이 학습 전체를 다시 시작하느라 바빴던 거야.</p>
+
+<h3>11.4 안전장치: 실패하면 옛 경로로</h3>
+<p>워커가 죽거나, GPU 오류가 나거나, IPC가 끊기거나, 멈추면(<code>stall_timeout</code> 동안 평가 flush도 끝난 판도 없으면) 풀을 내리고 그 에폭을 <code>fallback()</code>(옛 <code>selfplay_mp.py</code> 경로)으로 다시 돌려. 킬 스위치 파일 <code>MP_UNIFIED_OFF</code>를 만들면 통합 풀을 끌 수 있고, 검토 후 옛 스위치 <code>MP_SELFPLAY_OFF</code>도 같이 먹게 고쳤어.</p>
+
+<!-- ================================================================ -->
+<h2 id="s12">12. 종료와 큐 비우기: 좀비 트레이너 문제</h2>
+
+<h3>12.1 무엇이 위험했나</h3>
+<p>배포 전 검토(2026-09-26)에서 나온 "Major" 문제야. 한 에폭의 작업을 모두 큐에 미리 넣어두는데(작업 수 &gt; 워커 수), 에러가 나서 아직 큐에 작업이 남은 채로 종료하면 어떻게 될까?</p>
+<ol>
+<li><code>multiprocessing.Queue</code>는 내부에 "피더 스레드"가 있어서 넣은 항목을 파이프로 밀어 넣어.</li>
+<li>읽는 쪽(워커)이 죽었으면 파이프가 가득 차서 피더 스레드가 쓰기에서 멈춰.</li>
+<li>Python은 종료할 때 이 피더 스레드를 <b>join</b>(끝날 때까지 기다림)해. → 영원히 기다림.</li>
+<li>프로세스는 살아 있지만 아무 일도 안 함. 워치독(14절)은 "프로세스 살아 있음"만 보니까 재시작하지 않음. → <b>학습이 조용히 멈춤.</b></li>
+</ol>
+
+<h3>12.2 수정</h3>
+<pre><code># ... Never join these feeders; shutdown() also drains.
+for q in (self.task_queue, self.result_queue, self.ready_queue, self.error_queue):
+    q.cancel_join_thread()</code></pre>
+<p>그리고 <code>shutdown()</code>은 세 단계로 정리해.</p>
+<pre><code>def shutdown(self, join_budget=5.0):
+    # 1. Drop any still-queued (unplayed) tasks so workers reach their
+    #    sentinel right after their current game instead of playing on.
+    empty_polls = 0
+    while empty_polls &lt; 2:
+        try:
+            self.task_queue.get(timeout=0.05)
+            empty_polls = 0
+        except pyqueue.Empty:
+            empty_polls += 1
+        ...
+    for _ in self.workers:
+        self.task_queue.put(None)        # 워커마다 종료 표시
+    # 2. Stop the GPU coordinator and close our pipe ends: a worker
+    #    blocked on (or about to make) an eval request fails fast with
+    #    EOF/BrokenPipe, reports it, then reads its sentinel and exits.
+    ...
+    # 3. One shared join budget for all workers, then terminate the rest.
+    deadline = time.monotonic() + join_budget
+    ...</code></pre>
+<ul>
+<li><b>1단계 큐 비우기</b>: 아직 안 둔 작업을 꺼내 버려서, 워커가 지금 판만 끝내고 바로 종료 표시(<code>None</code>)를 만나게.</li>
+<li><b>2단계</b>: 코디네이터를 멈추고 부모 쪽 파이프를 닫으면, 평가 요청 중이던 워커는 EOF/BrokenPipe로 즉시 실패하고 종료 표시를 읽고 나가.</li>
+<li><b>3단계</b>: 모든 워커가 <b>하나의 공유 시간 예산</b>(5초) 안에 join. 워커 10개가 각각 5초씩 50초를 쓰지 않게. 남은 놈은 <code>terminate()</code>.</li>
+</ul>
+<p>시험 결과 "정상 종료 22초"가 확인됐고, 옛 <code>selfplay_mp.py</code>에도 같은 패치를 넣었어. 그밖에 시작 중 워커가 죽으면 3분 기다리지 않고 즉시 대체 경로로 가도록, 속도 통계가 시작 후 누적값이라 효과가 안 보이던 것을 에폭별 값으로 바꾸는 수정이 함께 들어갔어.</p>
+
+<!-- ================================================================ -->
+<h2 id="s13">13. 90수 제한</h2>
+<p><code>max_game_plies=90</code>. 90수가 넘으면 그 판은 무승부로 처리해. 2026-09-27 전후(epoch 494부터)에 결정론 상대 0판, 리그 6판, Solver, 강제 탐색과 한꺼번에 들어갔어.</p>
+<table>
+<tr><th>이유</th><th>설명</th></tr>
+<tr><td>꼬리 시간</td><td>통합 풀은 가장 긴 판이 끝나야 에폭이 끝나. 120칸을 거의 다 채우는 판 하나가 에폭 전체를 붙잡지 않게.</td></tr>
+<tr><td>데이터 가치</td><td>양쪽이 계속 막기만 하는 아주 긴 판은 배울 게 적은데 비용은 가장 커.</td></tr>
+<tr><td>라벨 정합성</td><td>제한에 걸린 판은 무승부로 처리되고, 남은 수를 알 수 없으니 V3의 생존(남은 수) 라벨은 학습에서 빠져.</td></tr>
+</table>
+<p>코드에서는 리그 대국에 쓰이고, 주석에 "vs-Det has no cap"이라고 적혀 있어. 기록에 남은 epoch 494의 에폭 시간은 15.2분(대국 생성 14분, 학습 1.2분)이야. 시간의 90% 이상이 대국 생성이라는 점이 이 부 전체가 탐색 효율에 집중한 이유를 보여줘.</p>
+
+<!-- ================================================================ -->
+<h2 id="s14">14. 무인 운영: 단일 실행 잠금, 워치독, 재시작 스크립트</h2>
+
+<h3>14.1 워치독</h3>
+<pre><code>PROJECT_DIR = r"C:\Users\My PC\Desktop\final\10x10"
+TRAIN_SCRIPT_MARKER = "_restart_train.py"
+TRAIN_TASK_NAME = "AZ11x11_Training"
+CHECK_INTERVAL_SEC = 20 * 60</code></pre>
+<p>20분마다 명령줄에 <code>_restart_train.py</code>가 있는 python 프로세스가 있는지 보고, 없으면 PowerShell <code>Start-Process -WindowStyle Hidden</code>으로 다시 띄워. 이렇게 띄우면 워치독이나 터미널이 죽어도 트레이너는 독립적으로 살아 있어. 단, "살아 있음"만 보니까 12절의 좀비 상태는 못 잡아. 그래서 좀비가 생기지 않게 하는 쪽(큐 비우기)이 같이 필요했어.</p>
+
+<h3>14.2 단일 실행 잠금 (2026-09-24)</h3>
+<p>스케줄러 작업 <code>AZ11x11_Training</code>의 로그온 트리거가 재부팅도 아닌 어떤 로그온/잠금 해제 이벤트에 다시 발동해서, Session 0에 <b>두 번째 트레이너</b>가 약 18시간 같이 돌며 같은 체크포인트·버퍼·보고서 파일에 쓴 사건이 있었어. 작업 자체는 SYSTEM 권한이라 관리자 권한 없이 끌 수 없었어. 그래서 방향을 바꿔 "두 번째 실행이 아예 시작하지 못하게" 했어.</p>
+<pre><code>if existing_pid is not None and psutil.pid_exists(existing_pid):
+    print(f"[train.lock] Another trainer is already running (PID {existing_pid}). "
+          f"Refusing to start a second one -- exiting.", flush=True)
+    sys.exit(0)
+else:
+    print(f"[train.lock] Stale lock (PID {existing_pid} not running) -- taking over.", flush=True)</code></pre>
+<p><code>train.lock</code>에 PID를 적고, 그 PID가 살아 있으면 조용히 종료. 죽은 PID면 오래된 잠금으로 보고 이어받아. 어떤 경로로 중복 실행되든 "무해한 무동작"이 돼.</p>
+
+<h3>14.3 restart_trainer.ps1 (2026-09-27)</h3>
+<pre><code>param([string]$suffix = "next")
+...
+$wd | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+$tr | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+...
+    Where-Object { $_.CommandLine -like "*parent_pid=$($t.ProcessId)*" } |   # 멀티프로세싱 자식까지
+...
+Start-Process -FilePath python -ArgumentList '-u _restart_train.py' ... `
+    -RedirectStandardOutput "train_stdout_$suffix.log" -RedirectStandardError "train_stderr_$suffix.log"
+...
+Start-Process -FilePath python -ArgumentList '-u watchdog_.py' ...</code></pre>
+<p>순서가 중요해. <b>워치독을 먼저 죽여야</b> 트레이너를 죽인 직후 워치독이 옛 설정으로 되살리는 경쟁이 안 생겨. 그리고 spawn 자식들은 명령줄에 <code>parent_pid=...</code>가 들어가니 그걸로 찾아 같이 정리해. 모니터·프로브 같은 다른 python 프로세스는 건드리지 않아. 로그 접미사(<code>v13</code>, <code>v14</code>, <code>v15</code>)를 인자로 받아서 재시작마다 로그 파일이 나뉘어(<code>train_stdout_v13.log</code> .. <code>v15.log</code>).</p>
+
+<!-- ================================================================ -->
+<h2 id="s15">15. 로그와 매시간 상태 점검</h2>
+
+<h3>15.1 JSONL 로그</h3>
+<p>평가 결과는 대부분 <b>JSONL</b>(한 줄에 JSON 하나)로 쌓여. 이 형식은 추가가 쉽고(파일 끝에 한 줄 쓰기), 중간에 프로세스가 죽어도 앞 줄들은 멀쩡하고, 여러 도구가 마지막 줄만 읽기 쉬워.</p>
+<table>
+<tr><th>파일</th><th>내용</th></tr>
+<tr><td><code>model/rapfi_ladder_log.jsonl</code></td><td>Rapfi 사다리(대등 국면 수 추정)</td></tr>
+<tr><td><code>model/rapfi_match_log.jsonl</code></td><td>Rapfi 개별 대국</td></tr>
+<tr><td><code>model/tactical_problem_log.jsonl</code></td><td>전술 문제(3회 시도, 2회 이상 통과)</td></tr>
+<tr><td><code>model/gomokuwithai_match_log.jsonl</code> 외</td><td>외부 AI 대국</td></tr>
+<tr><td><code>hlt/web/games.jsonl</code></td><td>웹판에서 사람이 둔 판(모델, 사람 색, 탐색 수, 결과, 수순, AI 승률 곡선, 무르기 횟수)</td></tr>
+</table>
+
+<h3>15.2 hourly_status.py (2026-09-28)</h3>
+<pre><code>"""
+Hourly health check (2026-09-28). Detached; appends one block per hour to
+model/hourly_status.log: epoch, last gate result, latest Rapfi ladder and
+graduation-problem results, GPU temperature, web server and tunnel status.
+"""</code></pre>
+<p>각 JSONL의 마지막 줄(<code>last_line</code>)을 읽고, 웹 서버와 터널 주소에 HTTP 요청을 보내 200이 오는지(<code>ok</code>) 확인해서 한 블록을 덧붙여. GPU 온도를 기록하는 이유는 노트북 GPU가 94°C 근처에서 스로틀링되고 과거에 그 구간에서 학습이 멈춘 적이 있기 때문이야(기록상 "GPU 97%, 94°C" 상황이 반복적으로 관찰됨). 시험 기간 위임(2026-09-22~) 동안 사람이 매번 확인하지 않아도 되게 한 장치야.</p>
+<div class="box note">
+<code>hourly_status.py</code> 안의 <code>TUNNEL</code> 주소는 그때그때의 빠른 터널 주소로 하드코딩되어 있어. 빠른 터널은 재시작할 때마다 주소가 바뀌니(16절) 서버를 다시 띄우면 이 값도 갱신해야 해.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s16">16. 웹 대국판: Cloudflare 빠른 터널과 server.py</h2>
+
+<h3>16.1 집 PC를 외부에 여는 법</h3>
+<p>보통 집 PC는 공유기(NAT) 뒤에 있어서 밖에서 들어올 수 없어. <b>Cloudflare Tunnel</b>은 반대로 PC가 Cloudflare로 <b>나가는</b> 연결을 맺고, 외부 사용자는 Cloudflare를 거쳐 그 연결로 들어와. "빠른 터널(quick tunnel)"은 계정 없이 <code>https://무작위이름.trycloudflare.com</code> 주소를 즉석에서 만들어줘. 공유기 설정, 포트 개방, 도메인, HTTPS 인증서가 전부 필요 없어. 대신 주소가 무작위고 재시작 때마다 바뀌어.</p>
+
+<pre><code>[친구 브라우저] --HTTPS--&gt; [Cloudflare] &lt;--(PC가 연) 터널-- [cloudflared] --&gt; [server.py :로컬 포트]
+                                                                         |
+                                                                    [GPU: 학습과 공유]</code></pre>
+
+<h3>16.2 server.py의 구성</h3>
+<p>표준 라이브러리 <code>http.server</code> 기반의 단일 파일 서버(435줄)야. 프레임워크 없이 <code>do_GET</code>/<code>do_POST</code>를 직접 처리해.</p>
+
+<h4>(1) 세션</h4>
+<pre><code>GAMES = {}          # session id -&gt; game dict (one game per browser)
+LAST_SEEN = {}      # session id -&gt; last request time (for the /stats page)
+ACTIVE_WINDOW = 120  # seconds: a browser counts as "connected" if it polled within this
+MAX_SESSIONS = 200
+MAX_SIMS = 2000     # public link: cap the per-move search</code></pre>
+<p>브라우저마다 세션 ID(최대 64자로 자름)를 갖고, 세션당 게임 하나. 게임 dict에는 <code>lock</code>이 있어서 같은 게임에 대한 요청과 AI 생각 스레드가 동시에 상태를 바꾸지 않게 해. 공개 링크니까 탐색 수를 <code>max(50, min(MAX_SIMS, ...))</code>로 50~2000에 묶어.</p>
+
+<h4>(2) 모델 선택: dawn / latest</h4>
+<pre><code># 2026-09-30 (user): visitors choose the model. "dawn" = graduated NAPS-625 (frozen),
+# "latest" = the newest gate-promoted best checkpoint (reloaded when a game starts).
+...
+DEFAULT_MODEL = "dawn"</code></pre>
+<p>"여명"은 졸업 모델로 고정이고, "latest"는 게이트를 통과한 최신 best 체크포인트야. <code>maybe_reload_model()</code>이 파일 수정 시각(mtime)을 비교해서 바뀌었을 때만 가중치를 다시 읽어. 학습이 진행되는 동안 서버를 재시작하지 않고도 최신 모델을 보여줄 수 있어.</p>
+
+<h4>(3) 스트리밍 탐색: 16회마다 스냅샷</h4>
+<pre><code>CHUNK = 16          # stream the search every CHUNK simulations = the engine batch size (keeps GUI speed)
+...
+while done &lt; sims:
+    done = min(sims, done + CHUNK)
+    _, rv, cands = engine.search_batched(board, player, evk, done, 1.414, False, 0.3, 0.25,
+                                              N, WIN_LENGTH, 16, 0.0)
+    snap = snapshot(g, engine, player, cands, rv, raw_p[0], raw_v[0], done)
+    with g["lock"]:
+        if g.get("gen") != gen:
+            return  # a new game was started meanwhile
+        g["analysis"] = snap</code></pre>
+<p>7.3절의 "같은 국면이면 트리 유지" 덕분에, 목표 방문 수를 16, 32, 48 … 로 올려가며 같은 트리를 키울 수 있어. 매 조각 뒤 스냅샷(후보별 방문, Q값, 신경망 원래 정책·가치, PV)을 저장하고, 브라우저는 폴링으로 이걸 받아 그려. 그래서 AI가 "생각하는 과정"이 실시간으로 보여. 조각 크기를 배치 크기와 같게 한 이유는, 조각이 배치보다 작으면 그룹이 덜 차서 GPU 효율이 떨어지기 때문이야. 인자를 보면 c_puct 1.414, 노이즈 끔(<code>False</code>), 강제 탐색 끔(0.0)이야.</p>
+<p><code>gen</code>(세대 번호)은 "생각하는 도중 새 게임을 눌렀을 때" 옛 스레드의 결과가 새 게임에 섞이지 않게 하는 장치야.</p>
+
+<h4>(4) PV 보조판</h4>
+<p>스냅샷의 <code>"pv"</code> 항목은 주 수순(Principal Variation, 탐색이 예상하는 최선 수순)을 <code>[행, 열, 방문]</code> 목록으로 담아. 화면 옆의 작은 판에 "AI가 예상하는 다음 몇 수"를 그려줘.</p>
+
+<h4>(5) 무르기</h4>
+<pre><code>def undo(g):
+    """Take back the human's last move (and the AI reply that followed it).
+    The search tree is discarded so the next AI search starts clean."""
+    ...
+    g["engine"] = engine_mod.MCTSEngine()
+    g["undos"] = g.get("undos", 0) + 1</code></pre>
+<p>사람의 마지막 수와 그 뒤 AI 응수를 함께 지우고, 엔진을 새로 만들어. 엔진의 재사용 규칙은 "한 수 앞으로"만 가정하니까, 뒤로 간 국면에서 옛 트리를 쓰면 안 되기 때문이야. 무르기 횟수는 <code>games.jsonl</code>에 남겨 통계에 반영해.</p>
+
+<h4>(6) SGF 저장</h4>
+<p><code>index.html</code>의 브라우저 쪽 코드가 <code>(;GM[4]FF[4]SZ[11]RU[freestyle]...)</code> 형식으로 만들어 내려받게 해. GM[4]는 오목, SZ[11]은 판 크기, 흑은 B, 백은 W, 좌표는 <code>"abcdefghijk"</code> 문자로 적어. 서버는 관여하지 않아.</p>
+
+<h4>(7) 첫 8수 무작위화</h4>
+<pre><code>OPENING_SAMPLE_PLIES = 8        # first N plies of the game: sample the AI move instead of argmax
+OPENING_SAMPLE_MIN_SHARE = 0.3  # only candidates with &gt;= 30% of the top move's visits
+...
+if len(g["moves"]) &lt; OPENING_SAMPLE_PLIES and not any(c.get("proven") for c in cands):
+    # opening variety (2026-09-28): pick among near-best candidates in proportion to visits,
+    # so humans cannot win by replaying a memorised line against a deterministic AI
+    top = max(c["visit_count"] for c in cands)
+    pool = [c for c in cands if c["visit_count"] &gt;= OPENING_SAMPLE_MIN_SHARE * top]</code></pre>
+<p>노이즈 없는 탐색은 결정론적이라, 한 번 이긴 수순을 그대로 반복하면 또 이길 수 있어. 그래서 첫 8수(판 전체 기준, 사람 수 포함한 수 번호)에서는 최다 방문 수의 30% 이상 방문을 받은 후보 중에서 방문 비율대로 뽑아. 증명된 결과가 있으면 무작위화하지 않아. 축제(전시) 용도에서 "외운 수순으로 이기기"를 막기 위한 공학적 장치야.</p>
+
+<h4>(8) 통계 페이지</h4>
+<p><code>/stats</code>는 120초 안에 폴링한 세션을 "접속 중"으로 세고, 난이도(탐색 수 구간)·사람 색별 승패, 사람이 이긴 판 목록을 보여줘(5초마다 자동 갱신).</p>
+
+<!-- ================================================================ -->
+<h2 id="s17">17. 여러 게임 묶어 평가하기(cross-game batching)와 부하 측정</h2>
+
+<h3>17.1 구조</h3>
+<pre><code>def ev_locked(bs, ps, key=DEFAULT_MODEL):
+    """Cross-game batching: queue this request; one worker merges every game's
+    pending leaves (per model) into a single GPU forward pass and hands each game its rows."""
+    req = {"bs": bs, "ps": ps, "key": key, "out": None, "done": threading.Event()}
+    with BATCH_CV:
+        BATCH_Q.append(req)
+        BATCH_CV.notify()
+    req["done"].wait()
+    ...</code></pre>
+<p>각 게임의 AI 스레드는 엔진 안에서 GIL을 놓고 탐색하다가, 16개 잎이 모이면 이 함수를 콜백으로 불러. 함수는 요청을 공용 큐에 넣고 기다려. 단 하나의 <code>batch_worker</code> 스레드가 큐에 쌓인 요청을 <b>전부</b> 가져가서, 모델 키(dawn/latest)별로 합쳐 GPU에 한 번 보내고, 결과를 잘라서 각 게임에 돌려줘. 이건 학습 쪽 코디네이터(11절)와 같은 발상의 스레드 버전이야.</p>
+
+<h3>17.2 측정 결과 (2026-09-28)</h3>
+<p>대화 기록에 남은 측정(서버를 켜지 않고 모듈을 불러 1100회 탐색으로 시험, 학습이 GPU를 함께 쓰는 상태):</p>
+<table>
+<tr><th>동시 게임 수</th><th>기존 방식(게임별 개별 평가)</th><th>묶은 방식</th></tr>
+<tr><td>1판</td><td>6.9초</td><td>6.3초</td></tr>
+<tr><td>6판</td><td>33.7초</td><td>31.4초</td></tr>
+</table>
+<p>두는 수는 기존과 같았고, 개선은 <b>약 7%</b>에 그쳤어. 처음 예상(2~4배)은 틀렸어.</p>
+
+<p>이 매뉴얼 작성 지시에는 이후의 부하 측정 결과로 다음 수치가 함께 주어졌어.</p>
+<table>
+<tr><th>동시 사용자</th><th>한 수 시간 (1100회)</th><th>1명 대비</th></tr>
+<tr><td>1명</td><td>3.6초</td><td>1.0배</td></tr>
+<tr><td>4명</td><td>14.9초</td><td>약 4.1배</td></tr>
+<tr><td>8명</td><td>26.2초</td><td>약 7.3배</td></tr>
+</table>
+<div class="box warn">
+<b>확인하지 못한 수치.</b> 위 3.6/14.9/26.2초와 "시간의 97%가 GPU 순전파"라는 수치는 이 매뉴얼을 쓰면서 대화 기록(<code>full_conversation_history.md</code>)과 세션 백업에서 찾지 못했어. 내 기록 범위 밖(이후 세션)에서 측정된 것일 수 있어. 기록에서 직접 확인된 건 위 6.9초/33.7초 표와 "약 7%" 결론이야.
+</div>
+
+<h3>17.3 해석: 병목은 GIL이 아니라 GPU 계산</h3>
+<p>두 측정 모두 같은 그림을 그려. 사용자 수에 거의 <b>비례해서</b> 시간이 늘어나(4명 ≈ 4배, 8명 ≈ 7배, 6판 ≈ 5배). 만약 병목이 GIL이나 Python 오버헤드였다면, 묶기로 호출 수를 줄였을 때 큰 개선이 있었어야 해. 만약 병목이 "작은 배치라 GPU가 놀아서"였다면, 묶어서 배치를 키웠을 때도 큰 개선이 있었어야 해. 둘 다 아니었다는 건 <b>GPU가 이미 실제 계산으로 꽉 차 있다</b>는 뜻이야.</p>
+<ul>
+<li>GTX 1050은 학습(역전파)과 자기대국 평가를 <b>동시에</b> 하고 있어. 웹 손님은 남는 GPU 시간만 얻어.</li>
+<li>엔진은 이미 16개씩 배치로 보내고 있었어. 배치 16이 이미 이 GPU에서 "충분히 큰" 크기였다면, 6게임을 합쳐 96개로 만들어도 처리량(초당 국면 수)은 거의 같고, 일의 총량이 같으니 시간도 같아.</li>
+<li>엔진이 탐색 중 GIL을 놓기 때문에(3절) 스레드끼리 CPU 쪽 탐색은 이미 겹쳐서 돌고 있었어.</li>
+</ul>
+<p>당시 기록의 첫 추정은 "GPU 계산이 아닌 다른 곳(입력 변환 Python 코드, 탐색 코드)"이었는데, 이후 측정이 이를 "GPU 순전파"로 정정한 것으로 보여. 결론은 실용적이야. 동시 접속 한계는 1100회 기준 대략 5~8명이고, 늘리려면 <b>탐색 수를 낮추거나(600회면 약 2배) 학습을 멈추거나 GPU를 바꿔야</b> 해. 묶은 방식은 해가 없어서 다음 재시작 때 적용했어.</p>
+
+<div class="box note">
+<b>실제 사건(2026-09-28).</b> 친구가 "멈췄다"고 했을 때, 서버는 0.03초, 터널은 0.2초로 정상 응답 중이었어. 3명이 동시에 두며 3판 모두 AI가 생각 중이라 한 수가 혼자일 때의 약 3배 걸렸던 거야. 어려움(1100회) 15~20초, 최강(2000회) 30초 이상. 그 전에 부하 시험 자체가 약 1분간 GPU를 같이 써서 느려졌을 가능성도 기록에 적혀 있어. 성능 측정도 운영 중인 시스템에 부하를 준다는 걸 잊으면 안 돼.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s18">18. 총 연산량 어림: 약 10¹⁸ FLOP</h2>
+<p>2026-09-29에 두 방법으로 어림했고 둘 다 같은 자릿수가 나왔어.</p>
+
+<h3>18.1 위에서 내려오기 (장비 × 시간)</h3>
+<pre><code>1.9 × 10¹² FLOP/s (GTX 1050 최대) × 2.6 × 10⁶ s (약 30일 가동 가정) × 0.25 (실효율)
+  ≈ 1.2 × 10¹⁸ FLOP
+상한: 46일 내내 최대 성능 ≈ 7 × 10¹⁸</code></pre>
+
+<h3>18.2 아래에서 올라오기 (호출 수 × 호출당 비용)</h3>
+<table>
+<tr><th>항목</th><th>신경망 호출 수</th></tr>
+<tr><td>자기대국 + 리그 약 8,000판 × 판당 약 2.5만 번</td><td>약 2 × 10⁸</td></tr>
+<tr><td>게이트 약 2,100판</td><td>약 9 × 10⁷</td></tr>
+<tr><td>Rapfi 측정 630판</td><td>약 1.4 × 10⁷</td></tr>
+<tr><td><b>합계</b></td><td><b>약 3 × 10⁸</b></td></tr>
+</table>
+<p>모델 파일 34MB → 파라미터 약 850만 개, 11x11 전체 합성곱이라 호출당 약 2 × 10⁹ FLOP.</p>
+<pre><code>탐색: 3 × 10⁸ × 2 × 10⁹ ≈ 6 × 10¹⁷
+학습(역전파 포함 약 3배): 약 1 × 10¹⁷
+합계 ≈ 7 × 10¹⁷  →  약 10¹⁸ FLOP</code></pre>
+<p>비교로, Epoch AI 추정의 AlphaGo Zero는 약 3 × 10²³ FLOP으로 우리의 약 30만 배야. 이 계산은 "판당 호출 수"와 "실효율 25%"가 어림이라 자릿수 정도만 믿을 수 있어. 그리고 가상 손실 버그 기간에는 실제 호출이 적었으니, 그 기간을 감안하면 아래쪽 추정이 다소 과대일 수 있어(기록에서는 이 보정을 하지 않았어).</p>
+
+<!-- ================================================================ -->
+<h2 id="s19">19. 더 좋은 하드웨어였다면 무엇이 바뀌나</h2>
+<p>17절과 18절의 결론, "병목은 GPU 계산"에서 출발하면 답이 비교적 명확해.</p>
+<table>
+<tr><th>업그레이드</th><th>예상 효과</th><th>바뀌는 설계</th></tr>
+<tr><td>데스크톱급 GPU (수십 TFLOPS)</td><td>평가 처리량이 수 배~십수 배. 에폭의 90%가 대국 생성이니 에폭 시간이 거의 비례해서 줄어.</td><td>배치 16 → 64~256, 워커 수 증가. 시뮬레이션 수를 올려 정책 목표 품질 향상. PCR의 정밀 비율도 높일 여유.</td></tr>
+<tr><td>학습용/서비스용 GPU 분리</td><td>웹판이 학습과 GPU를 나누지 않음. 동시 접속 한계가 크게 오름.</td><td>교차 게임 묶기의 효과가 실제로 나타날 수 있음(GPU에 여유가 생기면 배치를 키우는 이득이 생김).</td></tr>
+<tr><td>CPU 코어 증가</td><td>GPU가 병목인 동안은 효과 작음. GPU가 빨라지면 다음 병목이 됨.</td><td>워커 프로세스 수 증가.</td></tr>
+<tr><td>MSVC + LibTorch/TensorRT 직결</td><td>2026-08-25 기록의 제안. Python 콜백과 pybind11 왕복 제거, 레이어 융합.</td><td>탐색 전체를 C++로 완결. 지금 구조에서는 GPU 자체가 병목이라 이득은 GPU가 빨라진 뒤에 커짐.</td></tr>
+<tr><td>반정밀도(FP16)</td><td>GTX 1050(Pascal)은 FP16 연산이 빠르지 않아 이득이 거의 없음. 텐서 코어가 있는 GPU에서는 큰 이득.</td><td>혼합정밀 학습, FP16 추론.</td></tr>
+</table>
+<div class="box note">
+이 표의 "예상 효과"는 기록에서 측정한 값이 아니라 원리에서 나온 추정이야. 15x15로 넘어갈 때(<code>project_next_15x15.md</code>의 계획) 칸 수가 121 → 225로 약 1.86배, 후보 칸과 판 길이도 늘어서 같은 장비에서는 에폭이 훨씬 길어질 거라는 점을 염두에 둬야 해.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s20">20. 정리: 연대표와 교훈</h2>
+<table>
+<tr><th>날짜</th><th>공학 변경</th><th>핵심 효과</th></tr>
+<tr><td>2026-08-24</td><td>C++ MCTS 엔진(MinGW, pybind11), GIL 해제</td><td>탐색 부분 약 4.3배</td></tr>
+<tr><td>2026-08-25</td><td>MinGW/MSVC ABI 한계 확인</td><td>신경망은 Python 콜백 유지</td></tr>
+<tr><td>2026-09-10</td><td>시뮬레이션 900, 후보당 방문 분석</td><td>정책 목표 품질 개선 시도</td></tr>
+<tr><td>2026-09-24</td><td><code>train.lock</code> 단일 실행 잠금</td><td>중복 트레이너 사고 재발 방지</td></tr>
+<tr><td>2026-09-25</td><td><b>가상 손실 부호 수정</b>, 메이트 거리</td><td>실제 평가 약 69 → 1100 (약 16배)</td></tr>
+<tr><td>2026-09-26</td><td>PCR + 통합 대국 풀 + 종료/큐 비우기 수정</td><td>판 수 2배에 시간 약 10% 증가, 좀비 트레이너 제거</td></tr>
+<tr><td>2026-09-27</td><td>MCTS-Solver, 강제 탐색, 90수 제한, restart_trainer.ps1</td><td>열린 4 방치 해결, 꼬리 시간 감소</td></tr>
+<tr><td>2026-09-28</td><td>같은 국면 트리 유지, 웹판 스트리밍, 첫 8수 무작위화, 교차 게임 묶기, hourly_status</td><td>공개 웹 대국판 운영</td></tr>
+<tr><td>2026-09-29</td><td>연산량 어림</td><td>약 10¹⁸ FLOP</td></tr>
+<tr><td>2026-09-30</td><td>웹판 모델 선택 dawn/latest</td><td>졸업 모델 고정 공개</td></tr>
+</table>
+
+<div class="box good">
+<b>이 부의 다섯 가지 교훈</b>
+<ol>
+<li><b>측정 먼저, 추정은 나중.</b> PCR 절감(8절)과 교차 게임 묶기(17절) 둘 다 처음 예상이 틀렸고, 측정이 바로잡았어.</li>
+<li><b>불변식으로 버그를 잡아라.</b> "배치 1과 16은 거의 같아야 한다" 같은 성질을 시험하면 조용한 버그가 드러나(5절).</li>
+<li><b>최적화는 서로 얽힌다.</b> 트리 재사용이 있으면 PCR의 이득이 줄어들어. 한 기법의 효과는 나머지 시스템 안에서 재야 해.</li>
+<li><b>무인 운영은 "죽음"보다 "멈춤"이 무섭다.</b> 워치독은 죽은 프로세스는 살리지만 멈춘 프로세스는 못 봐(12절). 멈춤 자체가 생기지 않게 설계해야 해.</li>
+<li><b>병목이 어디인지 알면 할 일이 정해진다.</b> GPU가 병목이면 CPU·GIL 최적화는 의미가 작고, 탐색 수·모델 크기·GPU 공유 정책이 실제 손잡이야(17, 19절).</li>
+</ol>
+</div>
+
+</main>
+</body>
+</html>

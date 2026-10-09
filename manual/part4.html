@@ -1,0 +1,886 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4부 측정</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="top">
+<a href="index.html">목차</a>
+<a href="part0.html">0부</a>
+<a href="part1.html">1부</a>
+<a href="part2.html">2부</a>
+<a href="part3.html">3부</a>
+<a href="part4.html">4부</a>
+<a href="part5.html">5부</a>
+<a href="part6.html">6부</a>
+</nav>
+<main>
+<h1>4부. 측정: 게이트, Rapfi 사다리, 졸업 문제, 측정의 함정</h1>
+
+<div class="toc">
+<ol>
+<li><a href="#s1">왜 측정이 따로 한 부(部)나 되는가</a></li>
+<li><a href="#s2">기초 통계: 승률, 점수, Elo, 표본 크기</a></li>
+<li><a href="#s3">게이트 (승격 시험)</a></li>
+<li><a href="#s4">vs-Det: 결정론적 미니맥스 상대 평가</a></li>
+<li><a href="#s5">Rapfi라는 자(尺)</a></li>
+<li><a href="#s6">pbrain 프로토콜과 rapfi_match.py</a></li>
+<li><a href="#s7">시간 제한에서 노드 제한으로</a></li>
+<li><a href="#s8">대등 국면 사다리 (rapfi_ladder.py)</a></li>
+<li><a href="#s9">함정 1: 단일 교차점 규칙의 착시 (ep555 "1,250"의 진실)</a></li>
+<li><a href="#s10">새 규칙: 판수 가중 최소제곱 직선</a></li>
+<li><a href="#s11">함정 2: 사다리는 완전히 결정적이다</a></li>
+<li><a href="#s12">사다리 전체 기록</a></li>
+<li><a href="#s13">졸업 문제 (tactical_problem_check.py)</a></li>
+<li><a href="#s14">졸업 문제 전체 기록</a></li>
+<li><a href="#s15">졸업 판정: NAPS-625 "여명"</a></li>
+<li><a href="#s16">gomokuwithai 사이트 대국</a></li>
+<li><a href="#s17">사람 상대 웹 대국 통계</a></li>
+<li><a href="#s18">측정의 함정 총정리</a></li>
+<li><a href="#s19">확인하지 못한 것들</a></li>
+</ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s1">1. 왜 측정이 따로 한 부(部)나 되는가</h2>
+
+<p>강화학습 프로젝트를 하다 보면 이상한 일이 생겨. 손실(loss)은 매일 내려가는데 AI가 정말 강해졌는지는 아무도 모르는 거야. 손실은 "신경망이 자기가 만든 데이터를 얼마나 잘 따라 하는가"를 재는 숫자지, "오목을 얼마나 잘 두는가"를 재는 숫자가 아니거든. 그래서 이 프로젝트는 처음부터 끝까지 <b>"실력을 어떻게 잴 것인가"</b>라는 질문과 계속 씨름했어.</p>
+
+<p>이 부에서 다루는 측정 도구는 다섯 가지야. 각각 재는 대상과 쓰임새가 다르다는 점을 먼저 머리에 넣어 두자.</p>
+
+<table>
+<tr><th>도구</th><th>상대</th><th>무엇을 재나</th><th>학습에 영향?</th><th>파일</th></tr>
+<tr><td>게이트 (gate)</td><td>지금까지의 최고 모델(best)</td><td>"새 모델이 옛 최고보다 나은가" (상대적)</td><td>있음: 승격 시 자가대국 생성 모델이 바뀜</td><td>alphazero_mcts_make_lrfix.py</td></tr>
+<tr><td>vs-Det</td><td>깊이 2 미니맥스 (determinisic_play.py)</td><td>최저 기준선을 넘었나</td><td>평가용은 없음</td><td>같은 파일</td></tr>
+<tr><td>Rapfi 사다리</td><td>Rapfi (Gomocup 2024 우승 엔진), 노드 제한</td><td>절대 실력 (외부 자)</td><td>없음 (MEASUREMENT ONLY)</td><td>rapfi_match.py, rapfi_ladder.py</td></tr>
+<tr><td>졸업 문제</td><td>Rapfi 3초/수 (거의 완벽한 응수)</td><td>특정 전술 국면을 풀 수 있나</td><td>없음 (never used as training data)</td><td>tactical_problem_check.py</td></tr>
+<tr><td>사이트/사람 대국</td><td>gomokuwithai 사이트 AI, 웹 방문자</td><td>현실 세계 체감 실력</td><td>없음</td><td>gomokuwithai_match.py, hlt/web/server.py</td></tr>
+</table>
+
+<div class="box note">
+<b>이 부의 핵심 교훈 한 줄 요약</b><br>
+"측정 도구도 버그가 있다." 이 프로젝트에서 측정 방식 자체가 두 번 크게 고쳐졌어. (1) 사다리의 "대등 국면" 계산법이 노이즈에 휘둘리는 단일 교차점 방식에서 가중 최소제곱 직선으로 바뀌었고, (2) 사다리가 완전히 결정적이라 같은 모델을 다시 재는 건 의미가 없다는 사실이 발견됐어. 둘 다 "숫자가 왜 이렇게 널뛰지?"라는 의문에서 시작됐어.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s2">2. 기초 통계: 승률, 점수, Elo, 표본 크기</h2>
+
+<h3>2.1 점수 s</h3>
+<p>오목에는 무승부가 있어. 그래서 단순 "승률"보다 <b>점수(score)</b>를 써. 이 프로젝트의 모든 측정 코드는 같은 정의를 써.</p>
+<pre><code>s = (wins + 0.5 * draws) / games</code></pre>
+<p>이긴 판은 1점, 비긴 판은 0.5점, 진 판은 0점. 예를 들어 20판에서 8승 8무 4패면 s = (8 + 4) / 20 = 0.60이야. 실제로 epoch 625가 게이트를 통과했을 때 성적이 정확히 이거였어(README.txt: "gate 20g: W8 D8 L4 = 60%, promoted").</p>
+
+<h3>2.2 Elo 차이</h3>
+<p>Elo는 체스에서 온 실력 척도야. 핵심 가정은 하나뿐이야: <b>두 선수의 Elo 차이가 D면, 강한 쪽의 기대 점수는</b></p>
+<pre><code>s = 1 / (1 + 10^(-D/400))</code></pre>
+<p>이 식을 D에 대해 거꾸로 풀면 rapfi_ladder.py에 있는 식이 나와.</p>
+<pre><code>D = 400 * log10( s / (1 - s) )</code></pre>
+<p>직접 풀어 보자. s(1 + 10^(-D/400)) = 1 → 10^(-D/400) = (1-s)/s → -D/400 = log10((1-s)/s) → D = 400·log10(s/(1-s)). 끝이야.</p>
+
+<table>
+<tr><th>점수 s</th><th>Elo 차 D</th><th>해석</th></tr>
+<tr><td>0.50</td><td>0</td><td>대등</td></tr>
+<tr><td>0.55</td><td>+34.9</td><td>게이트 통과선</td></tr>
+<tr><td>0.575</td><td>+52.5</td><td></td></tr>
+<tr><td>0.65</td><td>+107.5</td><td></td></tr>
+<tr><td>0.75</td><td>+190.8</td><td></td></tr>
+<tr><td>0.30</td><td>−147.2</td><td></td></tr>
+<tr><td>0.29</td><td>약 −155</td><td>gomokuwithai 50판 결과</td></tr>
+</table>
+<p>(위 숫자들은 rapfi_ladder_log.jsonl의 <code>elo_vs_level</code> 필드와 일치해. 예: score 0.75 → 190.84850188786498.)</p>
+
+<h3>2.3 0%와 100%의 문제: 클램프</h3>
+<p>s = 1이면 s/(1−s)가 무한대가 돼서 Elo가 무한이 나와. 10판 다 이겼다고 "무한히 강하다"고 할 수는 없지. 그래서 코드는 값을 잘라(clamp) 둬.</p>
+<pre><code>def elo(score, n):
+    lo, hi = 1.0 / (2 * n), 1.0 - 1.0 / (2 * n)
+    s = min(max(score, lo), hi)
+    return 400.0 * math.log10(s / (1.0 - s))</code></pre>
+<p>20판이면 s는 [0.025, 0.975] 범위로 잘려. "반 판 정도는 운이 달랐을 수 있다"는 보수적 가정이야. 뒤에 나올 직선 맞춤(fit) 코드는 이와 별개로 [0.03, 0.97]로 자르는데, 두 곳의 클램프 값이 다르다는 점은 기억해 둬.</p>
+
+<h3>2.4 표본 크기: 20판은 얼마나 믿을 만한가</h3>
+<p>참 실력이 정확히 p = 0.5인 상대와 n판을 두면, 관측 점수의 표준편차는 대략 √(p(1−p)/n)이야(무승부가 있으면 이보다 약간 작아져).</p>
+<table>
+<tr><th>판수 n</th><th>표준편차 (p=0.5)</th><th>95% 범위 대략</th></tr>
+<tr><td>10</td><td>0.158</td><td>0.19 ~ 0.81</td></tr>
+<tr><td>20</td><td>0.112</td><td>0.28 ~ 0.72</td></tr>
+<tr><td>50</td><td>0.071</td><td>0.36 ~ 0.64</td></tr>
+<tr><td>100</td><td>0.050</td><td>0.40 ~ 0.60</td></tr>
+</table>
+<p>20판에서 55%가 나왔다는 건, 사실 "참값이 30%대 후반에서 70%대 초반 어딘가"라는 뜻이야. 이 감각이 있어야 뒤의 "단일 교차점의 착시"가 왜 생겼는지 이해돼.</p>
+
+<div class="box warn">
+<b>주의:</b> 위 표는 "매 판이 독립적인 동전 던지기"라는 가정에서 나온 거야. 그런데 이 프로젝트의 사다리는 <b>운이 전혀 섞이지 않는 결정적 측정</b>이라는 게 나중에 밝혀졌어(11절). 그럼 "노이즈"는 어디서 오는 걸까? 답은 "같은 모델을 다시 재는 데서"가 아니라 "모델이 조금 바뀔 때 20개 시작 국면 중 몇 개의 결과가 뒤집히는 데서" 와. 표준편차 표는 그 민감도를 가늠하는 용도로 읽어야 해.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s3">3. 게이트 (승격 시험)</h2>
+
+<h3>3.1 왜 게이트가 필요한가</h3>
+<p>신경망은 경사하강법으로 매 에폭 조금씩 바뀌어. 그런데 바뀐다고 매번 좋아지는 건 아니야. 이 프로젝트는 실제로 <b>비이행적(non-transitive) 실력</b>을 측정했어: 어떤 체크포인트가 500에폭 전 모델은 이기는데 100에폭 전 모델에게는 지는 현상. 코드 주석을 그대로 보자.</p>
+<pre><code># A self-play policy trained by continuous gradient descent isn't guaranteed
+# to improve monotonically -- this project directly measured non-transitive
+# strength between checkpoints (beats one from 500 epochs ago, loses to one
+# from 100 epochs ago). AlphaGo Zero's fix was to never let raw, unvalidated
+# weights become the new baseline: a candidate must actually beat the current
+# best in fair (no-noise, full-search) play before it's promoted.</code></pre>
+<p>그래서 AlphaGo Zero처럼 <b>"최고 모델(best)"</b>을 따로 보관하고, 학습 중인 모델이 그 최고 모델을 공정한 대국에서 이길 때만 교체해. 이게 게이트야.</p>
+
+<h3>3.2 게이트의 규칙</h3>
+<pre><code>BEST_CHECKPOINT_PATH = f"model/best_mcts{_SUFFIX}.pth"
+GATE_PROMOTION_THRESHOLD = 0.55  # AlphaGo Zero's own threshold; draws count as 0.5</code></pre>
+<ul>
+<li><b>대국 수:</b> 원래는 21개 시작 국면 × 흑백 = 42판이었는데, 2026-09-10에 10개 국면 × 흑백 = <b>20판</b>으로 줄였어. 게이트 검사가 전체 학습 시간의 큰 몫(주석에 따르면 232에폭 구간에서 약 42%를 차지한 tactical-refresh 에폭 비용의 주된 원인)이었기 때문이야.</li>
+<li><b>시작 국면 고르기:</b> 대칭 대표 국면 목록을 시드 910으로 섞은 뒤 앞의 10개를 써. 판 위에 고르게 흩어지게 하려는 거야.</li>
+<li><b>판정:</b> 학습 모델의 점수 s ≥ 0.55면 PROMOTED, 아니면 kept.</li>
+<li><b>승격 효과:</b> best 파일이 덮어써지고, 자가대국 데이터를 만드는 고정 모델(gen_model)도 그 가중치로 동기화돼.</li>
+</ul>
+<pre><code>_GATE_OPENING_SQUARES = list(_OPENING_SQUARES)
+random.Random(910).shuffle(_GATE_OPENING_SQUARES)
+_GATE_OPENING_SQUARES = _GATE_OPENING_SQUARES[:10]
+...
+        score = (wins + 0.5 * draws) / n
+        promoted = score &gt;= GATE_PROMOTION_THRESHOLD
+        if promoted:
+            torch.save(model.state_dict(), BEST_CHECKPOINT_PATH)</code></pre>
+
+<div class="box note">
+<b>20판의 해상도:</b> 주석 그대로 "10%-point granularity instead of ~2.4%-point". 20판이면 점수는 0.025 단위로 움직이지만(무승부가 반 점이라), 승패 기준으로는 한 판이 5%p야. 0.55 기준은 "11점 이상"이라는 뜻이야. 예를 들어 8승 6무 6패 = 11점 = 0.55 → 통과, 8승 5무 7패 = 10.5점 = 0.525 → 탈락.
+</div>
+
+<h3>3.3 게이트 결과의 실제 모습</h3>
+<p>train_stdout_v15.log의 마지막 13번 게이트(epoch 740~800, 5에폭 간격)를 그대로 옮기면 이래.</p>
+<table>
+<tr><th>epoch</th><th>승</th><th>무</th><th>패</th><th>점수</th><th>결과</th></tr>
+<tr><td>740</td><td>15%</td><td>60%</td><td>25%</td><td>0.45</td><td>kept</td></tr>
+<tr><td>745</td><td>25%</td><td>45%</td><td>30%</td><td>0.475</td><td>kept</td></tr>
+<tr><td>750</td><td>25%</td><td>30%</td><td>45%</td><td>0.40</td><td>kept</td></tr>
+<tr><td>755</td><td>35%</td><td>25%</td><td>40%</td><td>0.475</td><td>kept</td></tr>
+<tr><td>760</td><td>40%</td><td>30%</td><td>30%</td><td><b>0.55</b></td><td><b>PROMOTED</b></td></tr>
+<tr><td>765</td><td>30%</td><td>20%</td><td>50%</td><td>0.40</td><td>kept</td></tr>
+<tr><td>770</td><td>25%</td><td>45%</td><td>30%</td><td>0.475</td><td>kept</td></tr>
+<tr><td>775</td><td>35%</td><td>25%</td><td>40%</td><td>0.475</td><td>kept</td></tr>
+<tr><td>780</td><td>5%</td><td>45%</td><td>50%</td><td>0.275</td><td>kept</td></tr>
+<tr><td>785</td><td>20%</td><td>25%</td><td>55%</td><td>0.325</td><td>kept</td></tr>
+<tr><td>790</td><td>20%</td><td>50%</td><td>30%</td><td>0.45</td><td>kept</td></tr>
+<tr><td>795</td><td>45%</td><td>20%</td><td>35%</td><td><b>0.55</b></td><td><b>PROMOTED</b></td></tr>
+<tr><td>800</td><td>20%</td><td>45%</td><td>30%</td><td>0.45</td><td>kept</td></tr>
+</table>
+<p class="small">(epoch 번호는 로그에서 게이트 줄 바로 앞의 Epoch 줄로 대응시켰어. 대응이 한 칸 어긋났을 가능성은 낮지만 0은 아니야. 또 800의 승/무/패 합이 95%인데, 로그 원문이 그렇게 찍혀 있어서 그대로 옮겼어.)</p>
+
+<p>두 가지를 읽어낼 수 있어.</p>
+<ol>
+<li><b>대부분 "유지"야.</b> 13번 중 2번만 승격. 승격은 정확히 기준선(0.55)에 걸쳐서 일어났어. 20판짜리 시험에서 "기준선에 딱 걸친 통과"는 운의 영향을 크게 받아.</li>
+<li><b>무승부 비율이 높아.</b> 비슷한 실력의 두 모델이 노이즈 없이 두면 비기는 판이 많아. 무승부가 많을수록 승격은 어려워져(무승부는 0.5점이라 평균을 0.5 쪽으로 끌어당기니까).</li>
+</ol>
+
+<div class="box warn">
+<b>게이트 정체(stagnation)의 역사.</b> 코드 주석에는 "252 straight 0%-loss gate checks" 끝의 epoch 273 첫 승격, Gen10 재시작 이후 "gate-check having stayed stuck at ~0% for 564+ epochs" 같은 기록이 남아 있어. 그리고 2026-09-30에는 "gate stuck 15 checks (650-720) while losses kept falling"이라는 이유로 학습률 대역을 절반으로 낮췄어(1e-4..5e-5 → 5e-5..1e-5). <b>손실은 내려가는데 게이트는 막혀 있다</b>는 게 이 프로젝트의 단골 증상이었고, 이것이 외부 자(Rapfi)가 필요했던 이유 중 하나야. 게이트는 "어제의 나"와만 비교하니까, 둘 다 같은 방향으로 틀려 있으면 아무것도 못 잡아.
+</div>
+
+<h3>3.4 게이트와 연동된 장치들</h3>
+<p>게이트 결과는 학습의 다른 부분도 움직여. 자세한 건 학습 루프를 다룬 부에 있지만, 측정 관점에서 알아둘 것만 적을게.</p>
+<ul>
+<li><b>탐색량 램프:</b> 승격할 때마다 자가대국 시뮬레이션 수를 SIM_RAMP_STEP=100씩 올려(시작 150, 상한 1100). 승격 없이 STAGNATION_RAMP_LIMIT=5번 연속 유지되면 그래도 한 단계 올려.</li>
+<li><b>LR 쿨다운:</b> 승격 직후 LR_COOLDOWN_EPOCHS=25 동안 학습률 스케줄러를 얼려. 승격 직후 모델이 불안정한 구간에 학습률 재시작이 겹친 사고(epoch 273 승격 후 300에서 재시작)가 실제로 있었기 때문이야.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s4">4. vs-Det: 결정론적 미니맥스 상대 평가</h2>
+
+<p>이 프로젝트의 원래 연구 목표는 3x3 시절부터 "결정론적 알고리즘(미니맥스)을 이긴다"였어. 그래서 가장 오래된 측정은 <code>evaluate_vs_deterministic</code>이야. docstring이 목적을 그대로 말해 줘.</p>
+<pre><code>    Plays num_games against determinisic_play (minimax/alpha-beta), alternating
+    who moves first, and returns (win_rate, draw_rate, loss_rate) from the
+    trained model's perspective. This is the direct metric for the research
+    goal ("beat the deterministic algorithm").</code></pre>
+<p>11x11에서 상대는 determinisic_play.py의 <code>MAX_DEPTH = 2</code>, 즉 2수 앞을 보는 알파-베타 탐색이야. 메모리 노트에도 "depth-2 minimax is just the baseline"이라고 적혀 있어: 진짜 목표는 평균적인 사람을 이기는 거고, 미니맥스는 바닥선일 뿐이야.</p>
+
+<h3>4.1 결정론적 상대의 함정: 같은 판의 반복</h3>
+<p>미니맥스는 랜덤이 없어. 우리 모델도 평가 때는 노이즈 없이 둬. 그러면 <b>같은 시작 국면에서는 매번 똑같은 판</b>이 나와. 이게 두 가지 버그를 낳았어. 코드 주석에 둘 다 남아 있어.</p>
+<pre><code># All board cells, not just one representative per symmetry class -- used by
+# evaluate_vs_deterministic (see its docstring): with only len(_OPENING_SQUARES)
+# distinct openings, requesting a game count not coprime with that count made
+# many "games" exact repeats of an earlier one under a different index label.
+...
+# Gen3 eval-diversification (2026-09-09): row-major order meant every vs-Det
+# check (sliced to the first num_games) only ever sampled the top-left
+# edge/corner region of the board, every check, for the whole project's
+# history. Shuffle once with a fixed seed so a slice is a representative
+# spread across the whole board, while keeping openings reproducible
+random.Random(1109).shuffle(_ALL_CELLS)</code></pre>
+<ol>
+<li><b>중복 판 버그:</b> 시작 국면 종류가 적은데 판수를 많이 요청하면, "10판"이 실제로는 같은 판 몇 개의 복사본이었어. 그러면 10판 측정이 사실상 3~4판 측정이 돼.</li>
+<li><b>왼쪽 위 편향 버그:</b> 모든 칸을 행 순서(row-major)로 나열한 뒤 앞에서부터 잘라 썼기 때문에, 평가가 언제나 판의 왼쪽 위 모서리 근처 시작 국면만 봤어. 시드 1109로 한 번 섞어서 해결했어. 시드를 고정했으니 "같은 인덱스 → 같은 칸"이라 재현성은 유지돼.</li>
+</ol>
+<div class="box good">
+이 두 버그의 공통 교훈: <b>결정적인 평가에서 "판수"는 "서로 다른 시작 국면의 수"와 같다.</b> 시작 국면이 겹치면 판수를 늘려도 정보가 늘지 않아. 이 교훈은 뒤에서 Rapfi 사다리에서 그대로 다시 나타나.
+</div>
+
+<h3>4.2 후반부의 vs-Det</h3>
+<p>후반(v13 로그)에서는 정식 평가가 "Eval vs Deterministic (5 games, 600 sims/move, openings seed=720): Win 100%" 같은 형태로 찍혀. 학습 설정(_restart_train.py)도 <code>eval_games=5, eval_simulations=600</code>이야. 이 단계에서 깊이 2 미니맥스는 이미 변별력이 없는 상대가 됐고, 그래서 외부의 더 강한 자가 필요했어. 그게 Rapfi야.</p>
+<p>참고로 학습 데이터용 vs-Det 대국(<code>_sample_vs_det_max_depth(epoch)</code>로 상대 깊이를 에폭에 따라 뽑음)은 평가와 분리돼 있어. 주석: "evaluate_vs_deterministic/run_gating_check hold as an untouched promotion metric". 평가용 상대는 건드리지 않는다는 원칙이야. 그리고 현재 설정은 <code>num_vs_deterministic_games=0</code>, <code>refresh_vsdet_games=0</code>이라 학습 쪽 vs-Det 대국은 꺼져 있어.</p>
+
+<!-- ============================================================ -->
+<h2 id="s5">5. Rapfi라는 자(尺)</h2>
+
+<h3>5.1 Rapfi는 무엇인가</h3>
+<p>Rapfi는 오목 AI 대회 Gomocup의 2024년 우승 엔진이야(rapfi_match.py 첫 줄: "Our model vs Rapfi (Gomocup 2024 champion engine), 11x11 freestyle"). 실행 파일은 <code>engines\rapfi\pbrain-rapfi-windows-avx2.exe</code>야. 이 엔진의 구조를 대화 기록에서 정리했던 내용을 요약하면:</p>
+<ul>
+<li>알파-베타 계열 탐색 + 강력한 위협 해법기(VCF 등).</li>
+<li>평가 함수는 원래 신경망(Mixnet, 그리고 15x15에서는 NNUE 방식의 작은 신경망)을 쓰는데, KataGomo가 만든 대량의 국면으로 증류 학습한 가중치야.</li>
+<li><b>그런데 11x11용 가중치가 없어서 신경망이 꺼진다.</b> 그래서 우리가 상대한 건 사람이 설계한 전통적 패턴 평가 버전의 Rapfi야.</li>
+</ul>
+<div class="box warn">
+<b>보고서 표기 규칙.</b> 대화 기록(2026-09-28경)에서 정한 대로, 결과를 쓸 때는 "Rapfi (11×11, 신경망 평가 비활성)"이라고 명시해야 해. "Gomocup 챔피언과 대등"이라고만 쓰면 과장이야. 우리가 이긴 상대는 Rapfi의 최상위 형태가 아니야. 이 점이 15x15로 넘어가고 싶은 이유 중 하나이기도 해: 15x15에서는 Rapfi 최강 버전과 비교할 수 있으니까.
+</div>
+<p class="small">(신경망 비활성 여부를 Rapfi 출력에서 직접 확인한 원문 로그는 이번에 찾아보지 않았어. 위 내용은 대화 기록의 설명에 근거해.)</p>
+
+<h3>5.2 "자"로서 Rapfi의 장점</h3>
+<ul>
+<li><b>외부 기준:</b> 우리 모델과 같은 방향으로 틀릴 이유가 없어. 게이트의 "자기 자신과 비교" 문제를 피해.</li>
+<li><b>세기 조절 가능:</b> 탐색 노드 수를 제한하면 아주 약한 Rapfi부터 매우 강한 Rapfi까지 연속적인 사다리를 만들 수 있어.</li>
+<li><b>측정 전용:</b> rapfi_match.py 머리 주석: "MEASUREMENT ONLY (2026-09-28) -- nothing here feeds training." Rapfi의 수가 학습 데이터로 들어가지 않아. 자가 지도학습(AlphaZero 원칙)을 지키면서 바깥에서 재기만 해.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s6">6. pbrain 프로토콜과 rapfi_match.py</h2>
+
+<h3>6.1 Gomocup 프로토콜 (pbrain)</h3>
+<p>Gomocup 엔진은 모두 같은 텍스트 프로토콜로 대화해. 표준 입력으로 명령을 보내고 표준 출력으로 답을 받아. 이 프로젝트가 실제로 쓰는 명령만 정리할게.</p>
+<table>
+<tr><th>보내는 명령</th><th>뜻</th><th>엔진 응답</th></tr>
+<tr><td><code>START 11</code></td><td>11×11 판으로 시작</td><td><code>OK</code> (또는 ERROR)</td></tr>
+<tr><td><code>INFO rule 0</code></td><td>규칙 0 = freestyle (다섯 이상이면 승, 금수 없음)</td><td>없음</td></tr>
+<tr><td><code>INFO timeout_turn ms</code></td><td>한 수 시간 제한</td><td>없음</td></tr>
+<tr><td><code>INFO timeout_match 100000000</code></td><td>대국 전체 시간 (사실상 무제한)</td><td>없음</td></tr>
+<tr><td><code>INFO max_memory 0</code></td><td>메모리 제한 없음</td><td>없음</td></tr>
+<tr><td><code>INFO max_node N</code></td><td>한 수당 탐색 노드 상한</td><td>없음</td></tr>
+<tr><td><code>BOARD</code> … <code>x,y,who</code> … <code>DONE</code></td><td>현재 판 전체를 보내고 둘 차례 요청</td><td><code>x,y</code> (엔진의 수)</td></tr>
+<tr><td><code>END</code></td><td>종료</td><td></td></tr>
+</table>
+
+<h3>6.2 실제 코드</h3>
+<pre><code>class Rapfi:
+    def __init__(self, ms, nodes=None):
+        self.p = subprocess.Popen([RAPFI_EXE], cwd=RAPFI_DIR, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True, bufsize=1)
+        self.send(f"START {N}")
+        self._wait_ok()
+        for cmd in ("INFO rule 0", f"INFO timeout_turn {ms}", "INFO timeout_match 100000000", "INFO max_memory 0"):
+            self.send(cmd)
+        if nodes:
+            self.send(f"INFO max_node {nodes}")
+...
+    def move(self, moves, me):
+        """moves: list of (player, r, c) played so far; me: Rapfi's color."""
+        self.send("BOARD")
+        for pl, r, c in moves:
+            self.send(f"{c},{r},{1 if pl == me else 2}")  # Gomocup: x=column, y=row
+        self.send("DONE")
+        while True:
+            l = self._readline()
+            if l.startswith(("MESSAGE", "DEBUG", "OK")) or not l:
+                continue
+            if l.startswith("ERROR"):
+                raise RuntimeError(l)
+            x, y = l.split(",")
+            return int(y), int(x)</code></pre>
+
+<p>세 가지 디테일이 중요해.</p>
+<ol>
+<li><b>좌표 순서:</b> 우리 코드는 (행 r, 열 c)인데 Gomocup은 (x=열, y=행)이야. 그래서 보낼 때 <code>f"{c},{r},..."</code>, 받을 때 <code>return int(y), int(x)</code>로 뒤집어. 이걸 틀리면 판이 대각선으로 뒤집힌 채 두게 돼. 무서운 건 그래도 "대국은 진행된다"는 점이야. 에러 없이 이상한 결과만 나와.</li>
+<li><b>who 값:</b> 1 = 엔진 자신의 돌, 2 = 상대 돌. 색(X/O)이 아니라 "누구 것인가"로 보내.</li>
+<li><b>무상태(stateless):</b> 매 수마다 <code>BOARD</code>로 판 전체를 다시 보내. 머리 주석: "is sent the full position with BOARD before each of its moves, so it is stateless between moves." 이렇게 하면 엔진 내부 상태가 꼬일 일이 없어. 대신 엔진의 이전 탐색 트리를 재사용하는지는 엔진 구현에 달렸어(확인 안 함).</li>
+</ol>
+
+<h3>6.3 우리 쪽 설정</h3>
+<pre><code>Our side: the tracked best checkpoint + the production engine
+(mcts_core: solver build), no noise, greedy.
+
+Each game starts from a fixed opening stone for X (cycling through a
+spread-out list) so games differ; colors alternate game by game.</code></pre>
+<pre><code>OPENINGS = [(5, 5), (4, 5), (5, 4), (4, 4), (6, 4), (3, 5), (5, 3), (4, 6)]</code></pre>
+<ul>
+<li>우리 모델: C++ 엔진 mcts_core (해법기 포함 빌드), 1100 시뮬레이션, 노이즈 없음, 방문 수 최대인 수를 선택(greedy).</li>
+<li>시작: X의 첫 돌을 위 8개 칸 중 하나에 미리 놓고 시작. 판마다 순환하고, 색은 판마다 번갈아.</li>
+</ul>
+<p>rapfi_match_log.jsonl의 opening 분포를 세어 보면 (5,5)와 (4,5)가 각 374~375번, 나머지는 170~204번이야. 20판짜리 측정에서 8개 시작점을 순환하면 앞쪽 4개가 3번, 뒤쪽 4개가 2번씩 쓰이니까(20 = 8+8+4), 앞쪽 시작점이 더 많이 나오는 게 자연스러워. (5,5)와 (4,5)가 특히 많은 건 초기의 6판짜리 실험들이 앞에서부터 썼기 때문으로 보여.</p>
+
+<div class="box note">
+<b>"20판 = 20개의 서로 다른 시작"이 아니다.</b> 8개 시작점 × 색 2가지 = 최대 16가지 조합이야. 20판이면 조합 일부가 반복돼. 그런데 반복된 조합이라도 Rapfi의 노드 제한 탐색과 우리 탐색이 둘 다 결정적이면 <b>완전히 같은 판</b>이 될 수 있어. 판 순서상 n번째 판과 n+16번째 판은 시작점과 색이 같아(8과 2의 최소공배수가 8이라 실제로는 8판 주기로 시작점이 돌아오고, 색은 짝홀로 번갈아서 16판 주기). 이 점이 11절의 결정성 발견과 연결돼. 실제로 20판이 몇 개의 "진짜 서로 다른 판"인지는 이번에 판 수순을 비교해 확인하지 않았어.
+</div>
+
+<h3>6.4 로그 형식</h3>
+<p>한 판마다 rapfi_match_log.jsonl에 한 줄이 붙어. 첫 줄의 예:</p>
+<pre><code>{"time": "2026-09-28 09:16:53", "ai": "X", "opening": [5, 5], "result": "rapfi_win", "plies": 36,
+ "sims": 1100, "rapfi_ms": 2000, "moves": [["X", 5, 5], ["O", 4, 4], ...]}</code></pre>
+<p>전체 1,851줄 중 결과는 <b>AI 승 816 / Rapfi 승 828 / 무 207</b>이야. 이건 서로 다른 조건(시간, 노드 수, 모델)이 섞인 합계라 실력 지표로는 의미가 없어. 다만 "측정 인프라가 1,851판을 돌렸다"는 규모 감각용이야.</p>
+
+<!-- ============================================================ -->
+<h2 id="s7">7. 시간 제한에서 노드 제한으로</h2>
+
+<h3>7.1 첫날 (2026-09-28 오전) 시간 제한 실험</h3>
+<p>처음에는 Rapfi에게 "한 수에 몇 ms"를 줬어. 로그 앞부분 24판을 그대로 정리하면:</p>
+<table>
+<tr><th>Rapfi 시간/수</th><th>판수</th><th>AI 승</th><th>Rapfi 승</th><th>무</th></tr>
+<tr><td>2000 ms</td><td>6</td><td>0</td><td>6</td><td>0</td></tr>
+<tr><td>200 ms</td><td>6</td><td>0</td><td>6</td><td>0</td></tr>
+<tr><td>50 ms</td><td>6</td><td>2</td><td>4</td><td>0</td></tr>
+<tr><td>10 ms</td><td>6</td><td>6</td><td>0</td><td>0</td></tr>
+</table>
+<p>그리고 노드 제한 10,000으로 6판: AI 1승 5패. 노드 100으로는 (여러 측정 합계) 50판 중 AI 29승 14패 7무.</p>
+
+<h3>7.2 시간 제한의 문제</h3>
+<ul>
+<li><b>기계 의존적:</b> 같은 200 ms라도 내 노트북과 다른 컴퓨터에서 Rapfi가 보는 수의 양이 달라. 심지어 같은 노트북에서도 백그라운드에서 학습이 돌고 있으면(GPU/CPU 공유) 달라져.</li>
+<li><b>비결정적:</b> 시간이 조금만 달라도 탐색 깊이가 달라져서, 같은 국면에서 다른 수를 둘 수 있어.</li>
+</ul>
+<p>그래서 <code>INFO max_node</code>로 바꿨어. rapfi_ladder.py 머리 주석: "fixed search-node budgets (a machine-independent yardstick, unlike a time limit)". 노드 제한일 때 시간 제한은 30초로 늘려서 안전망으로만 둬(<code>ms = 30000 if nodes else int(lim)</code>).</p>
+
+<svg viewBox="0 0 560 120" width="100%" role="img" aria-label="시간 제한과 노드 제한 비교">
+<g fill="none" stroke="currentColor" stroke-width="1.5">
+<rect x="10" y="10" width="250" height="100" rx="8"/>
+<rect x="300" y="10" width="250" height="100" rx="8"/>
+</g>
+<g fill="currentColor" font-size="13">
+<text x="25" y="35">시간 제한 (timeout_turn)</text>
+<text x="25" y="58">• 같은 200ms → 기계마다 다른 노드 수</text>
+<text x="25" y="78">• 학습이 동시에 돌면 더 적게 봄</text>
+<text x="25" y="98">• 같은 국면 → 다른 수 가능</text>
+<text x="315" y="35">노드 제한 (max_node)</text>
+<text x="315" y="58">• 1000노드 = 어디서나 1000노드</text>
+<text x="315" y="78">• 기계 부하와 무관</text>
+<text x="315" y="98">• 같은 국면 → 같은 수 (결정적)</text>
+</g>
+</svg>
+
+<!-- ============================================================ -->
+<h2 id="s8">8. 대등 국면 사다리 (rapfi_ladder.py)</h2>
+
+<h3>8.1 아이디어</h3>
+<p>Rapfi의 노드 수를 여러 단계로 바꿔 가며 붙어 보면, 노드가 적을 땐 우리가 이기고 노드가 많을 땐 우리가 져. 그 사이 어딘가에 <b>우리가 정확히 50%를 내는 노드 수</b>가 있어. 이것을 "대등 국면 수(equal-strength nodes)"라고 불러. 이 숫자가 클수록 모델이 강하다는 뜻이야. 하나의 숫자로 실력을 표현할 수 있어서 시간에 따른 추세를 그리기 좋아.</p>
+
+<svg viewBox="0 0 520 200" width="100%" role="img" aria-label="사다리 개념도">
+<g stroke="currentColor" fill="none" stroke-width="1.2">
+<line x1="50" y1="170" x2="500" y2="170"/>
+<line x1="50" y1="20" x2="50" y2="170"/>
+<line x1="50" y1="95" x2="500" y2="95" stroke-dasharray="4 4"/>
+<path d="M60 40 C 180 60, 260 95, 330 110 S 460 150, 495 160" stroke-width="2"/>
+<line x1="290" y1="95" x2="290" y2="170" stroke-dasharray="2 3"/>
+</g>
+<g fill="currentColor" font-size="12">
+<text x="5" y="30">점수</text>
+<text x="10" y="99">50%</text>
+<text x="380" y="190">Rapfi 노드 수 (로그 눈금)</text>
+<text x="295" y="185">대등 국면</text>
+<text x="80" y="60">우리가 이김</text>
+<text x="400" y="140">우리가 짐</text>
+</g>
+</svg>
+
+<h3>8.2 단계와 판수</h3>
+<pre><code>LEVELS = [int(x) for x in os.environ.get("RAPFI_LEVELS", "300,1000,2000,3000").split(",")]</code></pre>
+<ul>
+<li>처음(9/28 13:34, 15:45)에는 <b>100, 300, 1000, 3000</b> 단계, 단계당 <b>10판</b>.</li>
+<li>9/28 19:54부터 단계당 <b>20판</b>.</li>
+<li>9/29 00:58부터 단계가 <b>300, 1000, 2000, 3000</b>으로 바뀜. 모델이 100노드는 확실히 이기게 돼서, 대등점 근처를 더 촘촘하게 보려고 2000을 넣었어.</li>
+</ul>
+<p>우리 쪽은 1100 시뮬레이션. 한 단계 20판에 대략 8~25분, 사다리 한 번에 1시간 반 정도 걸렸어(로그의 <code>minutes</code> 필드).</p>
+
+<h3>8.3 사다리가 하는 일 (코드 흐름)</h3>
+<pre><code>    for nodes in LEVELS:
+        start = sum(1 for _ in open(MATCH_LOG, encoding="utf-8")) if os.path.exists(MATCH_LOG) else 0
+        t0 = time.time()
+        subprocess.run([sys.executable, "-u", "rapfi_match.py", str(games), str(sims), f"n{nodes}", ckpt],
+                       cwd=TENX, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(MATCH_LOG, encoding="utf-8") as f:
+            rows = [json.loads(l) for l in f.readlines()[start:]]
+        w = sum(r["result"] == "ai_win" for r in rows)
+        ...</code></pre>
+<p>각 단계마다 rapfi_match.py를 별도 프로세스로 실행하고, 매치 로그에서 "실행 전 줄 수 이후에 새로 붙은 줄"만 읽어서 집계해. 단순하지만, 이 방식에는 숨은 가정이 있어: <b>그 사이에 다른 프로세스가 같은 매치 로그에 쓰지 않는다.</b> 만약 사다리 두 개를 동시에 돌리면 서로의 판을 섞어 세게 돼. (이런 사고가 실제로 났는지는 확인하지 못했어.)</p>
+
+<h3>8.4 스냅샷 체크포인트</h3>
+<p>로그의 checkpoint 이름을 보면 <code>_rapfi_ladder_snapshot.pth</code>, <code>_rapfi_latest_ep620.pth</code>, <code>_rapfi_best_ep625.pth</code> 같은 것들이 있어. 학습이 도는 동안 best 파일이 승격으로 바뀔 수 있으니, 사다리 시작 시점에 복사본을 떠 놓고 그걸로 재는 거야. 1시간 반 측정 도중에 모델이 바뀌면 단계마다 다른 모델을 재게 되니까. <code>_rapfi_ladder_snapshot.pth</code>는 "그 시점의 best", <code>_rapfi_latest_epN.pth</code>는 "그 시점의 학습 중 최신 모델"이야.</p>
+
+<!-- ============================================================ -->
+<h2 id="s9">9. 함정 1: 단일 교차점 규칙의 착시 (ep555 "1,250"의 진실)</h2>
+
+<h3>9.1 원래 규칙</h3>
+<p>처음 사다리 코드는 이렇게 대등점을 구했어. 지금도 참고용으로 남아 있어.</p>
+<pre><code>    # node budget where our score would be 50% (log-linear interpolation)
+    eq = None
+    for a, b in zip(results, results[1:]):
+        if a["score"] &gt;= 0.5 &gt;= b["score"] and a["score"] != b["score"]:
+            t = (a["score"] - 0.5) / (a["score"] - b["score"])
+            eq = 10 ** (math.log10(a["nodes"]) + t * (math.log10(b["nodes"]) - math.log10(a["nodes"])))</code></pre>
+<p>말로 하면: 이웃한 두 단계 a, b 사이에서 점수가 50%를 위에서 아래로 가로지르면, 그 둘을 로그 눈금 위의 직선으로 이어서 50%가 되는 지점을 찾아. 루프가 끝까지 돌기 때문에 교차가 여러 번이면 <b>마지막 교차점</b>이 채택돼.</p>
+
+<h3>9.2 ep555에서 일어난 일</h3>
+<p>9/28 19:54 사다리(대화 기록상 epoch 555 무렵 best)의 결과:</p>
+<table>
+<tr><th>Rapfi 노드</th><th>승</th><th>패</th><th>무</th><th>점수</th></tr>
+<tr><td>100</td><td>12</td><td>6</td><td>2</td><td>0.65</td></tr>
+<tr><td>300</td><td>9</td><td>8</td><td>3</td><td>0.525</td></tr>
+<tr><td>1000</td><td>9</td><td>7</td><td>4</td><td><b>0.55</b></td></tr>
+<tr><td>3000</td><td>5</td><td>13</td><td>2</td><td>0.30</td></tr>
+</table>
+<p>300에서 0.525, 1000에서 0.55. 1000 단계가 300 단계보다 오히려 점수가 높아. 이건 실력의 진짜 모양이 아니라 20판의 흔들림이야. 그런데 옛 규칙은 "1000(0.55)과 3000(0.30) 사이에서 50%를 가로지른다"만 봐.</p>
+<pre><code>t  = (0.55 - 0.5) / (0.55 - 0.30) = 0.2
+eq = 10^( log10(1000) + 0.2 × (log10(3000) - log10(1000)) )
+   = 10^( 3 + 0.2 × 0.4771 ) = 10^3.0954 ≈ 1,246</code></pre>
+<p>로그에 찍힌 값도 정확히 <code>"equal_nodes": 1245.7309396155179</code>야. 대화에서 이걸 "대등 국면 약 1,250, 기준 1,000 돌파"라고 보고했어.</p>
+
+<h3>9.3 무엇이 문제였나</h3>
+<ul>
+<li><b>네 단계 중 두 단계만 씀:</b> 100과 300의 정보(0.65, 0.525)는 완전히 버려져.</li>
+<li><b>한 단계의 운에 전부를 걸어:</b> 1000 단계의 20판 중 한 판만 졌어도(0.55 → 0.50 이하) 교차점이 크게 이동해.</li>
+<li><b>교차가 여러 번이면 임의적:</b> 점수가 단조감소하지 않으면 "마지막 교차"가 뽑히는데, 이건 아무 근거 없는 선택이야.</li>
+</ul>
+<p>실제로 옛 규칙의 값은 측정마다 100 ~ 1,246 사이를 널뛰었어. 9/28 15:45 측정에서는 100 단계가 정확히 0.5라 대등점이 <code>100.0</code>으로 찍혔어. 코드 주석: "The single-crossing rule above swung 100..1250 on 20-game noise; kept for reference."</p>
+
+<div class="box warn">
+<b>사과와 정정의 기록.</b> 9/29 01:28 대화에서 새 방식으로 다시 계산하자 epoch 555는 <b>약 575</b>, epoch 580(옛 규칙 1,000)은 <b>약 382</b>로 바뀌었어. "이미 한 번 1,000을 넘었다"는 전날 밤의 판단은 틀렸다고 공식 정정했어. 그리고 선택지 A(새 방식 + 기준 1,000 유지)와 B(새 방식 + 기준 조정) 중 <b>A</b>를 사용자가 골랐어("A로 하자", 01:29). 기준을 계산법에 맞춰 낮추지 않고, 더 엄격한 쪽을 택한 거야.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s10">10. 새 규칙: 판수 가중 최소제곱 직선</h2>
+
+<h3>10.1 직관</h3>
+<p>점(단계) 몇 개 가운데 둘만 고르지 말고, <b>모든 점을 가장 잘 지나는 직선 하나</b>를 긋자. x축은 log10(노드 수), y축은 그 단계의 Elo 차이야. 그 직선이 Elo = 0(=점수 50%)을 지나는 x가 대등점이야.</p>
+<p>왜 x를 로그로 하나? 탐색량을 두 배 할 때마다 실력이 대략 일정량씩 늘어난다는 경험칙 때문이야. 그래서 "노드 수의 로그"와 "Elo"가 대략 직선 관계가 돼. 왜 y를 점수 대신 Elo로 하나? 점수는 0과 1에 갇혀 있어서 끝으로 갈수록 휘어지는데, Elo로 펴면 직선에 가까워지기 때문이야.</p>
+
+<h3>10.2 최소제곱이란</h3>
+<p>점 (x<sub>i</sub>, y<sub>i</sub>)들과 직선 y = a + b·x가 있을 때, 각 점의 세로 오차 y<sub>i</sub> − (a + b·x<sub>i</sub>)를 제곱해서 더한 값을 가장 작게 하는 a, b를 고르는 게 최소제곱이야. 가중 최소제곱은 각 제곱 오차에 가중치 w<sub>i</sub>를 곱해서 더해. 여기서 가중치는 그 단계의 판수야. 판을 많이 둔 단계일수록 더 믿을 만하니까.</p>
+<p>미분해서 0으로 두면 해가 이렇게 나와 (가중 평균 m<sub>x</sub>, m<sub>y</sub>를 쓰면 깔끔해):</p>
+<pre><code>m_x = Σ w·x / Σ w          m_y = Σ w·y / Σ w
+S_xx = Σ w·(x - m_x)²      S_xy = Σ w·(x - m_x)·(y - m_y)
+기울기 b = S_xy / S_xx
+직선은 (m_x, m_y)를 지남:  y = m_y + b·(x - m_x)
+y = 0 이 되는 x*:  x* = m_x - m_y / b
+대등 노드 = 10^(x*)</code></pre>
+
+<h3>10.3 실제 코드</h3>
+<pre><code>    crossing = eq
+    # 2026-09-29 (user decision): the official equal-strength point is a games-weighted
+    # least-squares line of Elo vs log10(nodes) over ALL levels, solved for Elo = 0.
+    # The single-crossing rule above swung 100..1250 on 20-game noise; kept for reference.
+    xs = [math.log10(r["nodes"]) for r in results]
+    ws = [r["games"] for r in results]
+    ys = [400 * math.log10(min(max(r["score"], 0.03), 0.97) / (1 - min(max(r["score"], 0.03), 0.97))) for r in results]
+    sw = sum(ws)
+    mx = sum(w * x for w, x in zip(ws, xs)) / sw
+    my = sum(w * y for w, y in zip(ws, ys)) / sw
+    sxx = sum(w * (x - mx) ** 2 for w, x in zip(ws, xs))
+    sxy = sum(w * (x - mx) * (y - my) for w, x, y in zip(ws, xs, ys))
+    slope = sxy / sxx if sxx &gt; 0 else 0.0
+    eq = 10 ** (mx - my / slope) if slope &lt; 0 else ("above max level" if my &gt; 0 else "below min level")</code></pre>
+<p>위 수식과 한 줄 한 줄 대응돼. 마지막 줄의 조건 <code>slope &lt; 0</code>이 중요해: 노드가 많을수록 우리가 불리해져야 정상이니 기울기는 음수여야 해. 만약 양수나 0이면(데이터가 이상하면) 대등점을 계산하지 않고 "above/below" 문자열을 남겨. 로그에는 <code>equal_nodes</code>(새 방식, 공식), <code>equal_nodes_crossing</code>(옛 방식, 참고), <code>fit_slope</code>(기울기, 노드 10배당 Elo)가 함께 찍혀. 9/29 12:35 로그부터 세 필드가 모두 있어.</p>
+
+<h3>10.4 손으로 따라가기 1: ep555 (9/28 19:54)</h3>
+<table>
+<tr><th>노드</th><th>x = log10</th><th>점수</th><th>y = Elo</th><th>x − m<sub>x</sub></th></tr>
+<tr><td>100</td><td>2.000</td><td>0.65</td><td>+107.5</td><td>−0.739</td></tr>
+<tr><td>300</td><td>2.477</td><td>0.525</td><td>+17.4</td><td>−0.261</td></tr>
+<tr><td>1000</td><td>3.000</td><td>0.55</td><td>+34.9</td><td>+0.261</td></tr>
+<tr><td>3000</td><td>3.477</td><td>0.30</td><td>−147.2</td><td>+0.739</td></tr>
+</table>
+<p>판수가 모두 20이라 가중치가 같아서 그냥 평균이야. m<sub>x</sub> ≈ 2.739, m<sub>y</sub> ≈ 3.2. S<sub>xy</sub>/S<sub>xx</sub> ≈ −183.6/1.228 ≈ −149.5 (노드 10배당 약 150 Elo). x* = 2.739 − 3.2/(−149.5) ≈ 2.760 → 10<sup>2.760</sup> ≈ <b>575</b>. 대화 기록의 "약 575"와 일치해.</p>
+
+<svg viewBox="0 0 520 240" width="100%" role="img" aria-label="ep555 사다리: 옛 규칙과 새 규칙 비교">
+<g stroke="currentColor" fill="none" stroke-width="1">
+<line x1="60" y1="20" x2="60" y2="220"/>
+<line x1="60" y1="120" x2="470" y2="120" stroke-dasharray="4 4"/>
+<line x1="60" y1="220" x2="470" y2="220"/>
+<line x1="60" y1="63" x2="460" y2="175" stroke-width="2"/>
+<polyline points="327,103 454,194" stroke-dasharray="6 3" stroke-width="1.5"/>
+</g>
+<g fill="currentColor">
+<circle cx="60" cy="66" r="4"/><circle cx="187" cy="111" r="4"/><circle cx="327" cy="103" r="4"/><circle cx="454" cy="194" r="4"/>
+</g>
+<g fill="currentColor" font-size="11">
+<text x="8" y="24">+200</text><text x="22" y="124">0</text><text x="8" y="218">−200</text>
+<text x="52" y="236">100</text><text x="177" y="236">300</text><text x="314" y="236">1000</text><text x="440" y="236">3000</text>
+<text x="230" y="140">새 규칙 x*≈575</text>
+<text x="345" y="112">옛 규칙 ≈1,246</text>
+<text x="300" y="40">실선: 가중 최소제곱 직선</text>
+<text x="300" y="55">점선: 1000–3000 두 점만 잇는 옛 규칙</text>
+</g>
+<g stroke="currentColor"><line x1="263" y1="114" x2="263" y2="126"/><line x1="352" y1="114" x2="352" y2="126"/></g>
+</svg>
+<p class="small">(y축은 Elo 차, x축은 노드 수의 로그 눈금. 좌표는 손계산 값을 비율대로 옮긴 거라 대략적이야.)</p>
+
+<h3>10.5 손으로 따라가기 2: 졸업 모델 ep625 (9/29 14:22)</h3>
+<table>
+<tr><th>노드</th><th>승</th><th>패</th><th>무</th><th>점수</th><th>Elo</th></tr>
+<tr><td>300</td><td>10</td><td>8</td><td>2</td><td>0.55</td><td>+34.9</td></tr>
+<tr><td>1000</td><td>11</td><td>8</td><td>1</td><td>0.575</td><td>+52.5</td></tr>
+<tr><td>2000</td><td>8</td><td>8</td><td>4</td><td>0.50</td><td>0</td></tr>
+<tr><td>3000</td><td>7</td><td>12</td><td>1</td><td>0.375</td><td>−88.7</td></tr>
+</table>
+<p>m<sub>x</sub> ≈ 3.064, m<sub>y</sub> ≈ −0.34. 기울기 ≈ −60.5/0.575 ≈ −105.1. x* = 3.064 − (−0.34)/(−105.1) ≈ 3.0605 → 10<sup>3.0605</sup> ≈ <b>1,150</b>. 로그의 <code>"equal_nodes": 1149.6478496600537, "fit_slope": -105.11371767448573</code>과 일치해. 옛 규칙은 2000에서 정확히 0.5라 <code>equal_nodes_crossing = 2000.0000000000002</code>였어. 새 규칙이 옛 규칙보다 훨씬 보수적으로 나온 사례야.</p>
+
+<div class="box note">
+<b>기울기도 정보다.</b> fit_slope는 "Rapfi 노드를 10배 늘리면 우리 점수가 Elo로 몇이나 떨어지나"야. ep625는 −105로 완만했고, ep740은 −476으로 가팔랐어. 기울기가 완만하면 대등점 추정이 불안정해져(작은 y 변화가 x*를 크게 움직임). x* = m<sub>x</sub> − m<sub>y</sub>/b에서 b가 0에 가까울수록 m<sub>y</sub>의 작은 흔들림이 크게 증폭되니까. 그러니 ep625의 1,150도 "약 1,000 근처"로 읽는 게 정직해.
+</div>
+
+<h3>10.6 이 방법의 한계 (내가 판단하기에)</h3>
+<ul>
+<li>"Elo가 log(노드)에 선형"이라는 가정은 근사야. 실제로는 곡선일 수 있어.</li>
+<li>가중치가 모두 20이라 사실상 일반 최소제곱과 같아. 단계별로 점수의 분산이 다르다는 점(0.5 근처가 가장 큼)은 반영 안 해.</li>
+<li>오차 막대(신뢰구간)를 계산하지 않아. 그래서 "1,150 &gt; 1,000"이 통계적으로 의미 있는 차이인지는 이 숫자만으로는 말할 수 없어.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s11">11. 함정 2: 사다리는 완전히 결정적이다</h2>
+
+<h3>11.1 발견</h3>
+<p>9/29 05:41에 epoch 600을 쟀고, 같은 모델을 10:57에 다시 쟀어. 결과가 이랬어.</p>
+<table>
+<tr><th>노드</th><th>1차 (05:41)</th><th>재측정 (10:57)</th></tr>
+<tr><td>300</td><td>13승 7패 0무</td><td>13승 7패 0무</td></tr>
+<tr><td>1000</td><td>8승 10패 2무</td><td>8승 10패 2무</td></tr>
+<tr><td>2000</td><td>6승 12패 2무</td><td>6승 12패 2무</td></tr>
+<tr><td>3000</td><td>5승 13패 2무</td><td>5승 13패 2무</td></tr>
+<tr><td>대등 국면 (옛)</td><td>740</td><td>740</td></tr>
+</table>
+<p>네 단계 80판이 <b>한 판도 다르지 않았어.</b> 졸업 문제 채점도 3번 모두 같은 수를 뒀어. 그 뒤로도 이 패턴이 반복돼: 로그를 보면 9/29 22:07, 9/30 04:37, 9/30 10:52, 9/30 16:30의 스냅샷 측정 네 개가 300:15-4-1, 1000:11-6-3, 2000:8-10-2, 3000:7-12-1로 <b>완전히 같아.</b> 그 기간 동안 best가 바뀌지 않았다는 뜻이야. 10/1 05:25와 10:37도 서로 완전히 같아.</p>
+
+<h3>11.2 왜 결정적인가</h3>
+<ol>
+<li><b>시작 국면이 고정:</b> 8개 시작점을 정해진 순서로 순환, 색도 정해진 순서로 번갈아.</li>
+<li><b>우리 AI에 랜덤이 없음:</b> 디리클레 노이즈 없음, 온도 없이 방문 수 최대 수 선택. 같은 신경망 + 같은 국면 → 같은 탐색 → 같은 수.</li>
+<li><b>Rapfi도 노드 제한이면 결정적:</b> 시간이 아니라 노드 수로 끊으니 같은 국면에서 같은 수.</li>
+</ol>
+<p>세 가지가 모두 결정적이면 대국 전체가 결정적이야. 수학적으로 말하면 <b>사다리 결과는 모델 가중치의 순수 함수</b>야.</p>
+<div class="box warn">
+<b>단, GPU 연산의 비결정성.</b> 이론상 GPU의 부동소수점 연산 순서(배치 크기, 병렬 합산 순서)에 따라 신경망 출력이 소수점 아래 끝자리에서 미세하게 달라질 수 있어. 그게 방문 수 동점을 깨는 방향으로 작용하면 수가 바뀔 수도 있어. 그런데 실측 결과 같은 모델 80판이 완전히 동일했으니, 적어도 이 설정에서는 그런 일이 관측되지 않았어. 반대로 웹 서버에서는 "여러 판이 동시에 탐색하고 트리를 재사용해서 매번 완전히 똑같지 않았던 것으로 보여"라는 관찰이 대화 기록에 있어. 결정성은 설정에 따라 깨질 수 있다는 걸 기억해 둬.
+</div>
+
+<h3>11.3 결정성이 뜻하는 것</h3>
+<ul>
+<li><b>같은 모델을 다시 재는 건 의미가 없다.</b> 이후 서버/스크립트는 "가중치가 같으면 한 번만 재도록" 바뀌었어(대화 기록, 9/29경).</li>
+<li><b>"측정 노이즈"의 정체가 바뀐다.</b> 555, 580, 600 사이에서 숫자가 크게 흔들린 건 주사위 운이 아니라, <b>모델이 조금만 바뀌어도 20개 판 중 몇 개의 결과가 뒤집히기</b> 때문이야. 같은 20판으로 모델을 비교하는 건 "고정된 20문제 시험"과 같아. 시험 문제가 적으면 공부를 조금 다르게 했을 때 점수가 크게 출렁여.</li>
+<li><b>그래도 2절의 표준편차 감각은 유효하다.</b> "20개 시작 국면이라는 표본"이 "모든 가능한 국면"을 대표하는지에 대한 불확실성은 여전히 남으니까. 다만 그 불확실성은 같은 모델을 반복 측정해서는 줄일 수 없고, 시작 국면 수를 늘려야만 줄어.</li>
+</ul>
+
+<div class="box good">
+<b>4절과의 연결.</b> vs-Det에서 "결정적 평가의 판수 = 서로 다른 시작 국면 수"라는 교훈을 얻었는데, Rapfi 사다리에서도 정확히 같은 구조가 다시 나타났어. 결정적 상대와의 측정에서 표본 크기를 늘리는 유일한 방법은 시작 다양성을 늘리는 거야.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s12">12. 사다리 전체 기록</h2>
+<p>model/rapfi_ladder_log.jsonl의 23줄 전부야. 우리 쪽은 모두 1100 시뮬레이션. 각 칸은 승-패-무(점수). "공식"은 새 가중 직선 방식, "교차"는 옛 단일 교차점 방식. 앞의 6줄은 새 방식 도입 전이라 로그에 공식 값이 없고 옛 값만 <code>equal_nodes</code>에 있어; 그 중 일부의 새 방식 재계산 값은 9/29 01:28 대화의 표에서 가져와 괄호로 표시했어.</p>
+
+<h3>12.1 1기: 100/300/1000/3000 단계</h3>
+<table>
+<tr><th>시각</th><th>체크포인트</th><th>판/단계</th><th>100</th><th>300</th><th>1000</th><th>3000</th><th>옛 규칙</th><th>새 방식(재계산)</th></tr>
+<tr><td>9/28 13:34</td><td>snapshot (ep500 무렵)</td><td>10</td><td>6-2-2 (.70)</td><td>5-3-2 (.60)</td><td>3-6-1 (.35)</td><td>3-7-0 (.30)</td><td>486</td><td>(496)</td></tr>
+<tr><td>9/28 15:45</td><td>ep545</td><td>10</td><td>4-4-2 (.50)</td><td>4-6-0 (.40)</td><td>4-6-0 (.40)</td><td>2-8-0 (.20)</td><td>100</td><td>(120)</td></tr>
+<tr><td>9/28 19:54</td><td>snapshot (ep555)</td><td>20</td><td>12-6-2 (.65)</td><td>9-8-3 (.525)</td><td>9-7-4 (.55)</td><td>5-13-2 (.30)</td><td>1,246</td><td>(575)</td></tr>
+</table>
+
+<h3>12.2 2기: 300/1000/2000/3000 단계, 20판</h3>
+<table>
+<tr><th>시각</th><th>체크포인트</th><th>300</th><th>1000</th><th>2000</th><th>3000</th><th>공식</th><th>교차</th><th>기울기</th></tr>
+<tr><td>9/29 00:58</td><td>snapshot (ep580)</td><td>9-10-1 (.475)</td><td>8-8-4 (.50)</td><td>5-11-4 (.35)</td><td>4-14-2 (.25)</td><td>(382)</td><td>1,000</td><td></td></tr>
+<tr><td>9/29 05:41</td><td>snapshot (ep600)</td><td>13-7-0 (.65)</td><td>8-10-2 (.45)</td><td>6-12-2 (.35)</td><td>5-13-2 (.30)</td><td>(769)</td><td>740</td><td></td></tr>
+<tr><td>9/29 10:57</td><td>snapshot (ep600 재측정)</td><td>13-7-0</td><td>8-10-2</td><td>6-12-2</td><td>5-13-2</td><td>(769)</td><td>740</td><td></td></tr>
+<tr><td>9/29 12:35</td><td>latest ep620</td><td>13-4-3 (.725)</td><td>6-10-4 (.40)</td><td>8-10-2 (.45)</td><td>6-10-4 (.40)</td><td>1,137</td><td>690</td><td>−229</td></tr>
+<tr><td><b>9/29 14:22</b></td><td><b>best ep625</b></td><td>10-8-2 (.55)</td><td>11-8-1 (.575)</td><td>8-8-4 (.50)</td><td>7-12-1 (.375)</td><td><b>1,150</b></td><td>2,000</td><td>−105</td></tr>
+<tr><td>9/29 17:24</td><td>snapshot</td><td>13-3-4 (.75)</td><td>7-11-2 (.40)</td><td>8-10-2 (.45)</td><td>6-13-1 (.325)</td><td>1,068</td><td>709</td><td>−292</td></tr>
+<tr><td>9/29 22:07</td><td>snapshot</td><td>15-4-1 (.775)</td><td>11-6-3 (.625)</td><td>8-10-2 (.45)</td><td>7-12-1 (.375)</td><td>1,623</td><td>1,641</td><td>−307</td></tr>
+<tr><td>9/29 23:41</td><td>latest ep660</td><td>13-7-0 (.65)</td><td>8-8-4 (.50)</td><td>6-10-4 (.40)</td><td>5-14-1 (.275)</td><td>866</td><td>1,000</td><td>−260</td></tr>
+<tr><td>9/30 04:37</td><td>snapshot</td><td colspan="4">9/29 22:07과 완전히 동일</td><td>1,623</td><td>1,641</td><td>−307</td></tr>
+<tr><td>9/30 06:09</td><td>latest ep680</td><td>14-2-4 (.80)</td><td>10-6-4 (.60)</td><td>6-12-2 (.35)</td><td>5-10-5 (.375)</td><td>1,391</td><td>1,320</td><td>−361</td></tr>
+<tr><td>9/30 10:52</td><td>snapshot</td><td colspan="4">9/29 22:07과 완전히 동일</td><td>1,623</td><td>1,641</td><td>−307</td></tr>
+<tr><td>9/30 12:10</td><td>latest ep700</td><td>11-6-3 (.625)</td><td>9-9-2 (.50)</td><td>8-12-0 (.40)</td><td>5-13-2 (.30)</td><td>833</td><td>1,000</td><td>−225</td></tr>
+<tr><td>9/30 16:30</td><td>snapshot</td><td colspan="4">9/29 22:07과 완전히 동일</td><td>1,623</td><td>1,641</td><td>−307</td></tr>
+<tr><td>9/30 17:50</td><td>latest ep720</td><td>10-7-3 (.575)</td><td>9-11-0 (.45)</td><td>10-7-3 (.575)</td><td>6-13-1 (.325)</td><td>880</td><td>2,259</td><td>−119</td></tr>
+<tr><td>9/30 23:23</td><td>snapshot</td><td>13-5-2 (.70)</td><td>13-4-3 (.725)</td><td>5-12-3 (.325)</td><td>4-12-4 (.30)</td><td>1,246</td><td>1,477</td><td>−327</td></tr>
+<tr><td>10/1 00:55</td><td>latest ep740</td><td>17-2-1 (.875)</td><td>13-4-3 (.725)</td><td>7-10-3 (.425)</td><td>5-12-3 (.325)</td><td><b>1,720</b></td><td>1,682</td><td>−476</td></tr>
+<tr><td>10/1 05:25</td><td>snapshot</td><td>14-4-2 (.75)</td><td>11-6-3 (.625)</td><td>7-8-5 (.475)</td><td>5-11-4 (.35)</td><td>1,576</td><td>1,782</td><td>−289</td></tr>
+<tr><td>10/1 10:37</td><td>snapshot</td><td colspan="4">10/1 05:25와 완전히 동일</td><td>1,576</td><td>1,782</td><td>−289</td></tr>
+<tr><td>10/1 11:59</td><td>latest ep780</td><td>12-7-1 (.625)</td><td>10-9-1 (.525)</td><td>7-9-4 (.45)</td><td>6-12-2 (.35)</td><td>1,034</td><td>1,260</td><td>−184</td></tr>
+<tr><td>10/1 16:16</td><td>snapshot</td><td>11-6-3 (.625)</td><td>6-12-2 (.35)</td><td>10-8-2 (.55)</td><td>5-13-2 (.30)</td><td>743</td><td>2,169</td><td>−170</td></tr>
+</table>
+<p class="small">"snapshot"이 어느 epoch의 best인지는 로그에 적혀 있지 않아. 괄호 속 epoch 표기는 대화 기록에서 대응시킨 거야. 9/29 22:07 이후의 snapshot이 정확히 어느 epoch의 best인지는 확인하지 못했어(9/29 17:24와 22:07 결과가 다르니 그 사이에 승격이 있었다는 것만 확실해).</p>
+
+<h3>12.3 이 표에서 읽을 것</h3>
+<ol>
+<li><b>옛 규칙과 새 규칙의 차이:</b> ep720은 옛 규칙 2,259 vs 새 규칙 880. 10/1 16:16은 2,169 vs 743. 두 경우 모두 1000 단계가 2000 단계보다 낮은 "뒤집힘"이 있어서 옛 규칙이 엉뚱한 교차를 잡았어. 새 규칙을 도입하지 않았다면 이런 모델들이 "졸업 기준의 두 배"로 보고됐을 거야.</li>
+<li><b>최고 기록:</b> ep740 latest 1,720. 300노드에서 17승 2패.</li>
+<li><b>결정성의 증거:</b> 같은 snapshot이 반복될 때 결과가 완벽히 같아(9/29 22:07 = 9/30 04:37 = 9/30 10:52 = 9/30 16:30).</li>
+<li><b>단조성 위반이 흔해:</b> 23번 중 여러 번 낮은 노드 단계가 높은 노드 단계보다 점수가 낮아. 20판짜리 고정 시험의 한계야.</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="s13">13. 졸업 문제 (tactical_problem_check.py)</h2>
+
+<h3>13.1 왜 문제 풀이가 필요했나</h3>
+<p>Rapfi 사다리는 "평균적인 강함"을 재. 그런데 사람과 둘 때 지는 판을 보면, 평균은 괜찮은데 <b>특정 유형의 수</b>를 계속 놓쳐서 져. 그래서 실제로 진 판에서 결정적인 국면을 잘라내 "문제"로 만들고, 그걸 풀 수 있는지를 따로 재기로 했어. 이것도 측정 전용이야.</p>
+<pre><code>11x11 "graduation" problems (2026-09-28), MEASUREMENT ONLY -- never used as
+training data. From the 58-ply web game in which a human (with engine help)
+found a 7-ply forced win against the model.</code></pre>
+<p>출처는 2026-09-28 14:35의 웹 대국이야. 사람(엔진 도움을 받은)이 X로 두어 58수 만에 이긴 판. problems.json의 source: "hlt web game 2026-09-28 14:35 (human X with engine help, 58 plies)".</p>
+
+<h3>13.2 채점 방법</h3>
+<pre><code>SIMS = 1100
+TRIAL_SIMS = (900, 1100, 1300)
+RAPFI_MS = 3000
+MAX_PLIES = 40</code></pre>
+<ol>
+<li>문제 국면을 판에 놓아.</li>
+<li>우리 AI가 둘 차례면 C++ 엔진으로 탐색해서 방문 수 최대 수를 둬. 상대 차례면 <b>Rapfi가 3초/수</b>로 둬. 주석: "near-perfect play here". 노드 제한이 아니라 시간 제한이라는 점에 주의해. 여기서는 Rapfi를 약하게 만들 이유가 없으니까.</li>
+<li>누가 오목을 만들거나 40수가 지나면 끝.</li>
+<li>판정:
+<pre><code>                if pr["type"] == "attack":
+                    ok = winner == ai
+                else:
+                    ok = first_ai != pr.get("bad_move") and winner != ('X' if ai == 'O' else 'O')</code></pre>
+공격 문제는 "이겼는가". 방어 문제는 "알려진 나쁜 수를 첫 수로 두지 않았고, 40수 안에 지지 않았는가".</li>
+</ol>
+
+<h3>13.3 세 번 채점, 두 번 통과</h3>
+<p>처음(9/28)엔 문제마다 한 판만 뒀어. 그런데 결정적이니까 한 판의 결과는 "그 시뮬레이션 수에서 우연히 맞았나"에 크게 좌우돼. 1100에서는 맞고 1200에서는 틀리는 식으로. 그래서 사용자 결정(옵션 A)으로 탐색량을 조금씩 바꿔 세 번 두고 두 번 이상 통과하면 합격으로 바꿨어.</p>
+<pre><code>            # 2026-09-28 (user, option A): 3 trials at slightly different search budgets,
+            # pass if &gt;= 2 of 3 pass -- one deterministic game per problem was too noisy
+            trials = []
+            for sims in TRIAL_SIMS:
+                ...
+            n_ok = sum(t["passed"] for t in trials)
+            passed = n_ok &gt;= 2</code></pre>
+<div class="box note">
+<b>생각해 볼 점.</b> 결정적인 시스템에서 "노이즈"를 만들려면 입력을 흔들어야 해. 여기서는 탐색량(900/1100/1300)을 흔든 거야. 이건 "이 수가 특정 탐색량에서만 우연히 나온 게 아니라, 비슷한 탐색량에서 안정적으로 나오는가"를 보는 강건성 검사야. 로그에서 9/29 11:09 측정부터 <code>trials_passed</code>와 <code>trials</code> 필드가 나타나.
+</div>
+
+<h3>13.4 문제 목록</h3>
+<table>
+<tr><th>id</th><th>이름</th><th>유형</th><th>AI 색</th><th>단계(stage)</th></tr>
+<tr><td>web58_p5_attack</td><td>5수 필승 (흑 3수 승, 포크 마무리)</td><td>공격</td><td>X</td><td>1 (졸업)</td></tr>
+<tr><td>web58_p7_attack</td><td>7수 필승 (흑 4수 승, '7수 포크')</td><td>공격</td><td>X</td><td>1 (졸업)</td></tr>
+<tr><td>webB_quiet_three_defense</td><td>조용한 열린3 방어 (웹 최강 패배판 21수)</td><td>방어</td><td>X</td><td>1 (졸업)</td></tr>
+<tr><td>web58_d13_defense</td><td>13수 필패 국면 진입 직전 (백 26수 선택 문제)</td><td>방어</td><td>O</td><td>2 (장학금)</td></tr>
+<tr><td>rapfi_cand3_diag_defense</td><td>구석 대각선 방어 (관찰용, Rapfi전 32수)</td><td>방어</td><td>O</td><td>0 (관찰)</td></tr>
+</table>
+<p>졸업 판정에는 stage 1의 세 문제만 쓰여(로그의 <code>grad_passed / grad_total</code>).</p>
+
+<h3>13.5 문제 하나씩</h3>
+
+<h4>(1) 5수 필승 (web58_p5_attack)</h4>
+<p>58수 웹 대국의 30수 직후, X 차례. Rapfi가 찾은 해답 수순(solution_rapfi):</p>
+<pre><code>X (1,5) → O (2,5) → X (3,7) → O (5,9) → X (0,4)   # win_plies: 5</code></pre>
+<p>X가 3수를 더 두어 이기는 문제야. 마지막은 포크(동시에 두 개의 위협)로 끝나. 거의 모든 측정에서 3/3으로 통과했고, 첫 수는 대개 (1,5), 루트 가치 0.975였어. 10/1 05:32와 10:43의 snapshot은 첫 수가 (5,3), 가치 0.955로 다른 길을 찾았지만 역시 통과했어. 공격 문제는 "이기기만 하면" 통과라 다른 수순도 인정돼.</p>
+
+<h4>(2) 7수 필승 (web58_p7_attack)</h4>
+<p>같은 판 28수 직후, X 차례. X가 4수를 두어 이기는 문제, 일명 "7수 포크". 사람이 실제로 이 수순으로 모델을 이겼어. 5수 문제보다 두 수 더 멀리 봐야 해서, 탐색 트리 안에서 승리 수순이 충분히 일찍 발견되지 않으면 놓쳐. 9/29 05:45~11:09 사이 snapshot(ep600)은 0/3, ep620부터 3/3, ep700과 ep720은 다시 0/3. 모델에 따라 이 문제가 켜졌다 꺼졌다 했다는 게 흥미로워.</p>
+
+<h4>(3) 조용한 열린3 방어 (webB_quiet_three_defense)</h4>
+<p>problems.json의 note를 그대로 옮기면:</p>
+<pre><code>2026-09-28 15:56 web game (2000 sims): AI X played 21.(8,6); human 22.(4,8) made a quiet open three
+in column 8 and won by 26. Value net rated the position after 22 at +0.998 for X while search proves
+it lost. Rapfi 3s as X plays (4,8) itself and holds 40 plies (verified).</code></pre>
+<p>"조용한(quiet)" 수란 당장 4나 5를 만들지 않는, 위협처럼 보이지 않는 수야. 열린 3(양쪽이 막히지 않은 셋)은 다음 수에 열린 4가 되어 막을 수 없게 만들어. 문제는 가치망이 이 국면을 X에게 +0.998(거의 확실한 승리)로 봤다는 거야. 실제로는 진 국면인데. 가치망이 위험을 전혀 감지하지 못하는 "사각지대"야. 해법은 Rapfi처럼 X가 21수째에 상대의 핵심점 (4,8)을 먼저 차지하는 것.</p>
+<p>이 문제의 출처 판은 "웹 판 B"라고 불렸어. 대화 기록에는 판 A와 판 B 두 패배를 비교하며 "둘 다 사람이 만든 세로줄을 AI가 막지 못해서 졌어"라고 분석한 대목이 있어.</p>
+
+<h4>(4) 13수 방어 (web58_d13_defense) — 2단계로 이동</h4>
+<pre><code>After O's actual move 26 (8,9) Rapfi finds a forced X win in 13 plies; after move 25 no forced win
+was found within 40 plies. A good O move 26 keeps the game open.</code></pre>
+<p>25수 직후 O 차례. 모델이 실제 대국에서 둔 (8,9)를 두면 13수짜리 필패 수순에 빠져. 판정은 "(8,9)를 두지 않고 40수 버티기". 13수 앞을 내다봐야 하는 매우 어려운 문제라서, 졸업 기준(stage 1)에서 빼서 <b>stage 2 (장학금 문제)</b>로 옮겼어. 졸업 선언문에도 "(장학금 문제) 13수 방어 3/3"으로 따로 적혀 있어. 9/30 이후 측정들에서는 대부분 0/3이야.</p>
+
+<h4>(5) 구석 대각선 (rapfi_cand3_diag_defense) — 관찰용</h4>
+<pre><code>Observation only (stage 0, not a graduation criterion). From AI's loss vs Rapfi 300 nodes at
+2026-09-28 13:13:38. AI played (5, 8) and lost in 6 plies; Rapfi as AI plays (9, 2) (key point on
+the lower-left diagonal) and survives. ep580 played (3,6) at +0.12 and lost in 6 plies.</code></pre>
+<p>Rapfi 300노드와의 대국에서 진 판 32수 국면이야. 판 구석 쪽 대각선 위협을 못 봤어. 판의 가장자리와 구석은 학습 데이터에서 덜 나오는 영역이라 약할 가능성이 있다는 가설을 관찰하려고 넣었어. 졸업 기준은 아니야.</p>
+
+<!-- ============================================================ -->
+<h2 id="s14">14. 졸업 문제 전체 기록</h2>
+<p>model/tactical_problem_log.jsonl의 24줄. 9/29 11:09 이전은 한 판 채점(통과 O / 실패 X), 이후는 3회 채점의 통과 횟수(n/3, 2 이상이면 통과). "—"는 그 시점에 문제가 없었음.</p>
+<table>
+<tr><th>시각</th><th>체크포인트</th><th>5수</th><th>7수</th><th>열린3</th><th>13수</th><th>대각선</th><th>졸업</th></tr>
+<tr><td>9/28 15:02</td><td>best</td><td>O</td><td>O</td><td>—</td><td>O</td><td>—</td><td>3/3*</td></tr>
+<tr><td>9/28 19:57</td><td>snapshot</td><td>O</td><td>O</td><td>O</td><td>X</td><td>—</td><td>3/4*</td></tr>
+<tr><td>9/29 00:59</td><td>snapshot</td><td>O</td><td>O</td><td>X</td><td>X</td><td>X</td><td>2/3</td></tr>
+<tr><td>9/29 05:45</td><td>snapshot</td><td>O</td><td>X</td><td>X</td><td>O</td><td>X</td><td>1/3</td></tr>
+<tr><td>9/29 11:09</td><td>snapshot (ep600)</td><td>3</td><td>0</td><td>0</td><td>3</td><td>0</td><td>1/3</td></tr>
+<tr><td>9/29 12:44</td><td>latest ep620</td><td>3</td><td>3</td><td>0</td><td>2</td><td>0</td><td>2/3</td></tr>
+<tr><td><b>9/29 13:09</b></td><td><b>best ep625</b></td><td><b>3</b></td><td><b>3</b></td><td><b>2</b></td><td><b>3</b></td><td>0</td><td><b>3/3</b></td></tr>
+<tr><td>9/29 17:34</td><td>snapshot</td><td>3</td><td>3</td><td>1</td><td>1</td><td>0</td><td>2/3</td></tr>
+<tr><td>9/29 22:12</td><td>snapshot</td><td>3</td><td>3</td><td>0</td><td>0</td><td>0</td><td>2/3</td></tr>
+<tr><td>9/29 23:52</td><td>latest ep660</td><td>3</td><td>3</td><td>0</td><td>3</td><td>0</td><td>2/3</td></tr>
+<tr><td>9/30 04:42</td><td>snapshot</td><td>3</td><td>3</td><td>0</td><td>0</td><td>0</td><td>2/3</td></tr>
+<tr><td>9/30 06:19</td><td>latest ep680</td><td>3</td><td>3</td><td>0</td><td>0</td><td>2</td><td>2/3</td></tr>
+<tr><td>9/30 10:59</td><td>snapshot</td><td>3</td><td>3</td><td>1</td><td>0</td><td>0</td><td>2/3</td></tr>
+<tr><td>9/30 12:22</td><td>latest ep700</td><td>3</td><td>0</td><td>0</td><td>0</td><td>0</td><td>1/3</td></tr>
+<tr><td>9/30 16:37</td><td>snapshot</td><td>3</td><td>3</td><td>1</td><td>0</td><td>0</td><td>2/3</td></tr>
+<tr><td>9/30 18:08</td><td>latest ep720</td><td>3</td><td>0</td><td>1</td><td>3</td><td>1</td><td>1/3</td></tr>
+<tr><td>9/30 21:24</td><td>problems ep730</td><td>3</td><td>3</td><td>2</td><td>0</td><td>2</td><td>3/3</td></tr>
+<tr><td>9/30 23:35</td><td>snapshot</td><td>3</td><td>3</td><td>3</td><td>0</td><td>2</td><td>3/3</td></tr>
+<tr><td>10/1 01:07</td><td>latest ep740</td><td>3</td><td>3</td><td>2</td><td>0</td><td>2</td><td>3/3</td></tr>
+<tr><td>10/1 05:32</td><td>snapshot</td><td>3</td><td>3</td><td>2</td><td>0</td><td>0</td><td>3/3</td></tr>
+<tr><td>10/1 10:43</td><td>snapshot</td><td>3</td><td>3</td><td>1</td><td>0</td><td>0</td><td>2/3</td></tr>
+<tr><td>10/1 12:01</td><td>latest ep780</td><td>3</td><td>3</td><td>0</td><td>0</td><td>0</td><td>2/3</td></tr>
+<tr><td>10/1 13:12</td><td>problems ep791</td><td>3</td><td>3</td><td>3</td><td>0</td><td>2</td><td>3/3</td></tr>
+<tr><td>10/1 16:23</td><td>snapshot</td><td>3</td><td>3</td><td>1</td><td>0</td><td>0</td><td>2/3</td></tr>
+</table>
+<p class="small">* 초기 두 줄은 문제 구성이 달라서(그때는 13수 문제도 졸업 기준에 있었고 열린3 문제가 아직 없었거나 막 추가됨) 지금 기준의 "졸업" 칸과 직접 비교할 수 없어. 로그 원문은 각각 passed 3/3, 3/4야.</p>
+
+<h3>14.1 관찰</h3>
+<ul>
+<li><b>5수 공격은 완전히 해결됐어.</b> 전 기간 통과.</li>
+<li><b>7수 공격은 모델에 따라 켜졌다 꺼졌다.</b> ep600, ep700, ep720에서 0/3.</li>
+<li><b>열린3 방어가 졸업의 병목이었어.</b> ep625에서 2/3로 처음 통과(3회 중 900·1300 통과, 1100 실패). 즉 "기준선에 딱 걸친 통과"야. 이후 ep730, ep740, ep791 계열에서 2~3/3으로 안정화되는 경향.</li>
+<li><b>13수 방어는 ep625 이후 오히려 퇴보.</b> ep660, ep720에서 3/3을 받은 걸 제외하면 9/30부터는 대부분 0/3이야.</li>
+<li><b>Rapfi 사다리와 문제 점수는 따로 놀아.</b> ep740은 사다리 최고(1,720)이면서 문제도 3/3. 반면 9/29 22:07 snapshot은 사다리 1,623인데 열린3은 0/3. 평균적 강함과 특정 약점은 서로 다른 축이야.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s15">15. 졸업 판정: NAPS-625 "여명"</h2>
+
+<h3>15.1 졸업 기준</h3>
+<p>대화 기록과 선언문을 종합하면 1차 졸업 기준은 세 축이었어.</p>
+<ol>
+<li><b>Rapfi 사다리:</b> 대등 국면(공식 가중 직선) &gt; 1,000. 9/29 01:29에 "새 방식 + 기준 1,000 유지(A)"로 확정.</li>
+<li><b>사람 상대 승률</b> (웹 대국).</li>
+<li><b>졸업 문제:</b> stage 1 세 문제 모두 통과 (각 3회 중 2회 이상).</li>
+</ol>
+
+<h3>15.2 ep625가 모든 칸을 채운 순간</h3>
+<pre><code>NAPS-625 "여명 (DAWN: Defensive AlphaZero on a Weak Notebook)" -- 11x11 NAPS stage-1 graduation model
+(official: 2026-09-29 14:22:13 KST, ladder log timestamp)
+Checkpoint: epoch 625 best (gate 20g: W8 D8 L4 = 60%, promoted)
+Rapfi ladder (20 games/level, 1100 sims): 300:55%  1000:57.5%  2000:50%  3000:38%
+Equal-strength Rapfi nodes (official weighted fit): ~1150  (threshold 1000)
+Graduation problems (3 trials, pass &gt;=2): p5 attack 3/3, p7 attack (7-ply fork) 3/3, quiet-three defense 2/3
+Stage-2 problem: 13-ply defense 3/3.  Observation problem (corner diagonal): 0/3.
+Web games vs humans up to 2026-09-29: 20W 2D 2L of 24 (83%).
+Frozen for the 2026-10-28 festival. Do not overwrite.</code></pre>
+<p>(model/graduated_11x11/README.txt 원문.) 공식 졸업 시각은 사다리 로그의 타임스탬프 <code>2026-09-29 14:22:13</code>이야. 문제 채점(13:09)이 사다리(14:22)보다 먼저 끝났기 때문에, 마지막 조건이 채워진 사다리 기록 시각을 공식 시각으로 삼았어.</p>
+
+<h3>15.3 정직한 평가</h3>
+<div class="box warn">
+<ul>
+<li><b>사다리 1,150은 기준 1,000을 근소하게 넘었어.</b> 기울기 −105로 완만해서 추정이 불안정한 편이고(10.5절), 오차 막대는 없어.</li>
+<li><b>열린3 방어 2/3은 기준선 통과야.</b> 3회 중 1100 시뮬레이션(실전 설정)에서는 실패했어.</li>
+<li><b>이후 모델들이 사다리에서 더 높은 값을 냈어</b>(ep740 1,720, 9/29 22:07 snapshot 1,623). 그러니 ep625가 "가장 강한 모델"은 아니고, "모든 졸업 조건을 처음 동시에 만족한 모델"이야.</li>
+<li><b>Rapfi는 11x11에서 신경망이 꺼진 버전이야</b> (5.1절).</li>
+</ul>
+이 한계들을 알고서도 선언한 것이고, 선언문에 숫자를 그대로 적어 두었기 때문에 나중에 검증할 수 있어. 그게 중요해.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s16">16. gomokuwithai 사이트 대국</h2>
+
+<h3>16.1 설정</h3>
+<p>공개 웹사이트의 오목 AI와 둔 기록이야. 두 로그 모두 <code>site_level: 3</code>. 로그 한 줄의 필드:</p>
+<pre><code>{"time": ..., "dawn": "X" 또는 "O" (우리 색), "site_level": 3, "sims": 1100,
+ "result": "dawn" | "site" | "draw", "plies": ..., "moves": [...],
+ "dawn_values": [...],   # 우리 루트 가치 추이
+ "site_secs": [...]}     # 사이트 AI가 각 수에 쓴 시간(초)</code></pre>
+<p>site_secs를 보면 사이트 AI는 수마다 약 10초를 쓰고, 뻔한 수는 0.3초에 둬. 우리 AI는 1100 시뮬레이션으로 수당 수 초 이내에 둬.</p>
+
+<h3>16.2 고정 1100 시뮬레이션, 50판</h3>
+<table>
+<tr><th>우리 색</th><th>승</th><th>무</th><th>패</th><th>판수</th></tr>
+<tr><td>X (선)</td><td>6</td><td>6</td><td>13</td><td>25</td></tr>
+<tr><td>O (후)</td><td>2</td><td>7</td><td>16</td><td>25</td></tr>
+<tr><td><b>합계</b></td><td><b>8</b></td><td><b>13</b></td><td><b>29</b></td><td>50</td></tr>
+</table>
+<p>점수 s = (8 + 6.5) / 50 = <b>0.29</b>, Elo로 약 −155. 사이트 AI가 꽤 강해.</p>
+
+<h3>16.3 시간 맞춤(time-matched), 20판</h3>
+<p>공정성 문제가 있었어: 사이트 AI는 수당 10초를 쓰는데 우리는 1100 시뮬레이션(수 초)만 썼어. 그래서 우리도 사이트와 비슷한 시간을 쓰도록 탐색량을 가변으로 했어. 로그의 <code>"sims": 0, "time_matched": true</code>가 그 표시이고, <code>dawn_sims</code>를 보면 수마다 1,100~3,660 시뮬레이션을 썼어(국면에 따라 다름). <code>dawn_secs</code>는 대개 5~11초야.</p>
+<table>
+<tr><th>우리 색</th><th>승</th><th>무</th><th>패</th><th>판수</th></tr>
+<tr><td>X (선)</td><td>5</td><td>3</td><td>2</td><td>10</td></tr>
+<tr><td>O (후)</td><td>1</td><td>6</td><td>3</td><td>10</td></tr>
+<tr><td><b>합계</b></td><td><b>6</b></td><td><b>9</b></td><td><b>5</b></td><td>20</td></tr>
+</table>
+<p>점수 s = (6 + 4.5) / 20 = <b>0.525</b>. 승률로는 6/(6+5)이 55%, 무승부를 반 점으로 치면 52.5% (약 52%).</p>
+
+<div class="box note">
+<b>교훈: 시간을 맞추면 결과가 바뀐다.</b> 29% → 52%. 같은 모델인데 상대와 같은 시간을 쓰게 했을 뿐이야. "AI A가 AI B보다 강하다"는 말에는 항상 "같은 조건에서"가 붙어야 해. 다만 20판은 표본이 작고(2.4절 표: 95% 범위 대략 ±0.22), 시간 맞춤 쪽의 첫 판들은 사이트 수준 3에서 진행됐다는 것 외에 상대 설정이 완전히 같았는지는 로그만으로 확인하기 어려워.
+</div>
+<p>또 하나 눈에 띄는 것: 두 측정 모두 <b>우리가 후수(O)일 때 훨씬 약해.</b> 오목 freestyle은 선수가 유리한 게임이라 자연스러운 면도 있지만, 시간 맞춤에서 O로 1승 6무 3패는 "지지 않는 것"까지는 해내는 모습이야.</p>
+
+<!-- ============================================================ -->
+<h2 id="s17">17. 사람 상대 웹 대국 통계</h2>
+
+<h3>17.1 데이터</h3>
+<p>hlt/web/server.py가 축제/공개용 웹 대국을 hlt/web/games.jsonl에 저장해. 한 줄 예:</p>
+<pre><code>{"time": "2026-09-28 14:01:56", "model": {"checkpoint": "best_mcts_11x11.pth", "saved": "2026-09-28 12:40",
+ "epoch": 544}, "human": "O", "ai": "X", "sims": 250, "result": "ai", "moves": [...]}</code></pre>
+
+<h3>17.2 전체 집계 (현재 파일 기준 61판)</h3>
+<table>
+<tr><th>결과</th><th>판수</th></tr>
+<tr><td>AI 승</td><td>55</td></tr>
+<tr><td>무</td><td>3</td></tr>
+<tr><td>사람 승</td><td>3</td></tr>
+</table>
+<p>승률 55/61 = <b>90.2%</b>, 무승부 반 점 포함 점수 56.5/61 = <b>92.6%</b>.</p>
+<table>
+<tr><th>날짜</th><th>판수</th></tr>
+<tr><td>9/28</td><td>24</td></tr><tr><td>9/29</td><td>1</td></tr><tr><td>9/30</td><td>30</td></tr><tr><td>10/1</td><td>6</td></tr>
+</table>
+<table>
+<tr><th>AI 탐색량(sims)</th><th>판수</th></tr>
+<tr><td>100</td><td>7</td></tr><tr><td>250</td><td>9</td></tr><tr><td>600</td><td>9</td></tr><tr><td>1100</td><td>18</td></tr><tr><td>2000</td><td>18</td></tr>
+</table>
+<p>체크포인트: best_mcts_11x11.pth 58판, ep625_graduated_20260929.pth 3판. 모델 epoch 필드가 있는 판은 544(6판), 549(18판), 639(1판), 704(28판), 744(2판)이야.</p>
+
+<h3>17.3 숫자 대조</h3>
+<ul>
+<li>졸업 시점(9/29까지) README: 24판 20승 2무 2패 = <b>83%</b> 승률.</li>
+<li>작업 지시서에 적힌 "약 88%"는 이번에 로그로 재현하지 못했어. 현재 파일 전체로는 승률 90.2%, 점수 92.6%야. 88%는 어느 중간 시점(예: 특정 판수까지)의 값일 가능성이 있지만 확인하지 못했어.</li>
+</ul>
+
+<div class="box warn">
+<b>사람 상대 통계의 함정.</b>
+<ol>
+<li><b>상대가 누구인지 모른다.</b> 처음 둬 보는 사람, 여러 번 둬 본 사람, 엔진의 도움을 받은 사람(58수 판처럼)이 섞여 있어.</li>
+<li><b>탐색량이 섞여 있다.</b> 100부터 2000까지. 난이도 설정이 다른 판을 한 숫자로 합쳤어.</li>
+<li><b>같은 수순 반복 공략.</b> 대화 기록에 "주황 테두리 1~8수는 14:55에 비긴 판과 똑같아. 같은 사람이 비긴 판의 수순을 그대로 두다가 9수째에 다른 길로 간 거야"라는 분석이 있어. AI가 결정적이면 사람이 수순을 외워서 이길 수 있어. 결정성은 측정에선 장점이지만 실전에선 약점이야.</li>
+<li><b>표본이 작다.</b> 3패는 각각이 중요한 사례이고, 그래서 그 판들이 졸업 문제의 원천이 됐어.</li>
+</ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s18">18. 측정의 함정 총정리</h2>
+
+<table>
+<tr><th>#</th><th>함정</th><th>증상</th><th>원인</th><th>대처</th></tr>
+<tr><td>1</td><td>손실 ≠ 실력</td><td>손실은 내려가는데 게이트 막힘</td><td>손실은 자기 데이터 모방 정도</td><td>외부 자(Rapfi), 문제 풀이</td></tr>
+<tr><td>2</td><td>자기 비교만 하는 게이트</td><td>"어제의 나"만 이기면 됨</td><td>비이행성, 같은 방향의 오류</td><td>Rapfi 사다리 추가</td></tr>
+<tr><td>3</td><td>중복 판</td><td>10판이 실제론 3~4판</td><td>시작 국면 수와 판수가 서로소가 아님</td><td>모든 칸 순환</td></tr>
+<tr><td>4</td><td>공간 편향</td><td>평가가 왼쪽 위만 봄</td><td>row-major 순서로 앞에서 자름</td><td>시드 1109 셔플</td></tr>
+<tr><td>5</td><td>시간 제한의 기계 의존성</td><td>부하에 따라 Rapfi 세기 변함</td><td>timeout_turn</td><td>max_node</td></tr>
+<tr><td>6</td><td>단일 교차점 착시</td><td>대등점 100~1,250 널뛰기, ep555 "1,250"</td><td>두 점만 사용, 비단조 점수</td><td>가중 최소제곱 직선 (ep555 → 575)</td></tr>
+<tr><td>7</td><td>결정적 측정의 재측정</td><td>같은 모델 재측정이 완전히 동일</td><td>모든 요소가 결정적</td><td>같은 가중치는 한 번만 측정</td></tr>
+<tr><td>8</td><td>한 판짜리 문제 채점</td><td>탐색량 조금만 달라도 결과 반전</td><td>결정적 + 경계 사례</td><td>900/1100/1300 세 번, 2회 이상</td></tr>
+<tr><td>9</td><td>불공평한 시간</td><td>사이트 상대 29%</td><td>상대 10초/수 vs 우리 수 초</td><td>시간 맞춤 → 52%</td></tr>
+<tr><td>10</td><td>상대 약화 미표기</td><td>"챔피언과 대등" 과장 위험</td><td>Rapfi 11x11 신경망 비활성</td><td>보고서에 명시</td></tr>
+<tr><td>11</td><td>혼합 통계</td><td>사람 승률 한 숫자에 여러 조건 섞임</td><td>탐색량·모델·사람 다양</td><td>조건별 분리 표기</td></tr>
+<tr><td>12</td><td>측정 중 모델 변경</td><td>단계마다 다른 모델</td><td>1시간 반 동안 승격 가능</td><td>스냅샷 복사본으로 측정</td></tr>
+</table>
+
+<div class="box good">
+<b>마지막으로.</b> 이 부의 이야기를 한 문장으로 줄이면: "측정값이 이상하게 흔들릴 때, 모델을 의심하기 전에 자를 먼저 의심해라." ep555의 1,250은 모델이 갑자기 강해진 게 아니라 자가 휘었던 거였어. 그리고 같은 모델이 매번 똑같은 결과를 낸다는 발견은, 흔들림의 원인이 주사위가 아니라 고정된 20문제 시험의 민감도라는 걸 알려 줬어. 측정을 고친 기록 자체가 이 프로젝트의 중요한 결과물이야.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s19">19. 확인하지 못한 것들</h2>
+<ul>
+<li>Rapfi의 11x11 신경망 비활성 여부는 대화 기록의 설명에 근거했어. Rapfi 출력 원문에서 직접 확인하지는 않았어.</li>
+<li>사다리 snapshot들이 정확히 어느 epoch의 best인지는 로그에 없어. 일부(ep555, ep580, ep600)는 대화 기록에서 대응시켰어.</li>
+<li>사람 상대 "약 88%"라는 수치는 games.jsonl로 재현하지 못했어(현재 파일: 승률 90.2%, 점수 92.6%; 졸업 시점 README: 83%).</li>
+<li>20판 안에서 실제로 서로 다른 판이 몇 개인지(같은 시작+색 조합의 반복 판이 동일 수순이었는지)는 수순 비교로 확인하지 않았어.</li>
+<li>게이트 표의 epoch 번호는 로그상 직전 Epoch 줄로 대응시킨 거야.</li>
+<li>사다리 동시 실행에 의한 매치 로그 혼입 사고가 있었는지는 확인하지 못했어.</li>
+</ul>
+
+</main>
+</body>
+</html>

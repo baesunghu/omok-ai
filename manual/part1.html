@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1부 이론 — MCTS와 AlphaZero</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="top">
+<a href="index.html">목차</a>
+<a href="part0.html">0부</a>
+<a href="part1.html">1부</a>
+<a href="part2.html">2부</a>
+<a href="part3.html">3부</a>
+<a href="part4.html">4부</a>
+<a href="part5.html">5부</a>
+<a href="part6.html">6부</a>
+</nav>
+<main>
+<h1>1부. 이론 — MCTS, PUCT, AlphaZero, 정책망과 가치망</h1>
+
+<div class="toc">
+<p><strong>이 부의 차례</strong></p>
+<ol>
+<li><a href="#s1">1.1 왜 이론부터인가 — 이 부를 읽는 법</a></li>
+<li><a href="#s2">1.2 게임 트리라는 물건</a></li>
+<li><a href="#s3">1.3 미니맥스와 그 한계</a></li>
+<li><a href="#s4">1.4 몬테카를로: "많이 해 보면 안다"</a></li>
+<li><a href="#s5">1.5 다중 슬롯머신 문제와 UCB1</a></li>
+<li><a href="#s6">1.6 MCTS의 네 단계</a></li>
+<li><a href="#s7">1.7 틱택토로 손으로 돌려 보는 MCTS</a></li>
+<li><a href="#s8">1.8 UCT에서 PUCT로 — 사전확률을 넣는다</a></li>
+<li><a href="#s9">1.9 c_puct: 탐험과 활용의 다이얼</a></li>
+<li><a href="#s10">1.10 신경망 두 개의 머리: 정책망과 가치망</a></li>
+<li><a href="#s11">1.11 AlphaZero 학습 루프 전체 그림</a></li>
+<li><a href="#s12">1.12 방문 횟수가 왜 정책 목표가 되나</a></li>
+<li><a href="#s13">1.13 온도(temperature)</a></li>
+<li><a href="#s14">1.14 디리클레 루트 노이즈</a></li>
+<li><a href="#s15">1.15 가치 목표: z, q, 그리고 z/q 혼합</a></li>
+<li><a href="#s16">1.16 손실 함수: 정책은 KL, 가치는 MSE인 이유</a></li>
+<li><a href="#s17">1.17 계보: AlphaGo → AlphaGo Zero → AlphaZero → KataGo</a></li>
+<li><a href="#s18">1.18 게이트(gate): 55% 승격 규칙</a></li>
+<li><a href="#s19">1.19 리그(league) 대국</a></li>
+<li><a href="#s20">1.20 MCTS-Solver: 증명된 승/패</a></li>
+<li><a href="#s21">1.21 강제 플레이아웃과 정책 목표 가지치기 (KataGo)</a></li>
+<li><a href="#s22">1.22 PCR: 플레이아웃 캡 랜덤화</a></li>
+<li><a href="#s23">1.23 셀프플레이의 맹점 — 같은 신경망이 양쪽을 둔다</a></li>
+<li><a href="#s24">1.24 왜 수비는 구조적으로 어려운가</a></li>
+<li><a href="#s25">1.25 이 프로젝트의 숫자 한눈에 보기</a></li>
+<li><a href="#s26">1.26 참고문헌 (재확인 필요)</a></li>
+<li><a href="#s27">1.27 스스로 점검 문제</a></li>
+</ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s1">1.1 왜 이론부터인가 — 이 부를 읽는 법</h2>
+
+<p>이 매뉴얼의 주인공은 11×11 자유룰 오목(gomoku) AI다. 계보 이름은 <strong>NAPS</strong>, 졸업한 모델은 <strong>NAPS-625 "여명(DAWN = Defensive AlphaZero on a Weak Notebook)"</strong>. 2026-08-15부터 2026-09-29까지 46일 동안, 노트북 한 대(i5-8300H 4코어 8스레드 + 노트북용 GTX 1050)로 만들었다.</p>
+
+<p>코드를 열어 보면 <code>c_puct</code>, <code>dirichlet_alpha</code>, <code>noise_weight</code>, <code>temperature_moves</code>, <code>value_target_q_weight</code>, <code>full_search_prob</code>, <code>forced_k</code>, <code>proven</code> 같은 이름이 끝없이 나온다. 이 이름 하나하나가 "어떤 이론적 질문에 대한 어떤 답"이다. 이 부의 목표는 그 질문들을 바닥부터 다시 세우는 것이다. 다 읽고 나면 다음 문장을 스스로 설명할 수 있어야 한다.</p>
+
+<div class="box">
+<p>"셀프플레이에서 매 수 900회(절반은 150회)의 PUCT 탐색(c_puct=1.6)을 돌리고, 루트에 디리클레 노이즈(α=0.3→0.15, 가중치 0.25→0.10)를 섞고, 처음 4수는 방문 비율대로 샘플링, 이후엔 최다 방문 수를 둔다. 방문 분포를 정책 목표로, (z+q)/2를 가치 목표로 삼아 KL+MSE로 학습하고, 새 모델이 기존 최고 모델을 55% 이상 이기면 승격한다."</p>
+</div>
+
+<p>읽는 순서는 이렇다. 먼저 게임 트리와 미니맥스(1.2~1.3)로 "탐색"이 뭔지 잡고, 몬테카를로와 슬롯머신(1.4~1.5)으로 "통계적 탐색"의 발상을 잡는다. 그다음 MCTS 네 단계를 틱택토로 손으로 돌려 본다(1.6~1.7). 여기까지가 고전 MCTS다. 이후 신경망이 들어오면서 PUCT, 정책망/가치망, 학습 목표, 손실 함수가 나오고(1.8~1.16), 마지막으로 이 프로젝트가 실제로 덧붙인 장치들 — 게이트, 리그, 솔버, 강제 플레이아웃, PCR — 과 프로젝트 내내 괴롭혔던 "수비 맹점" 문제를 다룬다(1.17~1.24).</p>
+
+<div class="box note">
+<p><strong>표기 약속.</strong> s = 국면(state, 판 상태 + 둘 차례), a = 수(action, 착점), N(s,a) = 방문 횟수, W(s,a) = 누적 가치, Q(s,a) = W/N = 평균 가치, P(s,a) = 신경망이 준 사전확률(prior), v = 가치망 출력(−1~+1). 가치는 항상 "그 국면에서 둘 차례인 사람 입장"이 기본이고, 다를 때는 명시한다.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s2">1.2 게임 트리라는 물건</h2>
+
+<h3>1.2.1 오목은 어떤 종류의 게임인가</h3>
+<p>게임 이론에서 오목은 다음 성질을 모두 가진다.</p>
+<ul>
+<li><strong>2인</strong>: 흑과 백 두 명.</li>
+<li><strong>제로섬</strong>: 한쪽의 승리 = 다른 쪽의 패배. 이득을 +1/−1로 놓으면 합이 항상 0(무승부는 둘 다 0).</li>
+<li><strong>완전 정보</strong>: 판 위 모든 정보가 양쪽에 보인다. 카드 게임처럼 숨긴 패가 없다.</li>
+<li><strong>결정적</strong>: 주사위 같은 우연이 없다. 같은 수를 두면 항상 같은 국면.</li>
+<li><strong>유한</strong>: 11×11=121칸이니 최대 121수 안에 끝난다.</li>
+</ul>
+<p>이런 게임은 이론적으로 "완벽한 플레이 시 결과"가 정해져 있다(체르멜로 정리). 15×15 자유룰 오목은 흑 필승으로 증명된 것으로 알려져 있고(Allis 1994 등), 11×11 자유룰도 흑이 매우 유리하다고 보는 게 일반적이다. 다만 11×11의 정확한 이론값은 이 매뉴얼에서 확인하지 못했다 — <em>확인 필요</em>.</p>
+
+<h3>1.2.2 트리로 그리기</h3>
+<p>현재 국면을 뿌리(root)에 두고, 둘 수 있는 모든 수를 가지로 뻗으면 트리가 된다. 각 노드는 국면, 각 간선은 수다.</p>
+
+<svg viewBox="0 0 560 220" width="100%" style="max-width:560px" role="img" aria-label="게임 트리 예시">
+<g fill="none" stroke="currentColor" stroke-width="1.5">
+<circle cx="280" cy="30" r="18"/>
+<line x1="270" y1="45" x2="130" y2="95"/><line x1="280" y1="48" x2="280" y2="95"/><line x1="290" y1="45" x2="430" y2="95"/>
+<circle cx="130" cy="110" r="16"/><circle cx="280" cy="110" r="16"/><circle cx="430" cy="110" r="16"/>
+<line x1="122" y1="124" x2="80" y2="170"/><line x1="138" y1="124" x2="180" y2="170"/>
+<line x1="272" y1="124" x2="240" y2="170"/><line x1="288" y1="124" x2="320" y2="170"/>
+<line x1="422" y1="124" x2="390" y2="170"/><line x1="438" y1="124" x2="470" y2="170"/>
+<rect x="66" y="172" width="28" height="22"/><rect x="166" y="172" width="28" height="22"/>
+<rect x="226" y="172" width="28" height="22"/><rect x="306" y="172" width="28" height="22"/>
+<rect x="376" y="172" width="28" height="22"/><rect x="456" y="172" width="28" height="22"/>
+</g>
+<g fill="currentColor" font-size="12" text-anchor="middle">
+<text x="280" y="34">s₀</text><text x="130" y="114">a</text><text x="280" y="114">b</text><text x="430" y="114">c</text>
+<text x="80" y="187">+1</text><text x="180" y="187">−1</text><text x="240" y="187">0</text><text x="320" y="187">+1</text><text x="390" y="187">−1</text><text x="470" y="187">−1</text>
+<text x="520" y="34">내 차례</text><text x="520" y="114">상대 차례</text><text x="520" y="187">끝(내 입장)</text>
+</g>
+</svg>
+
+<h3>1.2.3 크기 감각</h3>
+<p>트리의 크기는 대략 (분기 수)^(깊이)다. 분기 수 b, 깊이 d이면 노드 수 ≈ b<sup>d</sup>.</p>
+<table>
+<tr><th>게임</th><th>평균 분기 수(대략)</th><th>게임 길이(대략)</th><th>트리 크기 감</th></tr>
+<tr><td>틱택토 3×3</td><td>~5</td><td>≤9</td><td>9! = 362,880 이하 — 전수 탐색 가능</td></tr>
+<tr><td>11×11 오목</td><td>초반 ~100, 후반에도 수십</td><td>보통 20~60수</td><td>100<sup>30</sup> 수준 — 전수 탐색 불가</td></tr>
+<tr><td>바둑 19×19</td><td>~250</td><td>~150</td><td>~10<sup>360</sup></td></tr>
+</table>
+<p>(위 오목 수치는 감을 잡기 위한 대략치이며 측정값이 아니다.) 결론: 11×11에서는 트리 전체를 볼 수 없다. "어디를 깊게 볼지"를 똑똑하게 골라야 한다. 이게 이 부 전체의 핵심 문제다.</p>
+
+<!-- ============================================================ -->
+<h2 id="s3">1.3 미니맥스와 그 한계</h2>
+
+<h3>1.3.1 미니맥스</h3>
+<p>내 차례 노드에서는 자식들 중 <strong>최댓값</strong>을, 상대 차례에서는 <strong>최솟값</strong>을 고른다(값은 내 입장). 위 그림에서: a의 자식 {+1, −1} → 상대는 −1을 고름 → a=−1. b: {0,+1} → 0. c: {−1,−1} → −1. 루트는 max(−1, 0, −1) = 0, 즉 b를 둔다.</p>
+
+<h3>1.3.2 네가맥스(negamax) 표기 — 코드가 쓰는 방식</h3>
+<p>제로섬이므로 "상대 입장 값 = −(내 입장 값)". 그러면 min/max를 나눌 필요 없이 항상 "자식 값의 부호를 뒤집어서 max"를 하면 된다.</p>
+<pre><code>value(s) = max over a of [ −value(child(s, a)) ]</code></pre>
+<p>이 부호 뒤집기는 이 프로젝트 C++ 엔진에도 그대로 있다. PUCT 점수에서 <code>-ch-&gt;mean_value</code>라고 쓰는 이유가 이것이다. 자식 노드의 mean_value는 "자식 국면에서 둘 차례인 사람(=상대)" 입장으로 저장돼 있으니, 부모 입장으로 바꾸려면 마이너스를 붙인다.</p>
+<pre><code>// cpp_mcts/mcts_core_solver.cpp, select_child()
+double pb_c = c_puct * sqrt_pv / (1 + ch-&gt;n_visits);
+double score = -ch-&gt;mean_value + pb_c * ch-&gt;prior_prob;</code></pre>
+
+<h3>1.3.3 한계: 깊이 제한과 평가 함수</h3>
+<p>트리가 너무 크므로 미니맥스는 깊이 d에서 자르고, 잘린 국면을 <strong>평가 함수</strong>로 점수 매긴다. 오목에서는 "열린 3, 닫힌 4 개수" 같은 손으로 만든 휴리스틱을 쓴다. 이 프로젝트의 초기 기준선이었던 "depth-2 minimax"가 바로 이것이다(메모리 노트: depth-2 minimax는 baseline일 뿐, 궁극 목표는 평균적인 사람을 이기는 것).</p>
+<p>문제점 세 가지:</p>
+<ol>
+<li><strong>균일한 깊이</strong>: 쓸데없는 수와 결정적인 수를 같은 깊이로 본다. 알파-베타 가지치기가 좀 낫게 해 주지만 근본은 같다.</li>
+<li><strong>수평선 효과</strong>: 깊이 d 바로 너머의 위협을 못 본다. 오목의 "4-3 포크"는 수평선 바로 너머에 숨기 쉽다.</li>
+<li><strong>평가 함수의 질</strong>: 사람이 짠 휴리스틱이 상한이 된다.</li>
+</ol>
+<p>MCTS는 1, 2를, 신경망 가치망은 3을 해결하려는 시도다.</p>
+
+<!-- ============================================================ -->
+<h2 id="s4">1.4 몬테카를로: "많이 해 보면 안다"</h2>
+<p>몬테카를로(Monte Carlo) 방법은 "정확히 계산하기 어려운 값을, 무작위 표본을 많이 뽑아 평균으로 추정"하는 기법의 총칭이다. 원의 넓이를 모를 때 정사각형 안에 점을 무작위로 뿌리고 원 안에 떨어진 비율을 세는 것이 고전 예다.</p>
+<p>게임에 적용하면: 국면 s의 가치를 모를 때, s에서 <strong>양쪽이 무작위로 끝까지 두는 것(롤아웃, rollout / playout)</strong>을 1000번 해서 승률을 센다. 그게 s의 가치 추정이다.</p>
+<div class="box note">
+<p><strong>예.</strong> 어떤 국면에서 무작위 롤아웃 1000판 중 흑 620승, 백 350승, 무 30. 흑 입장 가치 추정 = (620 − 350)/1000 = +0.27.</p>
+</div>
+<p>장점: 평가 함수가 필요 없다. 단점: 무작위 플레이는 바보다. 오목에서 무작위로 두면 열린 4를 막지 않으니, "막으면 이기는" 국면도 무작위 롤아웃상 50:50처럼 보인다. 그래서 순수 몬테카를로는 날카로운 전술 게임에 약하다. 이 약점은 나중에 "가치망"이 롤아웃을 대체하면서 해결된다(AlphaGo Zero 이후로는 롤아웃이 아예 없다). 이 프로젝트의 MCTS에도 롤아웃은 없다 — 잎 노드 평가는 전부 신경망 가치 머리가 한다.</p>
+
+<!-- ============================================================ -->
+<h2 id="s5">1.5 다중 슬롯머신 문제와 UCB1</h2>
+
+<h3>1.5.1 문제</h3>
+<p>카지노에 슬롯머신 K대가 있고 각각 숨겨진 승률이 다르다. 총 T번 당길 수 있다. 어떻게 당겨야 총 보상이 최대일까? 이게 <strong>다중 무장 강도 문제(multi-armed bandit)</strong>다.</p>
+<ul>
+<li><strong>활용(exploitation)</strong>: 지금까지 제일 좋아 보인 기계만 당긴다. → 사실 더 좋은 기계를 몇 번 운 나쁘게 져서 버렸을 수 있다.</li>
+<li><strong>탐험(exploration)</strong>: 덜 당겨 본 기계를 시험한다. → 너무 하면 나쁜 기계에 낭비.</li>
+</ul>
+
+<h3>1.5.2 UCB1</h3>
+<p>Auer 등(2002)의 UCB1은 각 기계 i에 대해 다음 점수가 최대인 걸 당긴다.</p>
+<pre><code>UCB1(i) = x̄ᵢ + c · sqrt( ln N / nᵢ )
+  x̄ᵢ : 기계 i의 평균 보상
+  nᵢ : 기계 i를 당긴 횟수
+  N  : 전체 당긴 횟수</code></pre>
+<p>뒤 항은 "불확실성 보너스"다. nᵢ가 작을수록(덜 시도할수록) 커지고, 전체 N이 늘면 천천히(ln) 커져서 오래 방치된 기계를 다시 시도하게 만든다. "낙관적으로 굴어라(optimism in the face of uncertainty)" 원칙: 모르는 건 좋을 수도 있다고 가정하고 확인해 본다.</p>
+
+<h3>1.5.3 숫자 예</h3>
+<table>
+<tr><th>기계</th><th>nᵢ</th><th>x̄ᵢ</th><th>보너스 (c=1.414, N=20, ln20≈3.0)</th><th>UCB1</th></tr>
+<tr><td>A</td><td>15</td><td>0.60</td><td>1.414·√(3.0/15)=0.63</td><td>1.23</td></tr>
+<tr><td>B</td><td>4</td><td>0.25</td><td>1.414·√(3.0/4)=1.22</td><td>1.47</td></tr>
+<tr><td>C</td><td>1</td><td>0.00</td><td>1.414·√(3.0/1)=2.45</td><td>2.45</td></tr>
+</table>
+<p>C는 한 번 졌을 뿐이라 아직 모른다 → 다시 시도. 이것이 MCTS 선택 단계의 원형이다. c=√2≈1.414는 UCB1 이론에서 자연스럽게 나오는 상수(보상이 [0,1]일 때)라서 고전 UCT의 기본값으로 많이 쓰인다. 이 프로젝트의 평가/대국 탐색 호출들이 기본 <code>c_puct=1.414</code>를 쓰는 것도 이 전통의 흔적이다(다만 PUCT에서는 공식 모양이 달라서 1.414의 이론적 의미는 사라진다 — 1.9절).</p>
+
+<!-- ============================================================ -->
+<h2 id="s6">1.6 MCTS의 네 단계</h2>
+<p>몬테카를로 트리 탐색(MCTS)은 Coulom(2006)이 이름을 붙이고, Kocsis &amp; Szepesvári(2006)가 UCB1을 트리에 적용한 <strong>UCT</strong>로 정식화했다. 아이디어: 트리를 미리 다 펼치지 말고, "시뮬레이션"을 한 번 할 때마다 트리를 한 노드씩 키운다. 유망한 쪽이 더 자주 방문되므로 트리는 <strong>비대칭</strong>으로 자란다 — 좋은 수 방향으로는 깊게, 나쁜 수 방향으로는 얕게.</p>
+
+<p>시뮬레이션 1회 = 다음 네 단계.</p>
+
+<svg viewBox="0 0 640 200" width="100%" style="max-width:640px" role="img" aria-label="MCTS 네 단계">
+<g fill="none" stroke="currentColor" stroke-width="1.4">
+<rect x="10" y="20" width="140" height="160" rx="8"/>
+<rect x="170" y="20" width="140" height="160" rx="8"/>
+<rect x="330" y="20" width="140" height="160" rx="8"/>
+<rect x="490" y="20" width="140" height="160" rx="8"/>
+<circle cx="80" cy="60" r="9"/><line x1="80" y1="69" x2="55" y2="100"/><line x1="80" y1="69" x2="105" y2="100" stroke-width="3"/>
+<circle cx="55" cy="108" r="8"/><circle cx="105" cy="108" r="8"/><line x1="105" y1="116" x2="105" y2="145" stroke-width="3"/><circle cx="105" cy="152" r="7"/>
+<circle cx="240" cy="60" r="9"/><line x1="240" y1="69" x2="265" y2="100"/><circle cx="265" cy="108" r="8"/><line x1="265" y1="116" x2="265" y2="145"/><circle cx="265" cy="152" r="7"/>
+<line x1="265" y1="159" x2="250" y2="172" stroke-dasharray="3 2"/><line x1="265" y1="159" x2="280" y2="172" stroke-dasharray="3 2"/>
+<circle cx="400" cy="60" r="9"/><circle cx="425" cy="108" r="8"/><line x1="400" y1="69" x2="425" y2="100"/><line x1="425" y1="116" x2="425" y2="145"/><rect x="415" y="145" width="20" height="16"/>
+<circle cx="560" cy="60" r="9"/><circle cx="585" cy="108" r="8"/><circle cx="585" cy="152" r="7"/>
+<line x1="585" y1="145" x2="585" y2="116" stroke-width="3"/><line x1="585" y1="100" x2="568" y2="69" stroke-width="3"/>
+</g>
+<g fill="currentColor" font-size="13" text-anchor="middle">
+<text x="80" y="40">① 선택</text><text x="240" y="40">② 확장</text><text x="400" y="40">③ 평가</text><text x="560" y="40">④ 역전파</text>
+<text x="425" y="175" font-size="10">신경망 v</text><text x="560" y="175" font-size="10">N+1, W+v</text>
+</g>
+</svg>
+
+<ol>
+<li><strong>선택(Selection)</strong>: 루트에서 출발해, 이미 펼쳐진 노드에서는 점수(UCT 또는 PUCT)가 최대인 자식으로 내려간다. 아직 펼쳐지지 않은 노드(잎)에 닿거나 게임이 끝난 노드에 닿으면 멈춘다.</li>
+<li><strong>확장(Expansion)</strong>: 그 잎 노드의 자식들(둘 수 있는 수)을 만든다. 고전 MCTS는 자식 하나만 추가하기도 하고, AlphaZero식은 모든 자식을 한꺼번에 만들고 각 자식에 사전확률 P를 붙인다.</li>
+<li><strong>평가(Evaluation / Simulation)</strong>: 잎 국면의 가치 v를 구한다. 고전 MCTS: 무작위 롤아웃. AlphaZero: 신경망의 가치 머리 출력. 게임이 끝난 국면이면 실제 결과(+1/0/−1).</li>
+<li><strong>역전파(Backup / Backpropagation)</strong>: 내려온 경로의 모든 노드에 N += 1, W += v를 더한다. 단, 한 칸 올라갈 때마다 부호를 뒤집는다(네가맥스).</li>
+</ol>
+
+<p>시뮬레이션을 정해진 횟수(이 프로젝트 셀프플레이는 900회, 빠른 탐색은 150회)만큼 반복한 뒤, 루트 자식들의 <strong>방문 횟수 N</strong>을 보고 수를 고른다. 왜 Q가 아니라 N인가? N은 "탐색이 최종적으로 가장 많이 믿은 수"이고, 우연히 한두 번 좋은 값이 나온 수의 높은 Q보다 훨씬 안정적이기 때문이다.</p>
+
+<h3>1.6.1 의사코드</h3>
+<pre><code>def simulate(root):
+    node, path = root, [root]
+    # 1) 선택
+    while node.is_expanded and not node.is_terminal:
+        a = argmax over children of score(node, child)
+        node = node.children[a]; path.append(node)
+    # 2) 확장 + 3) 평가
+    if node.is_terminal:
+        v = terminal_value(node)         # 둘 차례 입장
+    else:
+        priors, v = net(node.state)      # 정책, 가치
+        node.expand(priors)
+    # 4) 역전파 (잎에서 루트로, 부호 교대)
+    for n in reversed(path):
+        n.N += 1
+        n.W += v
+        v = -v</code></pre>
+
+<div class="box warn">
+<p><strong>부호 주의.</strong> 위 코드에서 노드의 W는 "그 노드 국면에서 둘 차례인 사람 입장"이다. 그래서 부모가 자식을 고를 때는 <code>-child.Q</code>를 써야 한다. C++ 엔진의 <code>-ch-&gt;mean_value</code>가 정확히 이 관례다. 부호 하나 틀리면 AI가 "상대에게 가장 좋은 수"를 두는 정반대 버그가 생기는데, 이런 버그는 학습이 이상하게 안 될 뿐 에러를 내지 않아서 찾기 어렵다.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s7">1.7 틱택토로 손으로 돌려 보는 MCTS</h2>
+<p>이 프로젝트의 출발점도 3×3 틱택토였다(메모리: 옛 AlphaZero 틱택토 프로젝트, 결정적 미니맥스 AI를 이기는 게 목표). 여기서도 틱택토로 MCTS를 손으로 돌려 보자. 숫자를 단순하게 하려고 가상의 신경망을 가정한다.</p>
+
+<h3>1.7.1 시작 국면</h3>
+<pre><code> X | O | X        칸 번호
+---+---+---       0 | 1 | 2
+   | O |          3 | 4 | 5
+---+---+---       6 | 7 | 8
+   |   |
+X 차례. 빈칸: 3, 5, 6, 7, 8</code></pre>
+<p>정답: O가 1-4로 세로 줄을 노리고 있으므로 X는 <strong>7</strong>을 막아야 한다. 7을 안 막으면 O가 7에 두어 이긴다.</p>
+
+<h3>1.7.2 가상의 신경망 출력 (루트)</h3>
+<table>
+<tr><th>수</th><th>3</th><th>5</th><th>6</th><th>7</th><th>8</th></tr>
+<tr><td>P (사전확률)</td><td>0.15</td><td>0.10</td><td>0.30</td><td>0.25</td><td>0.20</td></tr>
+</table>
+<p>일부러 신경망을 약간 틀리게 만들었다 — 6(대각 노리기)을 7(필수 수비)보다 높게 본다. 공격 지향적인 신경망이 수비를 과소평가하는 상황이다. 이 프로젝트에서 실제로 반복된 문제이기도 하다(1.24절).</p>
+
+<h3>1.7.3 PUCT 점수(1.8절 공식, c=1.0으로 단순화)</h3>
+<p>점수 = Q(부모 입장) + c · P · √N<sub>부모</sub> / (1+N<sub>자식</sub>).</p>
+
+<p><strong>시뮬레이션 1</strong>: 루트가 아직 안 펼쳐짐 → 확장, 신경망 v(루트)=+0.1 가정. N<sub>root</sub>=1.</p>
+
+<p><strong>시뮬레이션 2</strong>: N<sub>부모</sub>=1, √1=1. 모든 자식 N=0, Q=0. 점수 = P. 최대는 6(0.30) → 6으로 내려감 → 잎이므로 확장·평가. 6을 둔 뒤 국면은 O 차례이고 O가 7에 두면 이긴다. 가치망이 이걸 잘 본다면 v(O 입장) = +0.9. 역전파: 6의 W += +0.9 (O 입장 저장), 루트로 올라가며 부호 반전 → 루트 W += −0.9.</p>
+
+<p>이제 6의 Q(부모 X 입장) = −0.9.</p>
+
+<p><strong>시뮬레이션 3</strong>: N<sub>부모</sub>=2, √2≈1.41.</p>
+<table>
+<tr><th>수</th><th>P</th><th>N</th><th>Q(X입장)</th><th>탐험항 c·P·√2/(1+N)</th><th>점수</th></tr>
+<tr><td>3</td><td>0.15</td><td>0</td><td>0</td><td>0.21</td><td>0.21</td></tr>
+<tr><td>5</td><td>0.10</td><td>0</td><td>0</td><td>0.14</td><td>0.14</td></tr>
+<tr><td>6</td><td>0.30</td><td>1</td><td>−0.9</td><td>0.21</td><td>−0.69</td></tr>
+<tr><td>7</td><td>0.25</td><td>0</td><td>0</td><td>0.35</td><td><strong>0.35</strong></td></tr>
+<tr><td>8</td><td>0.20</td><td>0</td><td>0</td><td>0.28</td><td>0.28</td></tr>
+</table>
+<p>→ 7 선택. 7을 둔 뒤 국면은 O 차례, 대략 무승부 흐름 → v(O 입장) = −0.1 가정 → 7의 Q(X 입장) = +0.1.</p>
+
+<p><strong>시뮬레이션 4</strong>: √3≈1.73. 3: 0.26, 5: 0.17, 6: −0.9+0.26=−0.64, 7: 0.1+0.25·1.73/2=0.32, 8: 0.35. → 8. 8도 7을 안 막으니 v(O)=+0.9 → Q₈=−0.9.</p>
+
+<p><strong>시뮬레이션 5</strong>: √4=2. 3: 0.30, 5: 0.20, 6: −0.6, 7: 0.1+0.25 = 0.35, 8: −0.9+0.2=−0.7. → 7. 이번엔 7 아래로 한 단계 더 내려가서(7은 이미 확장됨) O의 응수를 탐색하고, 대략 v≈0이 돌아온다고 하자. Q₇ ≈ (0.1+0)/2 = 0.05.</p>
+
+<p>이 과정을 계속하면 3과 5도 한 번씩 시도되어 Q≈−0.9로 판명되고, 그 뒤로는 거의 모든 방문이 7에 몰린다. 100번쯤 돌리면 대략 이런 분포가 된다(예시용 수치).</p>
+<table>
+<tr><th>수</th><th>3</th><th>5</th><th>6</th><th>7</th><th>8</th></tr>
+<tr><td>N</td><td>3</td><td>2</td><td>4</td><td>87</td><td>3</td></tr>
+<tr><td>π = N/ΣN</td><td>0.03</td><td>0.02</td><td>0.04</td><td>0.88</td><td>0.03</td></tr>
+</table>
+
+<div class="box good">
+<p><strong>여기서 배우는 두 가지.</strong> (1) 사전확률이 틀려도(6을 7보다 높게 봄) 가치 평가가 정확하면 탐색이 교정한다. (2) 이렇게 교정된 방문 분포 π를 다시 정책망의 학습 목표로 쓰면, 다음 버전 신경망은 처음부터 7에 높은 P를 줄 것이다. 이것이 AlphaZero의 "탐색이 정책을 가르치고, 정책이 탐색을 빠르게 한다"는 선순환이다.</p>
+</div>
+
+<div class="box warn">
+<p><strong>반대로, 가치 평가가 틀리면?</strong> 만약 가치망이 "6을 둔 뒤 O가 7에 두면 이긴다"를 모르고 v(O)=0이라고 답했다면, 6의 Q는 0으로 남고 P가 높은 6이 계속 뽑힌다. 탐색은 깊이 내려가서 실제 종국(O 승리)에 닿아야만 오류를 알게 된다. 11×11에서는 그 깊이가 수십 수일 수 있다. 이게 "가치망이 수비를 잘못 읽으면 탐색도 못 구한다"는 이 프로젝트의 고질병의 축소판이다. 강제 플레이아웃(1.21)과 솔버(1.20)가 이 구멍을 메우려는 장치다.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s8">1.8 UCT에서 PUCT로 — 사전확률을 넣는다</h2>
+
+<h3>1.8.1 UCT</h3>
+<pre><code>UCT(s,a) = Q(s,a) + c · sqrt( ln N(s) / N(s,a) )</code></pre>
+<p>UCB1을 트리의 각 노드에 그대로 적용한 것. 문제: N(s,a)=0이면 나누기 0 → 보통 "미방문 수는 무조건 한 번씩 먼저"로 처리한다. 오목처럼 분기가 100개면 루트에서만 100번을 쓸데없는 수 확인에 소비한다.</p>
+
+<h3>1.8.2 PUCT</h3>
+<p>Rosin(2011)이 "사전 지식(predictor)이 있는 UCB" 변형을 제안했고, AlphaGo 계열이 이를 단순화한 형태를 쓴다. AlphaGo Zero/AlphaZero 논문의 형태:</p>
+<pre><code>PUCT(s,a) = Q(s,a) + c_puct · P(s,a) · sqrt( N(s) ) / ( 1 + N(s,a) )</code></pre>
+
+<table>
+<tr><th>항목</th><th>UCT</th><th>PUCT</th></tr>
+<tr><td>사전 지식</td><td>없음</td><td>P(s,a) 곱함</td></tr>
+<tr><td>미방문 처리</td><td>무한대(먼저 다 시도)</td><td>1+N 이라 유한. P 큰 것부터</td></tr>
+<tr><td>부모 방문 의존</td><td>√(ln N)</td><td>√N (더 빨리 커짐)</td></tr>
+<tr><td>분기 100인 게임</td><td>비효율</td><td>P가 낮은 수는 거의 안 봄</td></tr>
+</table>
+
+<div class="box note">
+<p><strong>정확도 메모.</strong> Rosin 2011 원래 공식(PUCB)은 위 AlphaGo식과 모양이 다르다(추가 페널티 항 등이 있음). "PUCT"라는 이름은 흔히 AlphaGo식 단순형을 가리키며, Rosin 원식과 동일하지 않다는 점을 기억하자. 원문 공식은 재확인 필요.</p>
+</div>
+
+<h3>1.8.3 이 프로젝트의 실제 구현</h3>
+<p>C++ 엔진(<code>cpp_mcts/mcts_core_solver.cpp</code>)의 선택 함수 전문:</p>
+<pre><code>static int select_child(Node* node, double c_puct) {
+    int best_action = -1, fallback = -1;
+    double best_score = -1e18, fallback_score = -1e18;
+    double sqrt_pv = std::sqrt((double)node-&gt;n_visits);
+    for (auto&amp; kv : node-&gt;children) {
+        Node* ch = kv.second.get();
+        double pb_c = c_puct * sqrt_pv / (1 + ch-&gt;n_visits);
+        double score = -ch-&gt;mean_value + pb_c * ch-&gt;prior_prob;
+        if (ch-&gt;proven == 1) {
+            if (score &gt; fallback_score) { fallback_score = score; fallback = kv.first; }
+            continue;
+        }
+        if (score &gt; best_score) { best_score = score; best_action = kv.first; }
+    }
+    return best_action &gt;= 0 ? best_action : fallback;
+}</code></pre>
+<p>한 줄씩 읽어 보자.</p>
+<ul>
+<li><code>sqrt_pv</code> = √N(s). 부모 방문 수의 제곱근.</li>
+<li><code>pb_c</code> = c_puct·√N(s)/(1+N(s,a)). 탐험 계수.</li>
+<li><code>score</code> = −(자식 평균 가치) + pb_c·P. 즉 Q(부모 입장) + U.</li>
+<li><code>proven == 1</code> 블록: 솔버가 "이 자식은 자식 쪽 차례인 상대가 이긴다고 증명됨 = 나에겐 지는 수"라고 표시한 수는 다른 대안이 있으면 고르지 않는다(1.20절).</li>
+</ul>
+<p>미방문 자식의 mean_value는 0으로 시작한다(이른바 "FPU(first play urgency) = 0" 관례). KataGo 등은 미방문 수의 Q를 부모 값보다 조금 낮게 잡는 FPU reduction을 쓰지만, 이 엔진은 그런 처리를 하지 않는 것으로 보인다 — 위 코드에 FPU 관련 분기가 없다.</p>
+
+<!-- ============================================================ -->
+<h2 id="s9">1.9 c_puct: 탐험과 활용의 다이얼</h2>
+
+<h3>1.9.1 직관</h3>
+<p>c_puct가 크면 P와 미방문 보너스의 비중이 커져 <strong>넓게</strong> 본다. 작으면 현재 Q가 높은 수를 <strong>깊게</strong> 판다.</p>
+<table>
+<tr><th>c_puct</th><th>행동</th><th>위험</th></tr>
+<tr><td>너무 작음 (예: 0.3)</td><td>처음 좋아 보인 수에 몰빵</td><td>정책이 놓친 수비 수를 영영 안 봄</td></tr>
+<tr><td>적당 (1~2.5)</td><td>균형</td><td>—</td></tr>
+<tr><td>너무 큼 (예: 5)</td><td>방문이 P 비율대로 퍼짐</td><td>탐색이 정책을 교정하지 못함, 깊이 부족</td></tr>
+</table>
+
+<h3>1.9.2 정량 예</h3>
+<p>N(s)=900, 자식 A: P=0.5, N=600, Q=0.10. 자식 B: P=0.1, N=50, Q=0.15. √900=30.</p>
+<table>
+<tr><th>c</th><th>A의 U = c·0.5·30/601</th><th>A 점수</th><th>B의 U = c·0.1·30/51</th><th>B 점수</th><th>다음 선택</th></tr>
+<tr><td>1.0</td><td>0.025</td><td>0.125</td><td>0.059</td><td>0.209</td><td>B</td></tr>
+<tr><td>1.6</td><td>0.040</td><td>0.140</td><td>0.094</td><td>0.244</td><td>B</td></tr>
+<tr><td>0.2</td><td>0.005</td><td>0.105</td><td>0.012</td><td>0.162</td><td>B</td></tr>
+</table>
+<p>여기선 B의 Q가 이미 더 높아서 c와 무관하게 B가 뽑힌다. c가 영향을 주는 건 Q 차이가 작을 때, 그리고 아직 몇 번 안 본 수일 때다. Q의 단위가 [−1,+1]이므로 c_puct의 "적당한" 범위는 Q 스케일과 함께 정해진다.</p>
+
+<h3>1.9.3 이 프로젝트의 두 값</h3>
+<ul>
+<li><strong>c_puct=1.414</strong>: <code>alphazero_mcts_make_lrfix.py</code>의 여러 함수(게이트/평가용 대국 등) 기본 인자. 예: 195행 <code>temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25, c_puct=1.414</code>.</li>
+<li><strong>c_puct=1.6</strong>: 실제 학습 설정 <code>_restart_train.py</code>의 <code>train_mcts_alpha_zero(..., c_puct=1.6, c_puct_exploit=1.6, ...)</code>. 셀프플레이 탐색은 이 값을 쓴다. <code>c_puct_exploit</code>는 vs-Det/리그 같은 "상대가 있는" 대국에 쓰는 값인데 현재 둘이 같다.</li>
+</ul>
+<p>즉 "학습 탐색은 1.6, 그 외 기본값은 1.414". 1.414가 UCT 전통에서 왔다면, 1.6은 실험 중 "방문이 좀 더 퍼져야 수비 수가 보인다"는 판단으로 올린 값이다. 정확히 언제 어떤 근거로 바꿨는지는 대화 로그에서 이 부에서 추적하지 않았다 — 해당 변경 이력은 2부 이후 또는 대화 로그 재확인 필요.</p>
+
+<div class="box note">
+<p><strong>참고.</strong> AlphaZero 논문 의사코드는 고정 상수가 아니라 방문 수에 따라 천천히 커지는 c(s) = log((1+N+c_base)/c_base) + c_init (c_base=19652, c_init=1.25) 형태를 쓴다고 알려져 있다. 이 프로젝트는 고정 상수를 쓴다. (수치는 기억에 의존 — 재확인 필요.)</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s10">1.10 신경망 두 개의 머리: 정책망과 가치망</h2>
+
+<h3>1.10.1 하나의 몸통, 두 개의 머리</h3>
+<p>AlphaGo(2016)는 정책망과 가치망을 따로 두었지만, AlphaGo Zero(2017)부터는 <strong>하나의 합성곱 몸통(trunk) + 두 머리(head)</strong> 구조를 쓴다.</p>
+
+<svg viewBox="0 0 600 170" width="100%" style="max-width:600px" role="img" aria-label="신경망 구조">
+<g fill="none" stroke="currentColor" stroke-width="1.4">
+<rect x="10" y="60" width="110" height="50" rx="6"/>
+<rect x="160" y="50" width="160" height="70" rx="6"/>
+<rect x="370" y="15" width="200" height="45" rx="6"/>
+<rect x="370" y="110" width="200" height="45" rx="6"/>
+<line x1="120" y1="85" x2="160" y2="85"/><line x1="320" y1="75" x2="370" y2="40"/><line x1="320" y1="95" x2="370" y2="132"/>
+</g>
+<g fill="currentColor" font-size="12" text-anchor="middle">
+<text x="65" y="82">입력 평면</text><text x="65" y="98">C×11×11</text>
+<text x="240" y="80">합성곱 몸통</text><text x="240" y="98">(ResNet 블록들)</text>
+<text x="470" y="35">정책 머리 → 121 로짓</text><text x="470" y="52" font-size="10">softmax → P(s,·)</text>
+<text x="470" y="130">가치 머리 → 1 스칼라</text><text x="470" y="147" font-size="10">tanh → v ∈ [−1,1]</text>
+</g>
+</svg>
+
+<ul>
+<li><strong>입력</strong>: 판을 여러 장의 0/1 "평면"으로 바꾼 텐서. 내 돌 평면, 상대 돌 평면, 차례 평면 등. 이 프로젝트의 입력 변환은 <code>alphago_lee.py</code>가 담당하고 포크 마스크 같은 추가 평면이 있다(자세한 건 다른 부).</li>
+<li><strong>정책 머리</strong>: 121칸 각각에 대한 로짓 → softmax → 확률 분포 P. "어디 둘 만한가".</li>
+<li><strong>가치 머리</strong>: 스칼라 하나 → tanh → v. "둘 차례인 사람 입장에서 이 판 이길 것 같은가".</li>
+<li>이 프로젝트의 V3 네트워크는 여기에 <strong>생존(survival) 보조 머리</strong>(남은 수 예측, KataGo식 보조 신호)를 더했다: <code>alphago_lee_v3_survival.py</code>, 손실 가중치 <code>SURVIVAL_LOSS_WEIGHT = 0.25</code>.</li>
+</ul>
+
+<h3>1.10.2 왜 몸통을 공유하나</h3>
+<p>"어디 둘지"와 "누가 이기는지"는 같은 특징(열린 3, 4, 포크 모양…)에서 나온다. 몸통을 공유하면 두 과제가 서로의 특징 학습을 돕는다(다중 과제 학습). AlphaGo Zero 논문은 분리형보다 결합형이 더 좋았다고 보고한다.</p>
+
+<h3>1.10.3 MCTS 안에서 각 머리의 역할</h3>
+<table>
+<tr><th>머리</th><th>MCTS에서 쓰이는 곳</th><th>틀리면 생기는 일</th></tr>
+<tr><td>정책 P</td><td>PUCT의 탐험항 — 어떤 가지를 먼저 볼지 (폭 줄이기)</td><td>좋은 수를 늦게 발견. 방문 예산 안에 못 찾을 수도</td></tr>
+<tr><td>가치 v</td><td>잎 평가 — 롤아웃 대체 (깊이 줄이기)</td><td>틀린 Q가 역전파되어 탐색 전체를 오도</td></tr>
+</table>
+<p>정리: <strong>정책은 탐색의 폭을, 가치는 탐색의 깊이를 줄인다.</strong> 둘 다 있어야 100<sup>30</sup> 짜리 트리를 900번 시뮬레이션으로 다룰 수 있다.</p>
+
+<!-- ============================================================ -->
+<h2 id="s11">1.11 AlphaZero 학습 루프 전체 그림</h2>
+
+<svg viewBox="0 0 620 230" width="100%" style="max-width:620px" role="img" aria-label="AlphaZero 학습 루프">
+<g fill="none" stroke="currentColor" stroke-width="1.4">
+<rect x="20" y="20" width="170" height="60" rx="8"/>
+<rect x="225" y="20" width="170" height="60" rx="8"/>
+<rect x="430" y="20" width="170" height="60" rx="8"/>
+<rect x="430" y="150" width="170" height="60" rx="8"/>
+<rect x="20" y="150" width="170" height="60" rx="8"/>
+<path d="M190 50 H225"/><path d="M395 50 H430"/><path d="M515 80 V150"/><path d="M430 180 H190"/><path d="M105 150 V80"/>
+</g>
+<g fill="currentColor" font-size="12" text-anchor="middle">
+<text x="105" y="45">① 셀프플레이</text><text x="105" y="62" font-size="10">MCTS로 한 판씩 둠</text>
+<text x="310" y="45">② 리플레이 버퍼</text><text x="310" y="62" font-size="10">(국면, π, z) 저장</text>
+<text x="515" y="45">③ 학습</text><text x="515" y="62" font-size="10">KL(π‖P)+MSE(z,v)</text>
+<text x="515" y="175">④ 게이트 평가</text><text x="515" y="192" font-size="10">새 vs 최고, ≥55%?</text>
+<text x="105" y="175">⑤ 최고 모델 갱신</text><text x="105" y="192" font-size="10">셀프플레이 생성자 교체</text>
+</g>
+</svg>
+
+<ol>
+<li><strong>셀프플레이</strong>: 현재 모델로 MCTS를 돌려 양쪽을 모두 둔다. 매 수마다 (국면, 방문 분포 π)를 기록. 판이 끝나면 결과 z를 각 기록에 붙인다.</li>
+<li><strong>버퍼</strong>: 최근 N개 표본을 보관. 대칭(회전·반사 8가지)으로 데이터 증강.</li>
+<li><strong>학습</strong>: 버퍼에서 미니배치를 뽑아 정책은 π에, 가치는 z(이 프로젝트는 z와 q 혼합)에 맞춘다.</li>
+<li><strong>게이트</strong>: 새 모델과 현재 최고 모델을 대국시켜 승격 여부 결정(AlphaGo Zero 방식. AlphaZero는 이 단계를 없앴다 — 1.18절).</li>
+<li>반복.</li>
+</ol>
+
+<p>이 프로젝트의 실제 한 에폭 구성(<code>_restart_train.py</code>):</p>
+<pre><code>train_mcts_alpha_zero(num_epochs=20000, num_self_play_games=16, num_simulations=900,
+    batch_size=128, self_play_workers=10, ...
+    temperature_moves=4, noise_weight=0.25, dirichlet_alpha=0.3, c_puct=1.6, c_puct_exploit=1.6, ...
+    boosted_sims=1800, boost_threshold=5, boost_when_narrow=True, num_curriculum_games=4,
+    num_opening_games=2,
+    num_league_games=6, league_pool_size=40, league_best_checkpoint_prob=0.28,
+    full_search_prob=0.5, fast_sims=150,
+    full_search_prob_other=0.5, use_unified_game_pool=True,
+    value_target_q_weight=0.5,
+    max_game_plies=90, refresh_vsdet_games=0,
+    noise_weight_end=0.10, noise_anneal_epochs=150,
+    dirichlet_alpha_end=0.15,
+    use_prioritized_replay=False)</code></pre>
+<p>한 에폭에 셀프플레이 16판 + 커리큘럼 4판 + 오프닝 2판 + 리그 6판 정도가 돈다(각 인자의 정확한 의미와 동작은 학습 루프를 다루는 부에서 코드로 확인). 이 부에서 등장하는 인자들은 이 표의 이론적 배경이다.</p>
+
+<!-- ============================================================ -->
+<h2 id="s12">1.12 방문 횟수가 왜 정책 목표가 되나</h2>
+
+<h3>1.12.1 정의</h3>
+<pre><code>π(a | s) = N(s,a)^(1/τ) / Σ_b N(s,b)^(1/τ)</code></pre>
+<p>τ=1이면 그냥 방문 비율. 학습 목표로는 보통 τ=1의 방문 비율을 그대로 쓴다.</p>
+
+<h3>1.12.2 "정책 개선 연산자"로서의 MCTS</h3>
+<p>핵심 주장: MCTS 결과 π는 신경망 원래 출력 P보다 <strong>더 좋은 정책</strong>이다. 이유:</p>
+<ul>
+<li>MCTS는 P에서 출발하지만, 실제로 수를 따라 내려가 가치를 확인한다.</li>
+<li>Q가 높게 나온 수는 방문이 늘고 낮게 나온 수는 줄어든다.</li>
+<li>따라서 π ≈ "P를 Q로 수정한 분포".</li>
+</ul>
+<p>그러니 P를 π 쪽으로 학습시키면 신경망이 "탐색한 결과를 미리 아는" 방향으로 나아진다. 이걸 반복하는 게 정책 반복(policy iteration)의 일종이다. AlphaGo Zero 논문은 이를 "MCTS를 강력한 정책 개선 연산자로 사용한다"고 표현한다.</p>
+
+<h3>1.12.3 왜 Q가 아니라 N인가</h3>
+<ul>
+<li>Q는 방문 1번짜리 수에서도 극단값(±1)이 나올 수 있어 노이즈가 크다.</li>
+<li>N은 PUCT가 Q와 P를 종합해 "최종적으로 얼마나 믿었는가"를 담는다.</li>
+<li>N 분포는 그 자체로 확률분포 모양이라 softmax 출력과 비교하기 좋다.</li>
+</ul>
+
+<div class="box warn">
+<p><strong>오염 문제.</strong> 방문 분포에는 "탐험 때문에 억지로 간" 방문도 섞인다 — 노이즈 때문에, 혹은 강제 플레이아웃(1.21) 때문에. 이걸 그대로 목표로 쓰면 "나쁜 수에도 확률을 주라"고 가르치는 꼴이다. 그래서 KataGo는 정책 목표 가지치기를 하고, 이 프로젝트도 강제 방문을 목표에서 다시 빼낸다. 또 방문 수가 너무 적은 탐색(예: 150회)의 분포는 너무 거칠어서 목표로 쓰지 않는다(PCR, 1.22).</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s13">1.13 온도(temperature)</h2>
+
+<h3>1.13.1 수를 고르는 두 방법</h3>
+<ul>
+<li><strong>τ=1 (샘플링)</strong>: π 비율대로 무작위로 뽑는다. 방문 60%짜리 수는 60% 확률로 둔다.</li>
+<li><strong>τ→0 (탐욕, greedy)</strong>: N이 최대인 수만 둔다.</li>
+</ul>
+<p>온도라는 이름은 통계물리의 볼츠만 분포에서 왔다. 높은 온도 = 무질서(골고루), 낮은 온도 = 질서(최댓값 집중).</p>
+
+<h3>1.13.2 τ에 따른 예</h3>
+<p>N = (60, 30, 10)일 때:</p>
+<table>
+<tr><th>τ</th><th>N^(1/τ) 정규화</th></tr>
+<tr><td>2</td><td>(0.47, 0.33, 0.19)</td></tr>
+<tr><td>1</td><td>(0.60, 0.30, 0.10)</td></tr>
+<tr><td>0.5</td><td>(0.80, 0.20, 0.02)  — 3600:900:100 비율</td></tr>
+<tr><td>→0</td><td>(1, 0, 0)</td></tr>
+</table>
+
+<h3>1.13.3 왜 초반에만 샘플링하나</h3>
+<p>셀프플레이에서 매번 탐욕적으로 두면 같은 모델끼리 같은 판을 반복한다 → 데이터 다양성 0. 그래서 초반 몇 수만 τ=1로 다양하게 시작하고, 이후는 τ→0으로 "진지하게" 둔다. AlphaGo Zero는 처음 30수를 τ=1로 했다(바둑 기준). 이 프로젝트:</p>
+<ul>
+<li>학습 설정 <code>temperature_moves=4</code> — 셀프플레이 처음 4수(아마 플라이 기준)만 샘플링.</li>
+<li>평가/게이트 쪽 함수 기본값은 <code>temperature_moves=6</code>.</li>
+</ul>
+<p>11×11 오목은 바둑보다 훨씬 짧고 날카로워서, 초반 몇 수의 무작위성이 판 전체를 결정하기 쉽다. 30수씩 무작위로 두면 판이 망가진다. 그래서 4~6이라는 작은 값.</p>
+
+<div class="box note">
+<p><strong>온도와 정책 목표는 별개.</strong> 온도는 "실제로 판에 어떤 수를 둘지"만 바꾼다. 학습 목표 π는 τ와 무관하게 방문 비율을 저장한다(이 점은 일반 AlphaZero 관례. 이 프로젝트 코드가 정확히 그렇게 하는지는 셀프플레이 함수에서 확인 권장).</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s14">1.14 디리클레 루트 노이즈</h2>
+
+<h3>1.14.1 문제</h3>
+<p>온도로 초반을 섞어도, 정책망이 P≈0을 준 수는 PUCT에서 탐험항이 거의 0이라 영영 방문되지 않는다. 만약 그 수가 사실 최선이라면? 신경망은 그걸 배울 기회가 없다. 자기 강화되는 맹점이다.</p>
+
+<h3>1.14.2 해법: 루트에서만 사전확률을 흔든다</h3>
+<pre><code>P'(s_root, a) = (1 − ε) · P(s_root, a) + ε · η_a,     η ~ Dir(α)</code></pre>
+<ul>
+<li>ε = noise_weight (이 프로젝트 0.25 → 0.10으로 150에폭에 걸쳐 감소).</li>
+<li>α = dirichlet_alpha (0.3 → 0.15).</li>
+<li>노이즈는 <strong>루트에만</strong> 넣는다. 트리 깊은 곳까지 흔들면 탐색 전체가 엉망이 된다.</li>
+</ul>
+
+<h3>1.14.3 디리클레 분포란</h3>
+<p>디리클레 분포 Dir(α)는 "합이 1인 확률 벡터"를 뽑는 분포다. K개 성분의 각각이 0 이상이고 합이 1.</p>
+<ul>
+<li>α가 <strong>크면</strong>(예: 10) 뽑힌 벡터가 고른 분포(1/K, 1/K, …)에 가깝다.</li>
+<li>α가 <strong>작으면</strong>(예: 0.03) 대부분 0이고 한두 성분에 몰린 뾰족한 벡터가 나온다.</li>
+<li>α=1이면 단체(simplex) 위 균일분포.</li>
+</ul>
+<p>뾰족한 노이즈는 "몇 개의 무작위 수를 확 띄워서 강제로 시험해 보게" 만든다. 고른 노이즈는 모든 수에 조금씩 확률을 뿌린다. AlphaZero는 대략 α ≈ 10 / (평균 합법수)로 정했다고 알려져 있다(체스 0.3, 쇼기 0.15, 바둑 0.03). 11×11 오목은 합법수가 100 안팎이니 이 규칙으로는 0.1 정도인데, 이 프로젝트는 0.3에서 시작해 0.15로 내린다 — 초반엔 더 고른(덜 뾰족한) 노이즈. 실제로 이 엔진은 근방 반경 내 수만 후보로 쓰는 가지치기가 있어서(<code>Neighbor-radius move pruning</code>, mcts_core_solver.cpp 77행 주석) 실제 후보 수는 121보다 훨씬 적을 수 있다.</p>
+
+<h3>1.14.4 숫자 예</h3>
+<p>후보 4개, P = (0.70, 0.20, 0.08, 0.02). ε=0.25, 뽑힌 η = (0.05, 0.05, 0.10, 0.80)라면</p>
+<pre><code>P' = 0.75·(0.70,0.20,0.08,0.02) + 0.25·(0.05,0.05,0.10,0.80)
+   = (0.525+0.0125, 0.15+0.0125, 0.06+0.025, 0.015+0.20)
+   = (0.5375, 0.1625, 0.085, 0.215)</code></pre>
+<p>P=0.02였던 네 번째 수가 0.215로 올라 이번 탐색에서 제대로 시험된다. 정말 좋은 수였다면 Q가 높게 나오고 방문이 몰리며, 그 방문 분포가 학습 목표가 되어 신경망이 그 수를 배운다.</p>
+
+<h3>1.14.5 언제 노이즈를 끄나</h3>
+<p>평가·게이트·실전 대국에서는 노이즈를 끈다. 실력 측정에 무작위성이 들어가면 안 되기 때문이다. C++ 엔진 주석도 이를 확인한다: "evaluation/gate/relabel searches run without noise and get forced_k = 0, i.e. plain PUCT".</p>
+
+<div class="box note">
+<p><strong>어닐링(annealing).</strong> <code>annealed_value(epoch, anneal_epochs, start, end)</code>는 선형으로 start→end를 anneal_epochs 동안 옮긴 뒤 유지한다. 학습 코드에는 손실이 이상한 범위로 갈 때 감소를 멈추고 "마지막 안전값"을 유지하는 장치(<code>_last_safe_dirichlet_alpha</code>)도 있다. 초반엔 많이 탐험, 모델이 성숙하면 덜 탐험한다는 발상.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s15">1.15 가치 목표: z, q, 그리고 z/q 혼합</h2>
+
+<h3>1.15.1 z — 게임 결과</h3>
+<p>표준 AlphaZero: 한 판이 끝나면 각 수의 기록에 <strong>그 수를 둔 사람 입장의 최종 결과</strong> z ∈ {+1, 0, −1}을 붙인다. 가치망은 "이 국면에서 이 사람이 결국 이겼나"를 맞히도록 학습한다.</p>
+<p>장점: 거짓이 없다(실제 결과). 단점:</p>
+<ul>
+<li><strong>노이즈가 크다</strong>: 한 판에 정보 1비트. 국면 30개 모두 같은 z를 받는다. 초반의 좋은 수도, 후반 실수 직전의 국면도 모두 "졌다".</li>
+<li><strong>신용 할당 문제</strong>: 진 판의 첫 수는 정말 나빴나? 아마 아니다. 40수째 실수 때문에 진 것이다.</li>
+</ul>
+
+<h3>1.15.2 q — 탐색의 평가</h3>
+<p>그 국면에서 실제로 돌린 MCTS의 루트 가치(Q 평균). 탐색이 900번 살펴보고 낸 "이 국면의 기대값". 장점: 국면마다 다르고, 미래 실수와 무관한 "지금" 기준 평가. 단점: 가치망 자체의 편향을 물려받는다(신경망이 틀리면 q도 틀림 — 자기 참조).</p>
+
+<h3>1.15.3 혼합</h3>
+<p>이 프로젝트는 2026-09-27에 혼합을 도입했다. 실제 코드:</p>
+<pre><code>def mixed_value_target(z, q, q_weight):
+    """Value training target = (1 - q_weight) * z + q_weight * q (2026-09-27).
+
+    z is the game result from the mover's side (+1/0/-1); q is the root
+    value of the full search that produced this ply's policy target, from
+    the same mover's side (the C++ engine's root_value). Pure z carries one
+    noisy bit per game: in 11x11 freestyle the side on defense usually loses
+    whatever the quality of an individual defensive move, so z alone kept
+    re-teaching the value head "defending = lost" even after the value head
+    ...
+    by a league opponent) or q_weight&lt;=0 falls back to pure z."""
+    if q is None or q_weight &lt;= 0.0:
+        return z
+    return (1.0 - q_weight) * z + q_weight * float(q)</code></pre>
+<p>(가운데 몇 줄은 생략.) 학습 설정은 <code>value_target_q_weight=0.5</code>이므로 목표 = 0.5·z + 0.5·q.</p>
+
+<h3>1.15.4 왜 이게 수비 문제와 연결되나</h3>
+<p>docstring이 핵심을 말한다: 11×11 자유룰에서 수비하는 쪽은 개별 수비 수의 질과 상관없이 대개 진다. 그러면 z만 쓰면 수비 국면 전부가 "−1"을 받고, 가치망은 "수비하는 상황 = 진 상황"을 배운다. 그러면 MCTS 안에서 "이 수비 수를 두면 어떻게 되나"를 평가할 때 가치망이 항상 비관적으로 답하고, 수비 수와 아무 수의 Q 차이가 사라져서 탐색이 수비 수를 구분하지 못한다.</p>
+<p>q를 섞으면: 좋은 수비 수 뒤의 국면은 탐색상 "−0.3 정도, 아직 버틸 만함", 나쁜 수비 수 뒤는 "−0.95"처럼 차이가 생긴다. 이 차이가 가치망에 전달된다.</p>
+
+<table>
+<tr><th>국면 상황</th><th>z</th><th>q (예)</th><th>목표 (w=0.5)</th></tr>
+<tr><td>좋은 수비 후, 결국 짐</td><td>−1</td><td>−0.30</td><td>−0.65</td></tr>
+<tr><td>나쁜 수비 후, 결국 짐</td><td>−1</td><td>−0.95</td><td>−0.975</td></tr>
+<tr><td>공격 측, 결국 이김</td><td>+1</td><td>+0.60</td><td>+0.80</td></tr>
+</table>
+<p>(q 수치는 설명용 예시.)</p>
+
+<div class="box note">
+<p><strong>KataGo와의 관계.</strong> KataGo도 z만이 아니라 탐색 값 등을 섞은 보조 목표들을 쓴다. "짧은 기간 미래 값" 같은 여러 시간 스케일 목표가 있다고 알려져 있다(Wu 2019, 세부는 재확인 필요). 이 프로젝트의 z/q 혼합과 생존(남은 수) 보조 머리는 모두 "z 1비트보다 촘촘한 신호"를 주려는 같은 계열의 아이디어다.</p>
+</div>
+
+<div class="box warn">
+<p><strong>마스크.</strong> 2026-09-26부터 일부 표본(정책만 학습하는 hard 클래스)은 가치 목표가 None(NaN)이고 가치 손실에서 제외된다. 그 전엔 0.0으로 저장돼 "무승부"로 잘못 학습시키고 있었다고 코드 주석이 밝힌다: "Before this they were stored as 0.0 and silently trained the value head toward 'draw'." 이 사건은 이후 가치 머리 재초기화(2026-09-27, ep408, 메모리 노트)와 연결된다.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s16">1.16 손실 함수: 정책은 KL, 가치는 MSE인 이유</h2>
+
+<h3>1.16.1 손실 함수가 하는 일</h3>
+<p>신경망 학습 = "예측과 목표의 차이"를 숫자 하나(손실)로 만들고, 그걸 줄이는 방향으로 가중치를 조금씩 바꾸는 것(경사하강). 어떤 차이 척도를 쓰느냐가 "무엇을 잘 맞히게 되는가"를 정한다.</p>
+
+<h3>1.16.2 가치: MSE</h3>
+<pre><code>L_v = (v − target)²</code></pre>
+<p>가치는 하나의 실수(−1~+1)이고, 목표도 실수다(z/q 혼합이라 −0.65 같은 중간값도 있다). 실수 회귀에 표준인 평균제곱오차(MSE)를 쓴다.</p>
+<ul>
+<li>제곱이라 큰 오차를 크게 벌한다.</li>
+<li>MSE를 최소화하는 예측값은 목표의 <strong>기대값(평균)</strong>이다. 즉 같은 국면에서 60% 이기고 40% 지면, v는 0.6−0.4 = 0.2로 수렴한다. "기대 승점"을 맞히라는 뜻이니 가치의 의미와 정확히 맞는다.</li>
+</ul>
+<p>코드: <code>value_criterion = nn.MSELoss(reduction='none')</code>.</p>
+
+<h3>1.16.3 정책: 교차 엔트로피 / KL 발산</h3>
+<p>정책은 121칸에 대한 <strong>확률분포</strong>이고, 목표 π도 분포다. 분포끼리의 거리로 표준인 것이 KL 발산이다.</p>
+<pre><code>KL(π ‖ P) = Σ_a π(a) · log( π(a) / P(a) )
+          = Σ_a π(a) log π(a)  −  Σ_a π(a) log P(a)
+          = −H(π)              +  CE(π, P)</code></pre>
+<ul>
+<li>CE(π,P) = −Σ π log P : 교차 엔트로피.</li>
+<li>H(π) : 목표의 엔트로피. 신경망 파라미터와 무관한 상수.</li>
+</ul>
+<p>따라서 <strong>KL을 최소화하는 것과 교차 엔트로피를 최소화하는 것은 기울기가 같다.</strong> AlphaGo Zero 논문은 교차 엔트로피(−π<sup>T</sup> log p)로 썼고, 이 프로젝트는 <code>nn.KLDivLoss</code>를 쓴다. 차이는 로그에 찍히는 손실 값의 기준점뿐이다.</p>
+
+<div class="box good">
+<p><strong>KL을 쓰는 실용적 이점.</strong> KL은 P=π일 때 정확히 0이 된다. 교차 엔트로피는 최솟값이 H(π)라서 목표 분포가 퍼져 있으면 아무리 잘 학습해도 손실이 높게 나온다. 손실 그래프(loss_trend.png)를 보며 "얼마나 남았나"를 판단하기에 KL이 더 직관적이다. (이 프로젝트가 KL을 고른 실제 이유가 이것인지는 대화 로그에서 확인하지 않았다.)</p>
+</div>
+
+<h3>1.16.4 왜 정책에 MSE를 안 쓰나</h3>
+<ul>
+<li>확률이 작은 영역의 차이를 거의 무시한다. P=0.001 vs 0.01은 MSE로는 미미하지만, 로그로 보면 10배 차이다. 정책에선 이게 중요하다 — "드물지만 필요한 수비 수"에 확률을 줘야 PUCT가 그 수를 본다.</li>
+<li>softmax + 교차엔트로피 조합의 기울기는 단순히 (P − π)로 깔끔하다. 학습이 안정적이다.</li>
+</ul>
+
+<h3>1.16.5 KLDivLoss 사용법의 함정</h3>
+<p>PyTorch의 <code>nn.KLDivLoss</code>는 첫 번째 인자로 <strong>로그 확률</strong>을, 두 번째로 <strong>확률</strong>을 받는다. 즉 <code>loss(log_softmax(logits), target_probs)</code>. 이 프로젝트 코드는 <code>policy_criterion(pred_pol_logits, b_pol)</code>로 호출하는데, 변수명이 logits라 헷갈리기 쉽다. <code>forward_all</code>의 정책 출력이 이미 log_softmax를 거친 값인지 반드시 네트워크 코드에서 확인해야 한다. (이 부에서는 <code>alphago_lee_v3_survival.py</code>의 forward_all을 열어 확인하지 않았다 — <em>확인 필요</em>. 학습이 실제로 잘 됐다는 사실로 보아 log-prob일 가능성이 높다.)</p>
+
+<h3>1.16.6 실제 손실 계산 코드</h3>
+<pre><code>policy_criterion = nn.KLDivLoss(reduction='none')
+value_criterion = nn.MSELoss(reduction='none')
+...
+pred_pol_logits, pred_val, pred_surv = model.forward_all(b_in)
+# reduction='none': policy_criterion gives (B, NUM_CELLS), sum
+# over dim=1 to match KLDivLoss(reduction='batchmean')'s
+# per-sample contribution; value_criterion gives (B, 1).
+p_loss_per_sample = policy_criterion(pred_pol_logits, b_pol).sum(dim=1)
+v_mask = ~torch.isnan(b_val.squeeze(-1))
+v_loss_per_sample = value_criterion(pred_val, torch.nan_to_num(b_val, nan=0.0)).squeeze(-1) * v_mask
+...
+weights = priority / priority.mean().clamp_min(1e-8)
+p_loss = (weights * p_loss_per_sample).mean()
+v_loss = (weights * v_loss_per_sample).mean()
+
+loss = p_loss + 1.0 * v_loss</code></pre>
+<ul>
+<li><code>reduction='none'</code>로 표본별 손실을 받아 칸(121) 방향으로 합산 → 표본당 KL.</li>
+<li>가치 NaN 마스크(1.15 경고 상자).</li>
+<li><code>weights</code>: 표본별 정적 가중치(출처별 가중, 예: 이긴 쪽 보너스)를 평균 1로 정규화해 곱한다. <code>use_prioritized_replay=False</code>라 "놀람(surprise)" 기반 우선순위는 꺼져 있다.</li>
+<li>총손실 = 정책 + 1.0×가치 (+ 생존 보조 0.25×). AlphaGo Zero의 L = (z−v)² − π<sup>T</sup>log p + c‖θ‖² 와 같은 골격이고, L2 정규화 항은 옵티마이저의 weight decay로 처리하는 게 일반적이다(이 프로젝트 옵티마이저 설정은 이 부에서 확인하지 않음).</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s17">1.17 계보: AlphaGo → AlphaGo Zero → AlphaZero → KataGo</h2>
+
+<table>
+<tr><th>시스템</th><th>연도</th><th>핵심</th><th>이 프로젝트가 가져온 것</th></tr>
+<tr><td>Coulom / Kocsis-Szepesvári MCTS·UCT</td><td>2006</td><td>롤아웃 기반 트리 탐색, UCB 선택</td><td>MCTS 골격, c=1.414 기본값 전통</td></tr>
+<tr><td>Winands 등 MCTS-Solver</td><td>2008</td><td>증명된 승/패를 트리에 전파</td><td>C++ 솔버 (<code>proven</code>)</td></tr>
+<tr><td>Rosin PUCB</td><td>2011</td><td>사전확률을 넣은 밴딧</td><td>PUCT 개념의 뿌리</td></tr>
+<tr><td>AlphaGo (Fan/Lee)</td><td>2016</td><td>사람 기보 지도학습 정책망 + RL + 가치망 + 롤아웃</td><td>파일명 <code>alphago_lee.py</code>의 이름 유래(추정)</td></tr>
+<tr><td>AlphaGo Zero</td><td>2017</td><td>사람 데이터 없음, 단일 2-머리 ResNet, 롤아웃 제거, 게이트 55%</td><td>2-머리 구조, π/z 목표, 게이트 55%</td></tr>
+<tr><td>AlphaZero</td><td>2018</td><td>바둑·체스·쇼기 일반화, 게이트 제거(항상 최신 모델로 셀프플레이)</td><td>디리클레 α 관례, 일반 프레임워크</td></tr>
+<tr><td>KataGo</td><td>2019~</td><td>PCR, 강제 플레이아웃+정책 목표 가지치기, 보조 목표들, 훨씬 적은 연산으로 강해짐</td><td>PCR, forced playouts, 생존 보조 머리 발상</td></tr>
+</table>
+
+<h3>1.17.1 AlphaGo Zero의 결정적 단순화</h3>
+<ol>
+<li>사람 기보 없이 무작위 초기화부터.</li>
+<li>정책망·가치망을 하나로 합침.</li>
+<li>롤아웃 삭제 — 가치망만으로 잎 평가.</li>
+<li>입력은 돌 위치만(손으로 만든 특징 없음).</li>
+</ol>
+<p>이 프로젝트는 3번은 따르지만 4번은 일부러 어긴다 — 포크 마스크 같은 수작업 특징 평면을 입력에 넣는다(<code>alphago_lee.py</code>, <code>fork_mask_cpp.cpp</code>). 노트북 연산 예산으로는 신경망이 포크 패턴을 스스로 발견할 때까지 기다리기 어렵다는 실용적 타협이다.</p>
+
+<h3>1.17.2 AlphaZero의 게이트 제거</h3>
+<p>AlphaZero는 게이트 없이 "가장 최근 모델"로 계속 셀프플레이했다. 대규모 연산(TPU 수천 개)에서는 매 스텝 개선이 꾸준하니 게이트가 불필요했다. 하지만 작은 연산·작은 배치에서는 일시적으로 나빠진 모델이 셀프플레이를 오염시키는 위험이 크다. 이 프로젝트가 AlphaGo Zero식 게이트를 유지한 이유다.</p>
+
+<h3>1.17.3 KataGo가 특별히 중요한 이유</h3>
+<p>KataGo 논문 제목 자체가 "Accelerating Self-Play Learning in Go"다. 핵심 메시지: 같은 결과를 훨씬 적은 연산으로. GTX 1050 노트북 한 대라는 극단적 저예산 프로젝트에게 KataGo는 가장 직접적인 참고서다. "DAWN = Defensive AlphaZero on a Weak Notebook"이라는 이름 자체가 이 제약을 말한다.</p>
+
+<!-- ============================================================ -->
+<h2 id="s18">1.18 게이트(gate): 55% 승격 규칙</h2>
+
+<h3>1.18.1 규칙</h3>
+<pre><code>GATE_PROMOTION_THRESHOLD = 0.55  # AlphaGo Zero's own threshold; draws count as 0.5</code></pre>
+<p>새로 학습된 후보 모델과 현재 최고(best) 모델을 대국시킨다. 후보의 점수율 = (승 + 0.5·무) / 판수. 0.55 이상이면 후보가 새 최고 모델이 되어 이후 셀프플레이를 맡는다.</p>
+
+<h3>1.18.2 왜 50%가 아니라 55%인가 — 통계</h3>
+<p>두 모델이 실력이 같아도 n판 중 승률은 우연으로 흔들린다. 승률의 표준오차 ≈ √(p(1−p)/n). p=0.5일 때:</p>
+<table>
+<tr><th>판수 n</th><th>표준오차</th><th>55%는 몇 σ?</th><th>같은 실력이 우연히 ≥55% 낼 확률(정규근사, 대략)</th></tr>
+<tr><td>20</td><td>0.112</td><td>0.45σ</td><td>~33%</td></tr>
+<tr><td>100</td><td>0.050</td><td>1.0σ</td><td>~16%</td></tr>
+<tr><td>400</td><td>0.025</td><td>2.0σ</td><td>~2%</td></tr>
+</table>
+<p>AlphaGo Zero는 400판으로 평가했으니 55%는 약 2σ 기준, 꽤 엄격했다. 판수가 적으면 55%라는 문턱은 사실상 노이즈에 크게 좌우된다. 무승부를 0.5로 세면 분산이 줄어 약간 도움이 된다. 이 프로젝트의 게이트 판수는 학습 루프 부에서 확인하자. 또한 tactical_refresh 주기에 맞춰 게이트를 돌렸다는 주석이 있다("the gate check (which rides this same cadence)").</p>
+
+<h3>1.18.3 흑백 공정성</h3>
+<p>오목은 선수(흑)가 매우 유리하다. 게이트 대국에서 흑백을 번갈아 주지 않으면 "흑을 더 많이 잡은 쪽"이 이긴다. 따라서 짝수 판수로 색을 바꿔 두는 것이 필수다. 또 노이즈 없이(결정적으로) 두면 같은 모델 쌍이 같은 판을 반복하므로, 오프닝을 다양화하거나 초반 온도를 쓰는 등의 장치가 필요하다(평가 함수 기본 <code>temperature_moves=6</code>).</p>
+
+<!-- ============================================================ -->
+<h2 id="s19">1.19 리그(league) 대국</h2>
+
+<h3>1.19.1 아이디어</h3>
+<p>셀프플레이는 "지금의 나 vs 지금의 나"다. 리그는 "지금의 나 vs 과거의 여러 나(체크포인트 풀)"이다. AlphaStar(StarCraft II, 2019)의 리그 학습이 유명한 사례이고, 개념적으로는 "가상 셀프플레이(fictitious self-play)" 계열이다.</p>
+
+<h3>1.19.2 왜 필요한가 — 순환 망각</h3>
+<p>가위바위보처럼 전략에 순환이 있을 수 있다. 모델 A가 전략 X에 강해지면, 셀프플레이 분포에서 X가 사라지고, 모델은 X에 대한 대응을 잊는다. 그러다 X가 다시 유리해지면… 빙빙 돈다. 과거 체크포인트들과 계속 두면 옛 전략에 대한 대응을 잊지 않는다.</p>
+
+<h3>1.19.3 이 프로젝트의 설정</h3>
+<ul>
+<li><code>num_league_games=6</code>: 에폭당 리그 대국 6판.</li>
+<li><code>league_pool_size=40</code>: 상대 후보 체크포인트 최대 40개.</li>
+<li><code>league_best_checkpoint_prob=0.28</code>: 28% 확률로 현재 best 체크포인트를 상대로 고름(나머지는 풀에서).</li>
+<li>리그 대국의 가치 목표 혼합 시 q는 학습 중인 쪽 탐색에서만 나오므로, 상대(리그 모델)가 둔 수에는 q가 없어 z로 떨어진다(<code>mixed_value_target</code> docstring의 "by a league opponent" 언급).</li>
+</ul>
+
+<div class="box note">
+<p><strong>평가 해석 주의(메모리 노트).</strong> 학습 중 기록되는 "vs-League" 승률은 노이즈·PCR 등 핸디캡이 걸린 상태의 수치다. 진짜 리그 승률로는 탐욕적(greedy) 공정 재측정 값을 보고해야 한다.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s20">1.20 MCTS-Solver: 증명된 승/패</h2>
+
+<h3>1.20.1 문제</h3>
+<p>평범한 MCTS는 이긴 수를 찾아도 그걸 "평균"으로만 안다. 예를 들어 루트에 즉승 수가 있어도, 그 수의 Q는 +1 근처일 뿐 다른 수와 확률적으로 섞인다. 반대로 "이 수를 두면 상대가 즉승" 같은 확실한 패배 수에도 탐험항 때문에 계속 방문이 간다. 오목처럼 강제수(4, 열린 3)가 많은 게임에서는 낭비가 크다.</p>
+
+<h3>1.20.2 Winands 등(2008)의 아이디어</h3>
+<p>노드에 "증명값"을 단다: 미증명 / 증명된 승 / 증명된 패. 규칙(네가맥스, 노드 차례 입장):</p>
+<ul>
+<li>종국 노드: 실제 결과로 증명.</li>
+<li>노드는 <strong>어떤 자식이 하나라도</strong> 증명된 패(자식 차례 사람이 짐)이면 → 증명된 <strong>승</strong>. (그 수를 두면 되니까)</li>
+<li>노드는 <strong>모든 자식이</strong> 증명된 승(자식 차례 사람이 이김)이면 → 증명된 <strong>패</strong>. (뭘 둬도 지니까)</li>
+</ul>
+<p>미니맥스를 MCTS 트리 안에서 조금씩 해 나가는 것이다.</p>
+
+<h3>1.20.3 이 프로젝트 C++ 구현</h3>
+<p>파일 상단 주석이 규칙을 그대로 적는다:</p>
+<pre><code>//     terminal: that child is a proven LOSS for its own mover, and the
+//     expanded node is a proven WIN (proof_dist 1);
+//   * a node is a proven WIN if ANY child is a proven loss (for the
+//     child's mover), and a proven LOSS if ALL children are proven wins;
+//   * selection never enters a child that is a proven win for its mover
+//     (a provably losing move) while any unproven alternative exists, and
+//     stops at proven nodes, backing up their exact (mate-scaled) value;</code></pre>
+<p>그리고 갱신 함수의 핵심:</p>
+<pre><code>if (node-&gt;proven != 0 || !node-&gt;is_expanded || node-&gt;children.empty()) return false;
+...
+if (best_win &gt;= 0) { node-&gt;proven = 1; node-&gt;proof_dist = best_win; return true; }
+if (all_lose) { node-&gt;proven = -1; node-&gt;proof_dist = worst_loss; return true; }</code></pre>
+<ul>
+<li><code>proven</code>: +1 = 이 노드에서 둘 차례인 사람이 이김, −1 = 짐, 0 = 미증명. 한 번 증명되면 취소되지 않는다("never revoked").</li>
+<li><code>proof_dist</code>: 몇 수 만에 끝나는가. 이길 땐 가장 빠른 승리(best_win), 질 땐 가장 오래 버티는 패배(worst_loss)를 고른다 — 사람도 이길 땐 빨리, 질 땐 끝까지 버티는 게 옳다.</li>
+<li><code>proven_value(node, depth)</code> = <code>mate_scaled(proven, depth + proof_dist)</code>: 증명된 노드는 신경망 추정 대신 "몇 수 만의 승/패"를 반영한 정확한 값을 역전파한다. 주석에 따르면 하한(floor)이 있어 깊은 강제 결과도 확실히 결정적인 값으로 남는다.</li>
+<li><code>counted_root_visits</code>: 루트에서 증명된 패배 수에 들어간 방문은 예산 계산에서 빼서, 반박된 주 변화(main line)가 예산을 다 잡아먹지 않게 한다.</li>
+</ul>
+
+<h3>1.20.4 오목에서의 가치</h3>
+<p>열린 4(양쪽이 빈 4목)가 생기면 상대는 막을 수 없다. "4-3", "4-4" 포크도 몇 수 안에 강제 승리로 이어진다. 솔버는 이런 짧은 강제 수순을 트리 안에서 <strong>확정</strong>지어, 가치망이 그 국면을 잘못 평가해도 탐색이 올바른 답을 내게 한다. 특히 "이 수를 안 막으면 3수 후 진다"를 증명된 패로 표시하는 것은 수비에 결정적이다 — 가치망이 수비 상황을 비관적으로 뭉개더라도(1.15), 증명된 패배 수는 확실히 걸러진다.</p>
+
+<div class="box warn">
+<p><strong>한계.</strong> 솔버는 트리가 실제로 종국까지 닿은 가지에서만 작동한다. 900 시뮬레이션으로 닿을 수 있는 깊이는 제한적이라, 10수 이상 걸리는 VCF/VCT(연속 4/3 공격) 수순은 증명되지 않을 수 있다. 증명이 안 된 부분은 여전히 가치망 몫이다.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s21">1.21 강제 플레이아웃과 정책 목표 가지치기 (KataGo)</h2>
+
+<h3>1.21.1 문제: 첫인상이 나쁜 좋은 수</h3>
+<p>디리클레 노이즈로 어떤 수의 P를 올려 줘도, 그 수의 첫 평가(가치망)가 나쁘게 나오면 PUCT는 곧바로 그 수를 버린다. 수비 수나 포크 지점은 "한 수만 보면 별로, 몇 수 더 보면 결정적"인 경우가 많다. 즉 노이즈가 기회를 줘도 1~2번 방문으로 끝나서 소용이 없다.</p>
+
+<h3>1.21.2 해법: 최소 방문 수 보장</h3>
+<p>KataGo(Wu 2019, 3.2절)는 루트의 각 자식 c에 대해 최소 방문 수를 강제한다.</p>
+<pre><code>n_forced(c) = sqrt( k · P(c) · N_root )</code></pre>
+<p>방문이 이보다 적은 자식이 있으면 PUCT 대신 그 자식을 먼저 고른다. k는 상수(KataGo 논문 k=2, 이 프로젝트도 k=2).</p>
+
+<h3>1.21.3 이 프로젝트 구현</h3>
+<pre><code>// Forced playouts + policy target pruning (KataGo, Wu 2019 Sec. 3.2),
+// 2026-09-27. Root only, and only when forced_k &gt; 0 (the Python side passes
+// k=2 for noisy training searches; evaluation/gate/relabel searches run
+// without noise and get forced_k = 0, i.e. plain PUCT).
+static int select_root_forced(Node* node, double c_puct, double forced_k) {
+    double n_total = (double)node-&gt;n_visits;
+    int best_forced = -1;
+    double best_forced_score = -1e18;
+    double sqrt_pv = std::sqrt(n_total);
+    for (auto&amp; kv : node-&gt;children) {
+        Node* ch = kv.second.get();
+        if (ch-&gt;proven == 1 || ch-&gt;prior_prob &lt;= 0.0) continue;
+        double n_forced = std::sqrt(forced_k * ch-&gt;prior_prob * n_total);
+        if ((double)ch-&gt;n_visits &lt; n_forced) {
+            double score = -ch-&gt;mean_value + c_puct * sqrt_pv / (1 + ch-&gt;n_visits) * ch-&gt;prior_prob;
+            if (score &gt; best_forced_score) { best_forced_score = score; best_forced = kv.first; }
+        }
+    }
+    return best_forced &gt;= 0 ? best_forced : select_child(node, c_puct);
+}</code></pre>
+<ul>
+<li>루트에서만, 노이즈가 있는 학습 탐색에서만 켠다.</li>
+<li>증명된 패배 수(<code>proven == 1</code>)는 강제하지 않는다.</li>
+<li>최소 방문 미달인 자식이 여럿이면 그 중 PUCT 점수가 가장 높은 것.</li>
+</ul>
+
+<h3>1.21.4 숫자 예</h3>
+<p>N<sub>root</sub>=900, k=2.</p>
+<table>
+<tr><th>P(c)</th><th>n_forced = √(2·P·900)</th></tr>
+<tr><td>0.50</td><td>30</td></tr>
+<tr><td>0.10</td><td>13.4</td></tr>
+<tr><td>0.02 (노이즈로 올라간 수)</td><td>6</td></tr>
+<tr><td>0.001</td><td>1.3</td></tr>
+</table>
+<p>P=0.02짜리 수도 최소 6번은 본다. 6번이면 첫 응수 몇 개를 확인할 수 있어 "첫인상만 나쁜" 수를 구제할 확률이 커진다. 필요한 총 강제 방문은 Σ√(2P·900)으로, 전체 예산 대비 크지 않다.</p>
+
+<h3>1.21.5 정책 목표 가지치기</h3>
+<p>강제 방문은 정책 목표를 오염시킨다(1.12 경고). 그래서 목표로 내보내기 전에 다시 뺀다. 주석 요약:</p>
+<pre><code>// Before the
+// visits are returned as the training target, those forced visits are
+// pruned again from every child except the most-visited one, as far as the
+// child's PUCT value would not exceed the best child's, and children left
+// with a single visit are dropped -- so the policy target is not polluted.</code></pre>
+<p>풀어 쓰면: 최다 방문 자식 c*를 기준으로, 다른 각 자식 c에 대해 "c의 방문을 몇 개 빼도 c의 PUCT 점수가 c*의 점수를 넘지 않는가"를 계산해, 그만큼(최대 강제분까지) 방문을 뺀다. 즉 "PUCT가 정상적으로도 줬을 방문"만 남기고 "강제로 준 방문"은 제거. 방문 1개만 남는 자식은 아예 삭제. 결과적으로 탐색은 넓게 하되, 학습 목표는 "진짜 믿은 만큼"만 반영한다.</p>
+
+<div class="box good">
+<p><strong>요점.</strong> 탐험(무엇을 볼지)과 학습 목표(무엇을 배울지)를 분리하는 것. 노이즈·강제 플레이아웃은 탐험을 넓히고, 가지치기·PCR은 목표를 깨끗하게 한다.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s22">1.22 PCR: 플레이아웃 캡 랜덤화</h2>
+
+<h3>1.22.1 딜레마</h3>
+<ul>
+<li>정책 목표의 질은 탐색 방문 수가 많을수록 좋다(900회 분포가 150회 분포보다 정확).</li>
+<li>가치 목표(z)의 양은 <strong>판 수</strong>에 비례한다. 한 판에 1비트.</li>
+<li>예산이 고정이면, 모든 수를 900회로 두면 판 수가 적어 가치 데이터가 부족하고, 모든 수를 150회로 두면 정책 목표가 거칠다.</li>
+</ul>
+
+<h3>1.22.2 KataGo의 해법</h3>
+<p>각 수마다 확률 p로 "전체 탐색(full)"을, 1−p로 "빠른 탐색(fast)"을 한다. 전체 탐색 수만 정책 목표로 기록한다. 빠른 탐색 수는 게임 진행에만 쓴다. 평균 비용이 줄어 같은 예산으로 판 수가 늘고, 정책 목표는 항상 고품질이다. KataGo는 p=0.25, full 600 / fast 100 정도를 썼다고 알려져 있다(재확인 필요).</p>
+
+<h3>1.22.3 이 프로젝트</h3>
+<pre><code>full_search_prob=0.5, fast_sims=150,
+full_search_prob_other=0.5,</code></pre>
+<p>원조 구현(<code>alphazero_mcts_make.py</code>)의 docstring:</p>
+<pre><code>full_search_prob/fast_sims: Playout Cap Randomization (KataGo). At each
+move, with probability full_search_prob run the normal (possibly
+boosted) search and record it as a training target; otherwise run a
+cheap fast_sims-simulation search just to pick a move and advance the
+game, without recording it (a low-sim search's visit distribution is
+too noisy to be a good policy target).</code></pre>
+<p>그리고 코드:</p>
+<pre><code>is_full_search = full_search_prob &gt;= 1.0 or random.random() &lt; full_search_prob
+if is_full_search:
+    sims_this_move = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
+else:
+    sims_this_move = fast_sims or max(1, num_simulations // 6)</code></pre>
+<p>평균 시뮬레이션 수 ≈ 0.5·900 + 0.5·150 = 525 (부스트 제외). 순수 900 대비 약 58%의 비용. 전체 탐색 쪽에는 "후보가 좁을 때(빈칸 적거나 강제 상황) 1800으로 부스트"하는 장치가 있다(<code>boosted_sims=1800</code>, <code>boost_threshold=5</code>, <code>boost_when_narrow=True</code>). <code>full_search_prob_other</code>는 셀프플레이 외(vs-Det/리그) 대국의 비율이다.</p>
+
+<div class="box note">
+<p><strong>"PCR 상태"라는 말.</strong> 메모리 노트의 "unified MP pool + PCR state"는 통합 멀티프로세스 대국 풀(<code>selfplay_mp_unified.py</code>) 환경에서 PCR이 켜진 상태를 비교 기준선으로 삼는다는 뜻으로 읽힌다. 세부는 학습 인프라 부에서.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s23">1.23 셀프플레이의 맹점 — 같은 신경망이 양쪽을 둔다</h2>
+
+<h3>1.23.1 구조</h3>
+<p>셀프플레이에서는 흑과 백을 <strong>같은 신경망, 같은 탐색</strong>이 둔다. 그러면 이런 일이 생긴다.</p>
+<ul>
+<li>신경망이 어떤 공격 패턴 X를 <strong>모르면</strong>: 공격 측도 X를 안 쓰고, 수비 측도 X를 막을 줄 모른다. X는 데이터에 아예 나타나지 않는다. 맹점이 자기 보존된다.</li>
+<li>신경망이 X를 <strong>알면</strong>: 공격 측이 X를 쓰고, 수비 측은 막으려 하지만 막는 법은 따로 배워야 한다.</li>
+</ul>
+
+<svg viewBox="0 0 600 150" width="100%" style="max-width:600px" role="img" aria-label="맹점 순환">
+<g fill="none" stroke="currentColor" stroke-width="1.4">
+<rect x="10" y="50" width="160" height="50" rx="8"/>
+<rect x="220" y="50" width="160" height="50" rx="8"/>
+<rect x="430" y="50" width="160" height="50" rx="8"/>
+<path d="M170 75 H220"/><path d="M380 75 H430"/>
+<path d="M510 100 V130 H90 V100"/>
+</g>
+<g fill="currentColor" font-size="12" text-anchor="middle">
+<text x="90" y="72">신경망이 X를 모름</text><text x="90" y="88" font-size="10">(P(X) ≈ 0)</text>
+<text x="300" y="72">양쪽 다 X를 안 둠</text><text x="300" y="88" font-size="10">탐색도 거의 안 봄</text>
+<text x="510" y="72">데이터에 X 없음</text><text x="510" y="88" font-size="10">학습할 신호 없음</text>
+<text x="300" y="145" font-size="11">맹점이 그대로 유지됨</text>
+</g>
+</svg>
+
+<h3>1.23.2 디리클레 노이즈와 강제 플레이아웃이 깨는 지점</h3>
+<p>노이즈는 공격 측이 가끔 X를 "시험 삼아" 두게 만든다. 그때 수비 측(같은 신경망)이 X를 못 막으면 공격 측이 이기고, z=+1이 X 국면에 붙는다 → 공격 측 정책이 X를 배운다. 이건 비교적 빨리 된다. 문제는 그 다음이다.</p>
+
+<h3>1.23.3 "공격은 빨리 배우고 수비는 늦게 배운다"</h3>
+<p>X를 막는 수비 수 D를 배우려면:</p>
+<ol>
+<li>X가 실제로 두어진 국면이 데이터에 충분히 있어야 하고,</li>
+<li>그 국면에서 수비 측 탐색이 D를 찾아야 하고(P(D)가 낮으면 어렵다),</li>
+<li>D를 둔 뒤 국면이 "덜 나쁘다"는 신호가 가치 목표에 반영돼야 한다.</li>
+</ol>
+<p>3번이 특히 어렵다(1.15). 11×11 자유룰에서 수비하는 쪽은 D를 두어도 결국 지는 경우가 많아 z=−1. 그러면 D와 다른 수의 차이가 가치 신호에 안 남는다. 결국 정책은 공격 쪽으로 기울고, 수비는 탐색이 실시간으로 메워야 하는 구멍이 된다. 이 프로젝트의 측정에서 "블록 위치 top-1: prior 60%, MCTS@250 10%, MCTS@900 67%" 같은 기록이 <code>_restart_train.py</code> 주석에 남아 있다 — 수비 지점을 정책이 일부만 맞히고, 탐색 횟수에 따라 결과가 크게 달라지는 상황.</p>
+
+<h3>1.23.4 이 프로젝트가 맹점에 대응한 장치들 (이론 관점 정리)</h3>
+<table>
+<tr><th>장치</th><th>맹점의 어느 고리를 끊나</th></tr>
+<tr><td>디리클레 노이즈</td><td>"양쪽 다 X를 안 둠" — 강제로 X를 시도</td></tr>
+<tr><td>강제 플레이아웃</td><td>노이즈로 띄운 수가 1번 보고 버려지는 문제</td></tr>
+<tr><td>MCTS-Solver</td><td>짧은 강제 패배를 가치망 대신 확정</td></tr>
+<tr><td>z/q 혼합</td><td>"수비 = 패배" 가치 신호 뭉개짐</td></tr>
+<tr><td>리그</td><td>과거 모델의 다른 공격 스타일에 노출</td></tr>
+<tr><td>전술 문제/커리큘럼, 마이닝/재라벨</td><td>X 국면을 데이터에 직접 주입 (다른 부에서 상술)</td></tr>
+<tr><td>포크 마스크 입력 평면</td><td>신경망이 스스로 발견하기 어려운 포크 패턴을 입력에 명시</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s24">1.24 왜 수비는 구조적으로 어려운가</h2>
+
+<h3>1.24.1 비대칭 1: 공격은 하나만, 수비는 전부</h3>
+<p>공격 측은 여러 위협 중 <strong>하나만</strong> 성공하면 이긴다. 수비 측은 <strong>모든</strong> 위협을 막아야 한다. 탐색 관점에서:</p>
+<ul>
+<li>공격 노드(내 차례, OR 노드): 자식 중 하나라도 승리면 승리. 좋은 수 하나만 찾으면 된다.</li>
+<li>수비 노드(상대 공격에 대한 내 응수 이후, AND 성격): 상대의 모든 응수에 대해 버텨야 한다.</li>
+</ul>
+<p>솔버 규칙(1.20)이 바로 이 비대칭이다 — 승리 증명은 "ANY", 패배 증명은 "ALL". 수비가 안전하다는 걸 확인하려면 상대의 모든 공격 수를 반박해야 하니 탐색량이 훨씬 많다.</p>
+
+<h3>1.24.2 비대칭 2: 포크</h3>
+<p>4-3 포크: 한 수로 "4(다음 수에 5)"와 "열린 3(다음 수에 열린 4)"를 동시에 만든다. 수비자는 4를 막아야 하고, 그러면 열린 3이 열린 4가 되어 진다. 즉 포크가 <strong>완성된 뒤</strong>에는 수비가 불가능하다. 수비는 포크가 만들어지기 <strong>2~3수 전에</strong> 그 가능성을 보고 미리 막아야 한다. 그런데 그 시점의 "미리 막는 수"는 겉보기에 평범한 수다(정책 P가 낮음). 그리고 그 수의 효과는 몇 수 뒤에야 드러난다(가치망이 읽어야 함). 정책과 가치 두 머리가 모두 약한 영역이다.</p>
+
+<h3>1.24.3 비대칭 3: 결과 신호</h3>
+<p>1.15에서 본 대로, 선수가 유리한 게임에서 수비 측은 잘 둬도 지는 경우가 많다. 결과 기반 학습(z)은 "잘 둔 수비"와 "못 둔 수비"를 구분하는 신호가 약하다.</p>
+
+<h3>1.24.4 비대칭 4: 탐색 예산</h3>
+<p>열린 3 하나에는 막는 자리가 보통 2~3곳 있다(양끝, 때로 가운데 비틀기). 상대가 위협을 두 개 동시에 만들면 그 곱만큼의 조합을 확인해야 한다. 900 시뮬레이션으로는 그 조합을 다 볼 수 없다. 그래서 정책이 수비 지점을 "직관적으로" 높게 쳐 줘야 하는데, 1.23의 맹점 때문에 그게 늦게 학습된다. 이 프로젝트가 수비 지향 모델을 졸업 모델로 삼고 이름에까지 "Defensive"를 넣은 것은 이 어려움이 프로젝트의 중심 난제였다는 뜻이다.</p>
+
+<h3>1.24.5 작은 그림으로</h3>
+<pre><code>. . . . . . .
+. . . X . . .        X(공격)가 a에 두면
+. . a X O . .        세로 X X X (열린 3) + 가로 a-?-? 연결로
+. . . X . . .        포크가 될 수 있는 모양 — 미리 막을 자리는
+. . . . . . .        "지금 당장 위협이 아닌" 칸에 있다.</code></pre>
+<p>(설명용 개념도. 실제 정확한 포크 형태는 오목 규칙 부에서 실제 국면으로 다시 다룬다.)</p>
+
+<!-- ============================================================ -->
+<h2 id="s25">1.25 이 프로젝트의 숫자 한눈에 보기</h2>
+<p>이 부에서 다룬 이론 인자들의 실제 값(출처: <code>_restart_train.py</code>, <code>alphazero_mcts_make_lrfix.py</code>, <code>mcts_core_solver.cpp</code>).</p>
+<table>
+<tr><th>개념</th><th>인자</th><th>값</th><th>절</th></tr>
+<tr><td>탐험 상수 (학습)</td><td>c_puct / c_puct_exploit</td><td>1.6 / 1.6</td><td>1.9</td></tr>
+<tr><td>탐험 상수 (함수 기본, 평가 등)</td><td>c_puct</td><td>1.414</td><td>1.9</td></tr>
+<tr><td>시뮬레이션 수</td><td>num_simulations</td><td>900</td><td>1.6</td></tr>
+<tr><td>부스트 시뮬레이션</td><td>boosted_sims / boost_threshold</td><td>1800 / 5</td><td>1.22</td></tr>
+<tr><td>PCR</td><td>full_search_prob / fast_sims</td><td>0.5 / 150</td><td>1.22</td></tr>
+<tr><td>온도 수</td><td>temperature_moves</td><td>학습 4, 함수 기본 6</td><td>1.13</td></tr>
+<tr><td>노이즈 가중</td><td>noise_weight → noise_weight_end</td><td>0.25 → 0.10 (150에폭)</td><td>1.14</td></tr>
+<tr><td>디리클레 α</td><td>dirichlet_alpha → _end</td><td>0.3 → 0.15</td><td>1.14</td></tr>
+<tr><td>가치 목표 혼합</td><td>value_target_q_weight</td><td>0.5</td><td>1.15</td></tr>
+<tr><td>정책 손실</td><td>nn.KLDivLoss</td><td>표본별 합</td><td>1.16</td></tr>
+<tr><td>가치 손실</td><td>nn.MSELoss</td><td>가중 1.0</td><td>1.16</td></tr>
+<tr><td>생존 보조 손실</td><td>SURVIVAL_LOSS_WEIGHT</td><td>0.25</td><td>1.10</td></tr>
+<tr><td>게이트</td><td>GATE_PROMOTION_THRESHOLD</td><td>0.55, 무승부 0.5</td><td>1.18</td></tr>
+<tr><td>리그</td><td>num_league_games / pool / best prob</td><td>6 / 40 / 0.28</td><td>1.19</td></tr>
+<tr><td>강제 플레이아웃</td><td>forced_k</td><td>2 (학습 탐색), 0 (평가)</td><td>1.21</td></tr>
+<tr><td>최대 판 길이</td><td>max_game_plies</td><td>90</td><td>—</td></tr>
+<tr><td>배치 크기</td><td>batch_size</td><td>128</td><td>—</td></tr>
+<tr><td>우선순위 리플레이</td><td>use_prioritized_replay</td><td>False</td><td>1.16</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s26">1.26 참고문헌 (재확인 필요)</h2>
+<div class="box warn">
+<p>아래 서지 정보는 기억에 기반한 것이다. 제목·학회·연도·페이지는 원문으로 반드시 다시 확인할 것. 특히 Rosin 2011의 정확한 공식, AlphaZero의 c(s) 상수, KataGo의 PCR/강제 플레이아웃 수치는 재확인 대상이다.</p>
+</div>
+<ul>
+<li>Coulom, R. (2006). "Efficient Selectivity and Backup Operators in Monte-Carlo Tree Search." <em>Computers and Games (CG 2006)</em>. — MCTS 명명과 초기 정식화.</li>
+<li>Kocsis, L., &amp; Szepesvári, C. (2006). "Bandit Based Monte-Carlo Planning." <em>ECML 2006</em>. — UCT.</li>
+<li>Auer, P., Cesa-Bianchi, N., &amp; Fischer, P. (2002). "Finite-time Analysis of the Multiarmed Bandit Problem." <em>Machine Learning</em> 47. — UCB1.</li>
+<li>Winands, M. H. M., Björnsson, Y., &amp; Saito, J.-T. (2008). "Monte-Carlo Tree Search Solver." <em>Computers and Games (CG 2008)</em>. — MCTS-Solver.</li>
+<li>Rosin, C. D. (2011). "Multi-armed Bandits with Episode Context." <em>Annals of Mathematics and Artificial Intelligence</em> 61. — PUCB(PUCT의 뿌리).</li>
+<li>Silver, D. et al. (2016). "Mastering the game of Go with deep neural networks and tree search." <em>Nature</em> 529. — AlphaGo.</li>
+<li>Silver, D. et al. (2017). "Mastering the game of Go without human knowledge." <em>Nature</em> 550. — AlphaGo Zero (게이트 55%, 400판 평가, 단일 2-머리 망).</li>
+<li>Silver, D. et al. (2018). "A general reinforcement learning algorithm that masters chess, shogi, and Go through self-play." <em>Science</em> 362. — AlphaZero.</li>
+<li>Wu, D. J. (2019). "Accelerating Self-Play Learning in Go." arXiv:1902.10565. — KataGo (PCR, forced playouts &amp; policy target pruning, 보조 목표).</li>
+<li>Schaul, T. et al. (2015). "Prioritized Experience Replay." arXiv:1511.05952. — 코드 주석에 인용됨(현재 꺼져 있음).</li>
+<li>Allis, L. V. (1994). <em>Searching for Solutions in Games and Artificial Intelligence</em>. 박사논문. — 15×15 오목 흑 필승 증명(참고).</li>
+<li>Vinyals, O. et al. (2019). "Grandmaster level in StarCraft II using multi-agent reinforcement learning." <em>Nature</em> 575. — 리그 학습(AlphaStar).</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s27">1.27 스스로 점검 문제</h2>
+<ol>
+<li>C++ <code>select_child</code>에서 <code>-ch-&gt;mean_value</code>의 마이너스를 지우면 AI는 어떻게 두게 되는가?</li>
+<li>1.7절 틱택토 예에서 c_puct를 0.1로 낮추면 시뮬레이션 3에서 무엇이 선택되는가? 계산해 보라.</li>
+<li>N=(60,30,10)일 때 τ=0.25의 분포를 구하라.</li>
+<li>노이즈를 루트가 아니라 모든 노드에 넣으면 무슨 일이 생길까?</li>
+<li>value_target_q_weight=1.0(순수 q)이면 어떤 위험이 있는가? (힌트: 자기 참조)</li>
+<li>KL 손실과 교차엔트로피 손실의 기울기가 같다는 것을 식으로 보여라.</li>
+<li>게이트를 20판으로 돌릴 때 같은 실력의 두 모델이 55%를 넘을 확률은 대략 얼마인가? 판수를 늘리면?</li>
+<li>N<sub>root</sub>=900, k=2일 때 P=0.05인 수의 강제 방문 수는?</li>
+<li>PCR에서 빠른 탐색(150회) 수를 정책 목표로 기록하지 않는 이유는?</li>
+<li>솔버에서 "증명된 승"은 ANY, "증명된 패"는 ALL인 이유를 수비의 어려움과 연결해 설명하라.</li>
+<li>셀프플레이 맹점을 깨는 장치 7가지를 나열하고, 각각 1.23.1 그림의 어느 화살표를 끊는지 말하라.</li>
+</ol>
+
+<div class="box">
+<p><strong>다음 부 예고.</strong> 2부부터는 이 이론이 실제 코드(학습 루프, C++ 엔진, 멀티프로세스 풀)에서 어떻게 구현되었는지를 파일 단위로 따라간다.</p>
+</div>
+
+</main>
+</body>
+</html>

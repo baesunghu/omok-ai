@@ -1,0 +1,37 @@
+# NAPS 11x11 gomoku -- private record repo (2026-10-09).
+# Whitelist only: this folder also holds the 3x3 / 5x5 / clean_3x3 projects, which stay
+# out of this repository entirely. Everything is ignored unless re-included below.
+/*
+!/.gitignore
+!/README.md
+!/10x10/
+!/cpp_mcts/
+!/manual/
+
+# --- 10x10: source, docs, problems, web board only ---
+/10x10/**
+!/10x10/**/
+!/10x10/*.py
+!/10x10/*.md
+!/10x10/docs/**
+!/10x10/hlt/web/*.py
+!/10x10/hlt/web/*.html
+!/10x10/tactical_problems/*.json
+# never: weights, buffers, logs, binaries, old backup folders
+/10x10/model/
+/10x10/backup_*/
+/10x10/**/__pycache__/
+/10x10/scratch*/
+
+# --- cpp_mcts: the engine sources the 11x11 run actually uses ---
+/cpp_mcts/*
+!/cpp_mcts/mcts_core_solver.cpp
+!/cpp_mcts/build_mcts_core_solver.bat
+!/cpp_mcts/deterministic_play_core_fast_deploy.cpp
+
+# --- manual: sources and build scripts, not the generated docx/pdf ---
+/manual/*
+!/manual/*.html
+!/manual/*.css
+!/manual/build_*.py
+/manual/_*.html

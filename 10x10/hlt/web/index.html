@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>오목 분석판</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --bg:#f3f1ec; --panel:#fbfaf7; --ink:#1f2328; --muted:#6b6f76; --line:#d9d4c9;
+  --wood:#e2c48d; --wood-line:#8a6a35; --black:#1c1c1e; --white:#fbfbf8;
+  --accent:#c2410c; --good:#2f7d4f; --bad:#b42318; --heat:194,65,12;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#16181b; --panel:#1e2125; --ink:#e7e5e1; --muted:#9aa0a8; --line:#33373d;
+  --wood:#9c7c47; --wood-line:#3d2f17; --black:#0d0d0f; --white:#f2f1ec;
+  --accent:#fb923c; --good:#4ade80; --bad:#f87171; --heat:251,146,60;
+}}
+:root[data-theme="dark"]{
+  --bg:#16181b; --panel:#1e2125; --ink:#e7e5e1; --muted:#9aa0a8; --line:#33373d;
+  --wood:#9c7c47; --wood-line:#3d2f17; --black:#0d0d0f; --white:#f2f1ec;
+  --accent:#fb923c; --good:#4ade80; --bad:#f87171; --heat:251,146,60;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans KR",system-ui,sans-serif;font-size:14px}
+.wrap{display:grid;grid-template-columns:320px 1fr 300px;gap:18px;max-width:1500px;margin:0 auto;padding:18px 16px}
+@media (max-width:1200px){.wrap{grid-template-columns:320px 1fr}.pvpanel{grid-column:1 / -1}}
+@media (max-width:860px){.wrap{grid-template-columns:1fr}}
+#pvboard{width:100%;aspect-ratio:1}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+h1{font-size:18px;margin:0 0 2px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:12px}
+.side{display:flex;flex-direction:column;gap:14px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,select,input{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:6px 10px}
+button{cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+input[type=number]{width:84px}
+.label{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.big{font-family:"IBM Plex Mono",monospace;font-size:30px;font-weight:600;font-variant-numeric:tabular-nums}
+.status{font-weight:600}
+svg text{font-family:"IBM Plex Mono",monospace}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",monospace;font-size:12px}
+th,td{padding:4px 6px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+tr.chosen td{color:var(--accent);font-weight:600}
+.boardbox{display:flex;justify-content:center}
+#board{width:min(100%,680px);aspect-ratio:1;touch-action:manipulation}
+.legend{color:var(--muted);font-size:12px;margin-top:8px}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;border:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="side">
+    <div class="panel">
+      <h1>오목 분석판</h1>
+      <div class="sub" id="modelinfo">모델 불러오는 중…</div>
+      <div class="row">
+        <select id="side" aria-label="내 돌">
+          <option value="O">내가 후공 (O) — AI 선공</option>
+          <option value="X">내가 선공 (X)</option>
+        </select>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label>난이도
+          <select id="level" aria-label="난이도">
+            <option value="100">입문 (100회)</option>
+            <option value="250">쉬움 (250회)</option>
+            <option value="600">보통 (600회)</option>
+            <option value="1100" selected>어려움 (1100회)</option>
+            <option value="2000">최강 (2000회)</option>
+            <option value="custom">직접 입력</option>
+          </select>
+        </label>
+        <input id="sims" type="number" min="50" max="2000" step="50" value="1100" aria-label="탐색 횟수">
+        <label>모델
+          <select id="modelsel" aria-label="AI 모델">
+            <option value="dawn" selected>여명 (졸업 모델)</option>
+            <option value="latest">최신 모델</option>
+          </select>
+        </label>
+        <button class="primary" id="newgame">새 게임</button>
+        <button id="undo" title="내 마지막 수와 그 뒤 AI 수를 되돌립니다">무르기</button>
+      </div>
+      <div class="sub" id="simhint" style="margin:6px 0 0"></div>
+      <div class="row" style="margin-top:10px"><span class="status" id="status">—</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="label">AI 승률 (AI 기준)</div>
+      <div class="big" id="wr">—</div>
+      <svg id="chart" viewBox="0 0 300 150" width="100%" role="img" aria-label="수순별 AI 승률"></svg>
+    </div>
+
+    <div class="panel">
+      <div class="label">AI가 본 후보 수 (탐색 중이면 실시간, 16회마다 갱신)</div>
+      <table>
+        <thead><tr><th>수</th><th>방문</th><th>비율</th><th>Q</th><th>사전</th></tr></thead>
+        <tbody id="cands"></tbody>
+      </table>
+      <div class="legend">Q는 AI 기준 가치(-1 패 ~ +1 승). 사전은 정책망 확률. ★ = 게임 규칙상 확정 승리 수.</div>
+    </div>
+  </div>
+
+  <div class="panel boardbox">
+    <div style="width:100%;display:flex;flex-direction:column;align-items:center">
+      <svg id="board" viewBox="0 0 560 560" role="grid" aria-label="11x11 오목판"></svg>
+      <div class="legend">주황 원 = AI가 많이 탐색한 수 (진할수록 방문 비율↑). 숫자 = 방문 수 / Q. 빨간 테두리 = AI가 실제로 둔 수.</div>
+    </div>
+  </div>
+
+  <div class="panel pvpanel">
+    <div class="label">기보</div>
+    <div class="row" style="margin-bottom:8px">
+      <button id="dlsgf">SGF 저장</button>
+      <button id="copytxt">텍스트 복사</button>
+    </div>
+    <div id="movelist" style="max-height:180px;overflow:auto;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:1.6;margin-bottom:14px"></div>
+    <div class="label">예상 수순</div>
+    <div class="sub" id="pvtitle">후보 수(주황 원 또는 표의 행)에 마우스를 올리거나 표의 행을 누르면, 그 수 이후 AI가 예상한 진행이 여기 1, 2, 3… 순서로 나옵니다.</div>
+    <svg id="pvboard" viewBox="0 0 560 560" role="img" aria-label="예상 수순"></svg>
+    <div class="legend" id="pvlist"></div>
+  </div>
+</div>
+
+<script>
+const N = 11, PAD = 30, CELL = (560 - 2 * PAD) / (N - 1);
+let S = null, busy = false, hoverPV = null;
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+let SID = null;
+try { SID = localStorage.getItem("omok_sid"); } catch (e) {}
+if (!SID) { SID = Math.random().toString(36).slice(2) + Date.now().toString(36); try { localStorage.setItem("omok_sid", SID); } catch (e) {} }
+async function api(path, body) {
+  const headers = {"X-Session": SID};
+  if (body) headers["Content-Type"] = "application/json";
+  const r = await fetch(path, body ? {method: "POST", headers, body: JSON.stringify(body)} : {headers});
+  return r.json();
+}
+
+function el(tag, attrs, text) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function drawBoard() {
+  const svg = $("board"); svg.innerHTML = "";
+  svg.appendChild(el("rect", {x: 0, y: 0, width: 560, height: 560, rx: 10, fill: css("--wood")}));
+  for (let i = 0; i < N; i++) {
+    const p = PAD + i * CELL;
+    svg.appendChild(el("line", {x1: PAD, y1: p, x2: 560 - PAD, y2: p, stroke: css("--wood-line"), "stroke-width": 1}));
+    svg.appendChild(el("line", {x1: p, y1: PAD, x2: p, y2: 560 - PAD, stroke: css("--wood-line"), "stroke-width": 1}));
+    svg.appendChild(el("text", {x: p, y: 14, "text-anchor": "middle", "font-size": 10, fill: css("--wood-line")}, i));
+    svg.appendChild(el("text", {x: 10, y: p + 3, "text-anchor": "middle", "font-size": 10, fill: css("--wood-line")}, i));
+  }
+  if (!S) return;
+  const last = S.moves.length ? S.moves[S.moves.length - 1] : null;
+  const ana = S.analysis;
+  const chosen = ana && !S.thinking && last && last[0] === S.ai ? [last[1], last[2]] : null;
+  // heat overlay (skip the cell the AI actually played -- a stone sits there now)
+  if (ana) {
+    const maxShare = Math.max(...ana.candidates.map(c => c.share), 1e-9);
+    for (const c of ana.candidates) {
+      if (S.board[c.r][c.c] !== " ") continue;
+      const x = PAD + c.c * CELL, y = PAD + c.r * CELL, a = 0.15 + 0.7 * c.share / maxShare;
+      const hc = el("circle", {cx: x, cy: y, r: CELL * 0.44, fill: `rgba(${css("--heat")},${a})`});
+      svg.appendChild(hc);
+      svg.appendChild(el("text", {x, y: y - 2, "text-anchor": "middle", "font-size": 10, "font-weight": 600, fill: "#111"}, c.visits));
+      svg.appendChild(el("text", {x, y: y + 10, "text-anchor": "middle", "font-size": 8.5, fill: "#111"}, (c.q >= 0 ? "+" : "") + c.q.toFixed(2)));
+    }
+  }
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const v = S.board[r][c]; if (v === " ") continue;
+    const x = PAD + c * CELL, y = PAD + r * CELL;
+    svg.appendChild(el("circle", {cx: x, cy: y, r: CELL * 0.42, fill: v === "X" ? css("--black") : css("--white"),
+      stroke: v === "X" ? "#000" : "#999", "stroke-width": 1}));
+    const idx = S.moves.findIndex(m => m[1] === r && m[2] === c);
+    svg.appendChild(el("text", {x, y: y + 4, "text-anchor": "middle", "font-size": 10, fill: v === "X" ? "#eee" : "#333"}, idx + 1));
+    if (chosen && chosen[0] === r && chosen[1] === c)
+      svg.appendChild(el("circle", {cx: x, cy: y, r: CELL * 0.47, fill: "none", stroke: css("--bad"), "stroke-width": 2.5}));
+  }
+  // click / hover targets
+  const candAt = {};
+  if (ana) ana.candidates.forEach(c => { if (c.pv && c.pv.length) candAt[c.r + "," + c.c] = c; });
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const t = el("rect", {x: PAD + c * CELL - CELL / 2, y: PAD + r * CELL - CELL / 2, width: CELL, height: CELL, fill: "transparent", style: "cursor:pointer"});
+    t.addEventListener("click", () => play(r, c));
+    const cand = candAt[r + "," + c];
+    if (cand) {
+      t.addEventListener("mouseenter", () => { hoverPV = cand; drawPV(); });
+    }
+    svg.appendChild(t);
+  }
+}
+
+function drawChart() {
+  const svg = $("chart"); svg.innerHTML = "";
+  const W = 300, H = 150, L = 28, R = 8, T = 8, B = 20;
+  const y = v => T + (1 - v) * (H - T - B);
+  for (const g of [0, .25, .5, .75, 1]) {
+    svg.appendChild(el("line", {x1: L, y1: y(g), x2: W - R, y2: y(g), stroke: css("--line"), "stroke-width": g === .5 ? 1.2 : .6}));
+    svg.appendChild(el("text", {x: L - 4, y: y(g) + 3, "text-anchor": "end", "font-size": 9, fill: css("--muted")}, Math.round(g * 100)));
+  }
+  const pts = S ? S.winrate : [];
+  if (!pts.length) return;
+  const maxM = Math.max(10, pts[pts.length - 1].move_no);
+  const x = m => L + (m - 1) / (maxM - 1 || 1) * (W - L - R);
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${x(p.move_no).toFixed(1)},${y(p.ai_winrate).toFixed(1)}`).join(" ");
+  const area = d + ` L${x(pts[pts.length - 1].move_no).toFixed(1)},${y(0)} L${x(pts[0].move_no).toFixed(1)},${y(0)} Z`;
+  svg.appendChild(el("path", {d: area, fill: css("--accent"), opacity: .12}));
+  svg.appendChild(el("path", {d, fill: "none", stroke: css("--accent"), "stroke-width": 2}));
+  const lp = pts[pts.length - 1];
+  svg.appendChild(el("circle", {cx: x(lp.move_no), cy: y(lp.ai_winrate), r: 3.5, fill: css("--accent")}));
+  svg.appendChild(el("text", {x: W - R, y: H - 5, "text-anchor": "end", "font-size": 9, fill: css("--muted")}, `수 ${lp.move_no}`));
+}
+
+function drawSide() {
+  $("modelinfo").textContent = S ? `${S.model.name || S.model.checkpoint} · 탐색 ${S.sims}회` : "";
+  if (S && S.models && S.models.latest) {
+    const o = document.querySelector('#modelsel option[value="latest"]');
+    if (o) o.textContent = S.models.latest.name;
+  }
+  const ana = S && S.analysis;
+  $("wr").textContent = ana ? `${Math.round(ana.winrate * 100)}%` : "—";
+  $("wr").style.color = ana ? (ana.winrate >= .5 ? css("--good") : css("--bad")) : "";
+  const tb = $("cands"); tb.innerHTML = "";
+  if (ana) {
+    const last = S.thinking ? null : S.moves.filter(m => m[0] === S.ai).pop();
+    ana.candidates.forEach(c => {
+      const tr = document.createElement("tr");
+      if (last && last[1] === c.r && last[2] === c.c) tr.className = "chosen";
+      if (c.pv && c.pv.length) {
+        tr.style.cursor = "help";
+        tr.addEventListener("mouseenter", () => { hoverPV = c; drawPV(); });
+        tr.addEventListener("click", () => { hoverPV = c; drawPV(); });
+      }
+      tr.innerHTML = `<td>(${c.r},${c.c})${c.proven === -1 ? " ★" : ""}</td><td>${c.visits}</td><td>${(c.share * 100).toFixed(1)}%</td><td>${(c.q >= 0 ? "+" : "") + c.q.toFixed(2)}</td><td>${(c.prior * 100).toFixed(1)}%</td>`;
+      tb.appendChild(tr);
+    });
+  }
+  let st = "—";
+  if (S) {
+    if (!S.started) st = "탐색 횟수와 선공/후공을 고른 뒤 '새 게임'을 누르세요";
+    else if (S.over) st = S.result === "human" ? "🎉 당신이 이겼어요!" : S.result === "ai" ? "AI 승리" : "무승부";
+    else if (S.thinking) st = `AI 생각 중… ${S.analysis && S.analysis.sims_done ? S.analysis.sims_done : 0} / ${S.sims}회 탐색`;
+    else st = busy ? "전송 중…" : (S.turn === S.human ? `당신 차례 (${S.human})` : "AI 차례");
+  }
+  $("status").textContent = st;
+}
+
+function drawPV() {
+  const svg = $("pvboard"); svg.innerHTML = "";
+  svg.appendChild(el("rect", {x: 0, y: 0, width: 560, height: 560, rx: 10, fill: css("--wood")}));
+  for (let i = 0; i < N; i++) {
+    const p = PAD + i * CELL;
+    svg.appendChild(el("line", {x1: PAD, y1: p, x2: 560 - PAD, y2: p, stroke: css("--wood-line"), "stroke-width": 1}));
+    svg.appendChild(el("line", {x1: p, y1: PAD, x2: p, y2: 560 - PAD, stroke: css("--wood-line"), "stroke-width": 1}));
+  }
+  if (!S) return;
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const v = S.board[r][c]; if (v === " ") continue;
+    svg.appendChild(el("circle", {cx: PAD + c * CELL, cy: PAD + r * CELL, r: CELL * 0.42,
+      fill: v === "X" ? css("--black") : css("--white"), stroke: v === "X" ? "#000" : "#999", opacity: 0.55}));
+  }
+  const ana = S.analysis;
+  const cand = hoverPV && ana ? ana.candidates.find(c => c.r === hoverPV.r && c.c === hoverPV.c) || hoverPV : null;
+  if (!cand || !cand.pv || !cand.pv.length) { $("pvlist").textContent = ""; return; }
+  let p = ana.player;
+  const parts = [];
+  cand.pv.forEach(([r, c, v], i) => {
+    if (S.board[r][c] !== " ") return;
+    const x = PAD + c * CELL, y = PAD + r * CELL;
+    svg.appendChild(el("circle", {cx: x, cy: y, r: CELL * 0.42, fill: p === "X" ? css("--black") : css("--white"),
+      stroke: css("--accent"), "stroke-width": i === 0 ? 3 : 1.5}));
+    svg.appendChild(el("text", {x, y: y + 5, "text-anchor": "middle", "font-size": 14, "font-weight": 600,
+      fill: p === "X" ? "#fff" : "#000"}, i + 1));
+    parts.push(`${i + 1}. ${p}(${r},${c}) ${v}회`);
+    p = p === "X" ? "O" : "X";
+  });
+  $("pvtitle").textContent = `후보 (${cand.r},${cand.c}) · 방문 ${cand.visits} · Q ${(cand.q >= 0 ? "+" : "") + cand.q.toFixed(2)}`;
+  $("pvlist").textContent = parts.join("  ·  ");
+}
+
+function drawMoves() {
+  const box = $("movelist"); if (!S) return;
+  const wrAt = {}; (S.winrate || []).forEach(w => wrAt[w.move_no] = w.ai_winrate);
+  box.innerHTML = S.moves.map((m, i) => {
+    const who = m[0] === S.ai ? "AI" : "나";
+    const wr = wrAt[i + 1] != null ? ` <span style="color:var(--muted)">AI 승률 ${Math.round(wrAt[i + 1] * 100)}%</span>` : "";
+    return `${i + 1}. ${m[0]} ${who} (${m[1]},${m[2]})${wr}`;
+  }).join("<br>");
+  box.scrollTop = box.scrollHeight;
+}
+
+const SGF_COL = "abcdefghijk";
+function toSGF() {
+  const pb = S.ai === "X" ? "AI" : "Human", pw = S.ai === "O" ? "AI" : "Human";
+  const re = !S.over ? "?" : S.result === "draw" ? "0" : ((S.result === "ai") === (S.ai === "X") ? "B+" : "W+");
+  const d = new Date().toISOString().slice(0, 10);
+  let sgf = `(;GM[4]FF[4]SZ[11]RU[freestyle]PB[${pb}]PW[${pw}]RE[${re}]DT[${d}]C[model ${S.model.name || S.model.checkpoint}, ${S.sims} sims]`;
+  S.moves.forEach(m => { sgf += `;${m[0] === "X" ? "B" : "W"}[${SGF_COL[m[2]]}${SGF_COL[m[1]]}]`; });
+  return sgf + ")";
+}
+function toText() {
+  return S.moves.map((m, i) => `${i + 1}. ${m[0]} (${m[1]},${m[2]})`).join("\n") +
+    `\n결과: ${S.over ? (S.result === "draw" ? "무승부" : S.result === "ai" ? "AI 승" : "사람 승") : "진행 중"}`;
+}
+$("dlsgf").addEventListener("click", () => {
+  if (!S) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([toSGF()], {type: "application/x-go-sgf"}));
+  a.download = `omok_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.sgf`;
+  a.click();
+});
+$("copytxt").addEventListener("click", async () => {
+  if (!S) return;
+  try { await navigator.clipboard.writeText(toText()); $("copytxt").textContent = "복사됨"; }
+  catch (e) { $("copytxt").textContent = "복사 실패"; }
+  setTimeout(() => $("copytxt").textContent = "텍스트 복사", 1500);
+});
+
+// Times measured on this PC while training runs (2026-09-28): 100 -> 0.5 s,
+// 250 -> 1 s, 600 -> 2 s, 1100 -> 3.7 s, 2000 -> 6.6 s per AI move; about
+// +1 s more through the public link.
+const LEVELS = [[150, "입문", "AI가 보는 국면이 아주 적어 실수가 잦아요. 오목을 처음 해보는 분께 추천. (한 수 약 0.5초)"],
+                [400, "쉬움", "기본 공격·방어는 하지만 몇 수 앞의 함정은 잘 못 봐요. (한 수 약 1초)"],
+                [800, "보통", "4목·열린 3은 확실히 막고 공격도 날카로워요. (한 수 약 2초)"],
+                [1500, "어려움", "학습 때와 같은 탐색량. 선공이면 강한 오목 엔진과도 비등해요. (한 수 약 4초)"],
+                [99999, "최강", "공개 링크 최대치. 가장 깊게 읽어요. (한 수 약 7초)"]];
+function simHint() {
+  const v = +$("sims").value || 0;
+  const [, name, desc] = LEVELS.find(l => v < l[0]);
+  $("simhint").textContent = `탐색 ${v}회 → ${name}: ${desc}`;
+}
+$("level").addEventListener("change", () => {
+  if ($("level").value !== "custom") $("sims").value = $("level").value;
+  simHint();
+});
+$("sims").addEventListener("input", () => { $("level").value = "custom"; simHint(); });
+simHint();
+
+function render() { drawBoard(); drawChart(); drawSide(); drawPV(); drawMoves(); }
+
+let polling = false;
+async function poll() {
+  if (polling) return;
+  polling = true;
+  while (S && S.thinking) {
+    await new Promise(res => setTimeout(res, 120));
+    try { S = await api("/api/state"); } catch (e) { break; }
+    render();
+  }
+  polling = false;
+}
+
+async function play(r, c) {
+  if (!S || !S.started || busy || S.thinking || S.over || S.turn !== S.human || S.board[r][c] !== " ") return;
+  S.board[r][c] = S.human; S.moves.push([S.human, r, c]); busy = true; hoverPV = null; render();
+  const res = await api("/api/move", {r, c});
+  busy = false; S = res; render(); poll();
+}
+
+$("undo").addEventListener("click", async () => {
+  if (!S || !S.started || busy || S.thinking || !S.moves.some(m => m[0] === S.human)) return;
+  busy = true; drawSide();
+  const res = await api("/api/undo", {});
+  busy = false; S = res; hoverPV = null; render();
+});
+
+$("newgame").addEventListener("click", async () => {
+  busy = true; drawSide();
+  S = await api("/api/new", {human: $("side").value, sims: +$("sims").value, model: $("modelsel").value});
+  busy = false; hoverPV = null; render(); poll();
+});
+
+(async () => { S = await api("/api/state"); render(); poll(); })();
+</script>
+</body>
+</html>

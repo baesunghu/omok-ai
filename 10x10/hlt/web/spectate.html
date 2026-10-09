@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>모델 대국 관전석</title>
+<style>
+:root{--bg:#f4f2ee;--panel:#ffffff;--ink:#1f2328;--muted:#646b73;--line:#d9d4ca;--wood:#d9b77e;--grid:#6b5330;--accent:#2f5d8a;--black:#151515;--white:#fafafa;--good:#2b8a3e}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--panel:#1f2226;--ink:#e7e5e1;--muted:#9aa1a8;--line:#33383e;--wood:#a8875a;--grid:#3d2d17;--accent:#7fb0e0;--good:#5ccf75}}
+:root[data-theme="dark"]{--bg:#16181b;--panel:#1f2226;--ink:#e7e5e1;--muted:#9aa1a8;--line:#33383e;--wood:#a8875a;--grid:#3d2d17;--accent:#7fb0e0;--good:#5ccf75}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Malgun Gothic","Noto Sans KR",system-ui,sans-serif;font-size:15px;line-height:1.5}
+main{max-width:1100px;margin:0 auto;padding:20px 16px 48px;display:grid;grid-template-columns:minmax(0,560px) minmax(0,1fr);gap:20px}
+@media (max-width:860px){main{grid-template-columns:1fr}}
+h1{font-size:1.35rem;margin:0 0 4px;grid-column:1/-1}
+.sub{color:var(--muted);margin:0 0 4px;grid-column:1/-1;font-size:.9rem}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+.vs{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.side{display:flex;align-items:center;gap:8px;min-width:0}
+.side b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stone{width:16px;height:16px;border-radius:50%;flex:none;border:1px solid #0006}
+.stone.x{background:var(--black)} .stone.o{background:var(--white)}
+.side.turn b{color:var(--accent)}
+.bar{height:10px;border-radius:5px;background:var(--white);border:1px solid var(--line);overflow:hidden;margin-bottom:10px}
+.bar div{height:100%;background:var(--black);transition:width .3s}
+svg#board{width:100%;height:auto;display:block;border-radius:6px}
+.status{margin-top:10px;font-weight:600;min-height:1.5em}
+.controls{display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:center}
+select,input[type=number]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;width:100%}
+label.chk{grid-column:1/-1;display:flex;gap:8px;align-items:center}
+.btns{grid-column:1/-1;display:flex;gap:8px}
+button{font:inherit;padding:7px 14px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:var(--bg);cursor:pointer}
+button.ghost{background:transparent;color:var(--accent)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h2{font-size:1rem;margin:16px 0 8px}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.88rem;font-variant-numeric:tabular-nums}
+th,td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600}
+.err{color:#c92a2a;font-size:.85rem;white-space:pre-wrap}
+.muted{color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+<main>
+  <h1>모델 대국 관전석</h1>
+  <p class="sub">여명, 현재 best, 최근 30개 체크포인트끼리 두는 대국을 지켜봐요. 이 컴퓨터에서만 열려요.</p>
+
+  <section class="panel">
+    <div class="vs">
+      <div class="side" id="sideX"><span class="stone x"></span><b id="nameX">흑</b></div>
+      <span class="muted" id="ply"></span>
+      <div class="side" id="sideO"><b id="nameO">백</b><span class="stone o"></span></div>
+    </div>
+    <div class="bar" title="흑 승률 (방금 둔 쪽의 탐색 기준)"><div id="wr" style="width:50%"></div></div>
+    <svg id="board" viewBox="0 0 440 440" role="img" aria-label="11x11 오목판"></svg>
+    <div class="status" id="status">대기 중</div>
+    <div class="err" id="err"></div>
+  </section>
+
+  <section class="panel">
+    <div class="controls">
+      <span>흑</span><select id="selX"></select>
+      <span>백</span><select id="selO"></select>
+      <span>시뮬레이션</span><input id="sims" type="number" min="50" max="2000" step="50" value="300">
+      <span>수 간격(초)</span><input id="delay" type="number" min="0" max="5" step="0.1" value="0.8">
+      <label class="chk"><input id="auto" type="checkbox"> 끝나면 다음 대국 자동 시작</label>
+      <label class="chk"><input id="swap" type="checkbox"> 흑백 교대 (같은 두 모델이 색을 바꿔 한 판 더)</label>
+      <div class="btns"><button id="go">대국 시작</button><button id="stop" class="ghost">중단</button></div>
+    </div>
+    <p class="muted">학습과 같은 GPU를 써요. 시뮬레이션을 높이면 학습이 느려지고 온도가 올라가요.</p>
+    <h2>누적 전적</h2>
+    <div class="tablewrap"><table><thead><tr><th>모델</th><th>판</th><th>승</th><th>무</th><th>패</th><th>점수</th></tr></thead><tbody id="rec"></tbody></table></div>
+  </section>
+</main>
+<script>
+const N=11, C=40, O=20, $=id=>document.getElementById(id);
+const svg=$('board');
+function drawGrid(){
+  let s=`<rect width="440" height="440" fill="var(--wood)"/>`;
+  for(let i=0;i<N;i++){const p=O+i*C;
+    s+=`<line x1="${O}" y1="${p}" x2="${O+(N-1)*C}" y2="${p}" stroke="var(--grid)" stroke-width="1"/>`;
+    s+=`<line x1="${p}" y1="${O}" x2="${p}" y2="${O+(N-1)*C}" stroke="var(--grid)" stroke-width="1"/>`;}
+  for(const [r,c] of [[2,2],[2,8],[8,2],[8,8],[5,5]]) s+=`<circle cx="${O+c*C}" cy="${O+r*C}" r="3" fill="var(--grid)"/>`;
+  return s;
+}
+const GRID=drawGrid();
+let lastKey='';
+function render(st){
+  const key=st.moves.length+'|'+(st.black&&st.black.key)+'|'+(st.white&&st.white.key)+'|'+st.over;
+  $('nameX').textContent=st.black?st.black.name:'흑'; $('nameO').textContent=st.white?st.white.name:'백';
+  $('sideX').classList.toggle('turn',!st.over&&st.turn==='X'&&st.running);
+  $('sideO').classList.toggle('turn',!st.over&&st.turn==='O'&&st.running);
+  $('ply').textContent=st.moves.length?`${st.moves.length}수`:'';
+  const w=st.winrate.length?st.winrate[st.winrate.length-1].black_wr:0.5; $('wr').style.width=(w*100).toFixed(1)+'%';
+  $('err').textContent=st.error||'';
+  let msg='대기 중';
+  if(st.over) msg=st.result==='draw'?'무승부':`${st.result==='black'?st.black.name+' (흑)':st.white.name+' (백)'} 승리`;
+  else if(st.running&&st.black) msg=`${st.turn==='X'?st.black.name:st.white.name} 생각 중… (흑 승률 ${(w*100).toFixed(0)}%)`;
+  if(st.auto&&st.running) msg+=' · 자동 진행';
+  if(st.swap&&st.running) msg+=' · 흑백 교대';
+  $('status').textContent=msg;
+  if(key===lastKey) return; lastKey=key;
+  let s=GRID;
+  st.moves.forEach(([p,r,c],i)=>{const x=O+c*C,y=O+r*C,blk=p==='X';
+    s+=`<circle cx="${x}" cy="${y}" r="17" fill="${blk?'var(--black)':'var(--white)'}" stroke="#0007" stroke-width="1"/>`;
+    s+=`<text x="${x}" y="${y+4}" text-anchor="middle" font-size="11" fill="${blk?'#eee':'#222'}">${i+1}</text>`;});
+  if(st.last){const [r,c]=st.last; s+=`<circle cx="${O+c*C}" cy="${O+r*C}" r="19" fill="none" stroke="#e03131" stroke-width="2.5"/>`;}
+  svg.innerHTML=s;
+  if(st.over) loadRecords();
+}
+async function poll(){try{render(await (await fetch('/api/state')).json());}catch(e){} setTimeout(poll,500);}
+async function loadPlayers(){
+  const ps=await (await fetch('/api/players')).json();
+  for(const sel of [$('selX'),$('selO')]){
+    sel.innerHTML='<option value="random">랜덤</option>'+ps.map(p=>`<option value="${p.key}">${p.name}</option>`).join('');
+  }
+}
+async function loadRecords(){
+  const rows=await (await fetch('/api/records')).json();
+  $('rec').innerHTML=rows.length?rows.map(r=>`<tr><td>${r.name}</td><td>${r.n}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${(r.score*100).toFixed(0)}%</td></tr>`).join('')
+    :'<tr><td colspan="6" class="muted">아직 대국 기록이 없어요</td></tr>';
+}
+$('go').onclick=async()=>{await fetch('/api/start',{method:'POST',body:JSON.stringify({black:$('selX').value,white:$('selO').value,
+  sims:+$('sims').value,delay:+$('delay').value,auto:$('auto').checked,swap:$('swap').checked})});lastKey='';};
+$('stop').onclick=()=>fetch('/api/stop',{method:'POST'});
+loadPlayers(); loadRecords(); poll();
+</script>
+</body>
+</html>
