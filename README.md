@@ -29,4 +29,14 @@ and the earlier 3x3 / 5x5 projects that live in the same working folder.
 - Measurement: `10x10/rapfi_ladder.py`, `10x10/tactical_problem_check.py`
 - Web board: `10x10/hlt/web/server.py`; spectator board: `10x10/hlt/web/spectate.py`
 
+## License
+
+Code: MIT (see `LICENSE`).
+
+Third-party software used but not included:
+- [Rapfi](https://github.com/dhbloo/rapfi) (GPL-3.0) is the measuring stick. It is downloaded separately and run
+  as its own process; `10x10/rapfi_match.py` only exchanges moves with it over the standard Gomocup
+  (Piskvork) text protocol on stdin/stdout. Its network weights ([rapfi-networks](https://github.com/dhbloo/rapfi-networks)) are CC0.
+- PyTorch and pybind11 (BSD-style licenses).
+
 Author: 배성훈 (Sunghun Bae)

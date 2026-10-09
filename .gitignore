@@ -35,3 +35,4 @@
 !/manual/*.css
 !/manual/build_*.py
 /manual/_*.html
+!/LICENSE
