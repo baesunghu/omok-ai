@@ -50,6 +50,8 @@ EVENTS = [
     (721, "LR halved + league anchors"),
     (740, "anchor rotation"),
     (805, "12 league opponents, buffer 196k, no vs-Det eval"),
+    (905, "q weight 0.5 -> 0.2, half-life 20"),
+    (911, "gate: loss -0.75, promote if > 50%"),
 ]
 fig, axes = plt.subplots(3, 1, figsize=(16, 11), sharex=True)
 for ax, y, name, color in ((axes[0], pol, "Policy loss", "#2a6fdb"), (axes[1], val, "Value loss", "#d9480f")):
@@ -74,10 +76,19 @@ gd = [gates[e][1] for e in ge]
 axg = axes[2]
 axg.bar(ge, gw, width=3, color="#2f9e44", label="gate win %")
 axg.bar(ge, gd, width=3, bottom=gw, color="#adb5bd", label="gate draw %")
-axg.axhline(55, color="#c92a2a", ls=":", lw=1, label="promotion score line (win + draw/2 >= 55%)")
-# 2026-10-08 (user): the bar height is win + draw, but the gate decides on win + draw/2 -- mark that score
-gs = [w + d / 2 for w, d in zip(gw, gd)]
-axg.scatter(ge, gs, marker="_", s=140, linewidths=2.5, color="#212529", zorder=3, label="gate score (win + draw/2)")
+# 2026-10-11 (user): gate rule changed at ep911 -> draw a divider and use each era's score/threshold
+GATE_RULE_EP = 911
+lo, hi = (ge[0] - 3, ge[-1] + 3) if ge else (0, 1)
+if lo < GATE_RULE_EP:
+    axg.hlines(55, lo, min(hi, GATE_RULE_EP), color="#c92a2a", ls=":", lw=1, label="promotion line (W + D/2 >= 55%, until ep910)")
+if hi > GATE_RULE_EP:
+    axg.hlines(50, max(lo, GATE_RULE_EP), hi, color="#c92a2a", ls="-", lw=1.2, label="promotion line (W + D/2 - 0.75 L > 50%, from ep911)")
+if lo < GATE_RULE_EP < hi:
+    axg.axvline(GATE_RULE_EP, color="#c92a2a", ls="-", lw=1.6, alpha=0.7)
+    axg.text(GATE_RULE_EP + 0.5, 101, "gate rule change", fontsize=7, color="#c92a2a", va="top")
+gl = [gates[e][2] for e in ge]
+gs = [w + d / 2 - (0.75 * l if e >= GATE_RULE_EP else 0) for e, w, d, l in zip(ge, gw, gd, gl)]
+axg.scatter(ge, gs, marker="_", s=140, linewidths=2.5, color="#212529", zorder=3, label="gate score (rule of its era)")
 if len(ge) <= 30:  # numbers only when they stay readable (short ranges)
     for e, s in zip(ge, gs):
         axg.text(e, s + 1.5, f"{s:.1f}", ha="center", va="bottom", fontsize=7, color="#212529")

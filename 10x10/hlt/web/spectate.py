@@ -25,7 +25,12 @@ os.chdir(TENX)
 import numpy as np
 import torch
 
-import mcts_core_solver as engine_mod
+# 2026-10-26 (user): VCF engine from 11x11_v2, same as the NOON grading (was mcts_core_solver, no VCF)
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("mcts_core", r"C:\Users\My PC\Desktop\final\11x11_v2\mcts_core.pyd")
+engine_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(engine_mod)
+engine_mod.set_vcf(10, 3000)
 from alphago_lee import board_to_input_array_from_numeric
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
@@ -33,11 +38,14 @@ from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(TENX, "model")
 LOG = os.path.join(MODEL_DIR, "spectate_log.jsonl")
+# 2026-10-23 (user): "기록 초기화" hides older games from the table; the log itself is kept
+RESET = os.path.join(MODEL_DIR, "spectate_reset.json")
 N = BOARD_SIZE
 RECENT = 30              # number of recent snapshots offered
 NET_CACHE = 4            # nets kept on the GPU at once (training shares the card)
-OPENING_PLIES = 6        # sample near-best moves early so repeated pairings differ
-OPENING_MIN_SHARE = 0.3
+OPENING_PLIES = 8        # sample near-best moves early so repeated pairings differ (2026-10-11: 6 -> 8)
+OPENING_MIN_SHARE = 0.15  # 2026-10-11 (user: "same positions over and over"): 0.3 -> 0.15, wider pool
+FIRST_STONE_RADIUS = 2    # 2026-10-11: black's first stone is a random cell within 2 of the centre (25 cells)
 dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -51,6 +59,23 @@ def list_players():
     players = {"dawn": {"name": "여명 (ep625 졸업)",
                         "path": os.path.join(MODEL_DIR, "graduated_11x11", "ep625_graduated_20260929.pth")},
                "best": {"name": "현재 best", "path": os.path.join(MODEL_DIR, "best_mcts_11x11.pth")}}
+    # 2026-10-11 (user): frozen festival candidates (e.g. ep905, a best with no 10-epoch snapshot),
+    # listed right after dawn/best so they are easy to find; newest first
+    snap_eps = {ep for ep, _ in snaps[-RECENT:]}
+    for f in sorted(glob.glob(os.path.join(MODEL_DIR, "festival_candidates", "ep*.pth")), reverse=True):
+        k = os.path.splitext(os.path.basename(f))[0]
+        if k[2:].isdigit() and int(k[2:]) not in snap_eps:
+            players[k] = {"name": f"epoch {k[2:]} (보관본)", "path": f}
+    # 2026-10-23 (user): v2 strongest and v3 (Gumbel, NetV3 128x8) checkpoints for head-to-head viewing
+    V2M = r"C:\Users\My PC\Desktop\final\11x11_v2\model"
+    V3M = r"C:\Users\My PC\Desktop\final\11x11_v2\v3\model"
+    extra = {"v3_latest": ("v3 현재 (최신)", os.path.join(V3M, "v3_latest.pth")),
+             "v2_best": ("v2 최강 (후보 10/22 05:50)", os.path.join(V2M, "_rapfi_cand_20261022_055020_11x11.pth"))}
+    for ep in (530, 500, 400, 300, 200, 170, 140, 120, 100):   # 10/26: 530 = NOON (정오), festival pick
+        extra[f"v3_ep{ep}"] = (f"v3 ep{ep}" + (" (정오)" if ep == 530 else ""), os.path.join(V3M, f"v3_ep{ep}.pth"))
+    for k, (nm, p) in extra.items():
+        if os.path.exists(p):
+            players[k] = {"name": nm, "path": p}
     for ep, f in reversed(snaps[-RECENT:]):
         players[f"ep{ep}"] = {"name": f"epoch {ep}", "path": f}
     return players
@@ -66,8 +91,16 @@ def get_net(key):
         if key in _nets:
             _nets.move_to_end(key)
             return _nets[key]
-        net = AlphaZeroTicTacToeV3()
-        net.load_state_dict(torch.load(PLAYERS[key]["path"], map_location=dev))
+        sd = torch.load(PLAYERS[key]["path"], map_location=dev)
+        if isinstance(sd, dict) and "model" in sd and isinstance(sd["model"], dict):   # v3_latest holds model+opt
+            sd = sd["model"]
+        if any(k.startswith("opp_policy_head.") for k in sd):   # 2026-10-23: v3 NetV3 checkpoint
+            sys.path.insert(1, r"C:\Users\My PC\Desktop\final\11x11_v2\v3")
+            from net_v3 import NetV3
+            net = NetV3()
+        else:
+            net = AlphaZeroTicTacToeV3()
+        net.load_state_dict(sd)
         net = net.to(dev).eval()
         _nets[key] = net
         while len(_nets) > NET_CACHE:
@@ -111,9 +144,12 @@ def save(result):
 
 def record_table():
     tab = collections.defaultdict(lambda: {"w": 0, "d": 0, "l": 0})
+    skip = json.load(open(RESET)).get("lines", 0) if os.path.exists(RESET) else 0
     if os.path.exists(LOG):
         with open(LOG, encoding="utf-8") as f:
-            for line in f:
+            for i, line in enumerate(f):
+                if i < skip:
+                    continue
                 try:
                     g = json.loads(line)
                 except Exception:
@@ -155,7 +191,11 @@ def play_one(gen):
         _, rv, cands = engines[player].search_batched(board, player, evs[player], sims, 1.414, False, 0.3, 0.25,
                                                       N, WIN_LENGTH, 16, 0.0)
         best = max(cands, key=lambda c: c["visit_count"])
-        if ply < OPENING_PLIES and not any(c.get("proven") for c in cands):
+        if ply == 0:   # random first stone near the centre so games start from different shapes
+            ctr = N // 2
+            best = {"move": (ctr + random.randint(-FIRST_STONE_RADIUS, FIRST_STONE_RADIUS),
+                             ctr + random.randint(-FIRST_STONE_RADIUS, FIRST_STONE_RADIUS))}
+        elif ply < OPENING_PLIES and not any(c.get("proven") for c in cands):
             pool = [c for c in cands if c["visit_count"] >= OPENING_MIN_SHARE * best["visit_count"]]
             w = np.array([c["visit_count"] for c in pool], dtype=np.float64)
             best = pool[int(np.random.choice(len(pool), p=w / w.sum()))]
@@ -272,6 +312,11 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"ok": True})
         if self.path == "/api/stop":
             stop()
+            return self.send(200, {"ok": True})
+        if self.path == "/api/reset_records":
+            n = sum(1 for _ in open(LOG, encoding="utf-8")) if os.path.exists(LOG) else 0
+            with open(RESET, "w") as f:
+                json.dump({"lines": n, "time": time.strftime("%Y-%m-%d %H:%M:%S")}, f)
             return self.send(200, {"ok": True})
         self.send(404, {"error": "not found"})
 

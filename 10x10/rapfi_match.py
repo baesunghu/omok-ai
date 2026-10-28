@@ -34,7 +34,14 @@ N = BOARD_SIZE
 RAPFI_DIR = r"C:\Users\My PC\Desktop\final\engines\rapfi"
 RAPFI_EXE = os.path.join(RAPFI_DIR, "pbrain-rapfi-windows-avx2.exe")
 OPENINGS = [(5, 5), (4, 5), (5, 4), (4, 4), (6, 4), (3, 5), (5, 3), (4, 6)]
-LOG = r"C:\Users\My PC\Desktop\final\10x10\model\rapfi_match_log.jsonl"
+# 2026-10-11: RAPFI_MORE_OPENINGS=1 -> all 25 cells within 2 of the centre (validation runs with >16 games,
+# so games do not repeat; the default 8 openings keep the ladder identical to its history)
+if os.environ.get("RAPFI_MORE_OPENINGS"):
+    OPENINGS = OPENINGS + [(r, c) for r in range(3, 8) for c in range(3, 8) if (r, c) not in OPENINGS]
+LOG = os.environ.get("RAPFI_MATCH_LOG", r"C:\Users\My PC\Desktop\final\10x10\model\rapfi_match_log.jsonl")
+# 2026-10-10: games are deterministic (Rapfi single-threaded + node limit, our side greedy without noise), so a
+# level can be split across RAPFI_PAR worker processes (game g -> worker g % PAR) with identical per-game results.
+PAR = int(os.environ.get("RAPFI_PAR", "3"))  # 3 workers: 20 games at 5000 nodes in ~12 min (2026-10-10 benchmark)
 
 
 class Rapfi:
@@ -90,6 +97,15 @@ class Rapfi:
 
 
 def main():
+    if PAR > 1 and "--worker" not in sys.argv and int(sys.argv[1] if len(sys.argv) > 1 else 6) > 1:
+        procs = [subprocess.Popen([sys.executable, "-u", __file__] + sys.argv[1:] + ["--worker", str(k), str(PAR)])
+                 for k in range(PAR)]
+        codes = [p.wait() for p in procs]
+        if any(codes):
+            raise SystemExit(f"worker failed: {codes}")
+        return
+    wk, wn = (int(sys.argv[sys.argv.index("--worker") + 1]), int(sys.argv[sys.argv.index("--worker") + 2])) \
+        if "--worker" in sys.argv else (0, 1)
     games = int(sys.argv[1]) if len(sys.argv) > 1 else 6
     sims = int(sys.argv[2]) if len(sys.argv) > 2 else 1100
     lim = sys.argv[3] if len(sys.argv) > 3 else "2000"
@@ -107,49 +123,141 @@ def main():
             pl, v = model(t)
         return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
 
-    rapfi = Rapfi(ms, nodes)
+    # 2026-10-10: RAPFI_THREADS > 1 plays that many games at once in this process and evaluates their
+    # positions in ONE shared GPU batch (cross-game batching). The search itself is unchanged (1100 sims,
+    # batch 16 per game), but cuDNN picks different kernels for different batch sizes, so outputs differ by
+    # ~1e-5 and a near-tied move can occasionally flip: results are statistically, not bit-for-bit, equal.
+    threads = int(os.environ.get("RAPFI_THREADS", "1"))
+    if threads > 1:
+        import queue, threading
+        req_q = queue.Queue()
+        active = [0]
+        alock = threading.Lock()
+
+        def gpu_loop():
+            while True:
+                first = req_q.get()
+                if first is None:
+                    return
+                batch = [first]
+                deadline = time.time() + 0.004
+                while True:
+                    with alock:
+                        want = active[0]
+                    if len(batch) >= want:
+                        break
+                    try:
+                        item = req_q.get(timeout=max(0.0, deadline - time.time()))
+                    except queue.Empty:
+                        break
+                    if item is None:
+                        req_q.put(None)
+                        break
+                    batch.append(item)
+                bs = [x for it in batch for x in it[0]]
+                ps = [x for it in batch for x in it[1]]
+                pol, val = ev(bs, ps)
+                k = 0
+                for it in batch:
+                    n = len(it[0])
+                    it[2].append((pol[k:k + n], val[k:k + n]))
+                    it[3].set()
+                    k += n
+
+        def shared_ev(bs, ps):
+            box, done = [], threading.Event()
+            req_q.put((list(bs), list(ps), box, done))
+            done.wait()
+            return box[0]
+
+        gpu = threading.Thread(target=gpu_loop, daemon=True)
+        gpu.start()
+        evf = shared_ev
+    else:
+        evf = ev
+
     tally = {"ai_win": 0, "rapfi_win": 0, "draw": 0}
     by_color = {"X": [0, 0, 0], "O": [0, 0, 0]}  # ai as color: W/L/D
-    try:
-        for g in range(games):
-            ai = 'X' if g % 2 == 0 else 'O'
-            opening = OPENINGS[(g // 2) % len(OPENINGS)]
-            board = [[' '] * N for _ in range(N)]
-            moves = [('X', opening[0], opening[1])]
-            board[opening[0]][opening[1]] = 'X'
-            turn = 'O'
-            engine = mcts_core.MCTSEngine()
-            result = None
-            t0 = time.time()
-            while True:
-                if len(moves) >= N * N:
-                    result = "draw"
-                    break
-                if turn == ai:
-                    _, rv, cands = engine.search_batched(board, turn, ev, sims, 1.414, False, 0.3, 0.25, N, WIN_LENGTH, 16)
-                    r, c = max(cands, key=lambda x: x['visit_count'])['move']
-                else:
-                    r, c = rapfi.move(moves, turn)
-                if board[r][c] != ' ':
-                    raise RuntimeError(f"illegal move {(r, c)} by {'ai' if turn == ai else 'rapfi'}")
-                board[r][c] = turn
-                moves.append((turn, r, c))
-                if fast_check_win(board, turn):
-                    result = "ai_win" if turn == ai else "rapfi_win"
-                    break
-                turn = 'O' if turn == 'X' else 'X'
+    out_lock = __import__("threading").Lock()
+
+    def play(g, rapfi):
+        ai = 'X' if g % 2 == 0 else 'O'
+        opening = OPENINGS[(g // 2) % len(OPENINGS)]
+        board = [[' '] * N for _ in range(N)]
+        moves = [('X', opening[0], opening[1])]
+        board[opening[0]][opening[1]] = 'X'
+        turn = 'O'
+        engine = mcts_core.MCTSEngine()
+        result = None
+        t0 = time.time(); t_ai = t_rapfi = 0.0
+        while True:
+            tm = time.time()
+            if len(moves) >= N * N:
+                result = "draw"
+                break
+            if turn == ai:
+                _, rv, cands = engine.search_batched(board, turn, evf, sims, 1.414, False, 0.3, 0.25, N, WIN_LENGTH, 16)
+                r, c = max(cands, key=lambda x: x['visit_count'])['move']
+            else:
+                r, c = rapfi.move(moves, turn)
+            if turn == ai: t_ai += time.time() - tm
+            else: t_rapfi += time.time() - tm
+            if board[r][c] != ' ':
+                raise RuntimeError(f"illegal move {(r, c)} by {'ai' if turn == ai else 'rapfi'}")
+            board[r][c] = turn
+            moves.append((turn, r, c))
+            if fast_check_win(board, turn):
+                result = "ai_win" if turn == ai else "rapfi_win"
+                break
+            turn = 'O' if turn == 'X' else 'X'
+        with out_lock:
             tally[result] += 1
-            idx = {"ai_win": 0, "rapfi_win": 1, "draw": 2}[result]
-            by_color[ai][idx] += 1
+            by_color[ai][{"ai_win": 0, "rapfi_win": 1, "draw": 2}[result]] += 1
             print(f"game {g + 1}/{games}: AI={ai} opening={opening} -> {result} in {len(moves)} plies "
-                  f"({time.time() - t0:.0f}s)", flush=True)
+                  f"({time.time() - t0:.0f}s: ours {t_ai:.0f}s, rapfi {t_rapfi:.0f}s)", flush=True)
             with open(LOG, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "ai": ai, "opening": opening,
                                     "result": result, "plies": len(moves), "sims": sims, "rapfi_ms": None if nodes else ms, "rapfi_nodes": nodes,
-                                    "checkpoint": os.path.basename(ckpt),
+                                    "checkpoint": os.path.basename(ckpt), "game": g,
                                     "moves": moves}) + "\n")
-    finally:
-        rapfi.close()
+
+    mine = [g for g in range(games) if g % wn == wk]
+    if threads <= 1:
+        rapfi = Rapfi(ms, nodes)
+        try:
+            for g in mine:
+                play(g, rapfi)
+        finally:
+            rapfi.close()
+    else:
+        import threading
+        todo = list(mine)
+        errors = []
+
+        def runner():
+            rapfi = Rapfi(ms, nodes)
+            with alock:
+                active[0] += 1
+            try:
+                while True:
+                    with out_lock:
+                        if not todo or errors:
+                            return
+                        g = todo.pop(0)
+                    play(g, rapfi)
+            except Exception as e:
+                errors.append(e)
+            finally:
+                with alock:
+                    active[0] -= 1
+                rapfi.close()
+
+        ts = [threading.Thread(target=runner) for _ in range(min(threads, len(mine)))]
+        for t in ts: t.start()
+        for t in ts: t.join()
+        req_q.put(None)
+        if errors:
+            raise errors[0]
     print(f"\nTOTAL: AI {tally['ai_win']} / Rapfi {tally['rapfi_win']} / draw {tally['draw']}")
     print(f"AI as X (first): W{by_color['X'][0]} L{by_color['X'][1]} D{by_color['X'][2]} | "
           f"AI as O (second): W{by_color['O'][0]} L{by_color['O'][1]} D{by_color['O'][2]}")

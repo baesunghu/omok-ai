@@ -39,6 +39,7 @@ LOG = os.path.join("model", "tactical_problem_log.jsonl")
 SIMS = 1100
 TRIAL_SIMS = (900, 1100, 1300)
 RAPFI_MS = 3000
+RAPFI_NODES = 1000000  # 2026-10-11: node limit replaces the time limit (see main)
 MAX_PLIES = 40
 
 
@@ -56,7 +57,10 @@ def main():
         return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
 
     probs = json.load(open(PROBLEMS, encoding="utf-8"))["problems"]
-    rapfi = Rapfi(RAPFI_MS)
+    # 2026-10-11 (user): node-limited opponent so a grading run gives the same result every time (the 3 s
+    # time limit made results depend on PC load; ep920 got 3/3 in one run and 1/3 in another with the same moves).
+    # 1,000,000 nodes ~ what 3 s searched on an idle PC (~417k nodes/s), so difficulty stays comparable.
+    rapfi = Rapfi(30000, RAPFI_NODES)
     results = []
     try:
         # 2026-10-08 (user): 3-tier check. Problems without "tier" always run (tier 1 includes the

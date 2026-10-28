@@ -21,7 +21,13 @@ os.chdir(TENX)
 import numpy as np
 import torch
 
-import mcts_core_solver as engine_mod  # current engine build (vlfix + mate distance + solver), module_local
+# 2026-10-26 (user): festival board uses the 11x11_v2 engine with VCF on, same as the NOON grading and the Rapfi ladder
+# (was mcts_core_solver: vlfix + mate distance + solver, no VCF; same search_batched API)
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("mcts_core", r"C:\Users\My PC\Desktop\final\11x11_v2\mcts_core.pyd")
+engine_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(engine_mod)
+engine_mod.set_vcf(10, 3000)
 from alphago_lee import board_to_input_array_from_numeric
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
@@ -38,8 +44,16 @@ dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def _load_net(path):
-    net = AlphaZeroTicTacToeV3()
-    net.load_state_dict(torch.load(path, map_location=dev))
+    sd = torch.load(path, map_location=dev)
+    if isinstance(sd, dict) and "model" in sd and isinstance(sd["model"], dict):   # v3_latest holds model+opt
+        sd = sd["model"]
+    if any(k.startswith("opp_policy_head.") for k in sd):   # 2026-10-26: v3 NetV3 checkpoint (same loader as spectate.py)
+        sys.path.insert(1, r"C:\Users\My PC\Desktop\final\11x11_v2\v3")
+        from net_v3 import NetV3
+        net = NetV3()
+    else:
+        net = AlphaZeroTicTacToeV3()
+    net.load_state_dict(sd)
     return net.to(dev).eval()
 
 
@@ -48,7 +62,8 @@ def last_promoted_epoch():
     (the best checkpoint file itself does not record which epoch it is)."""
     import glob
     best = None
-    for f in sorted(glob.glob(os.path.join(TENX, "train_stdout_*.log")), key=os.path.getmtime):
+    # 2026-10-11: the training report holds every gate line across restarts (stdout logs are per run)
+    for f in [os.path.join(TENX, "model", "training_report_11x11.txt")]:
         try:
             with open(f, encoding="utf-8", errors="ignore") as fh:
                 for line in fh:
@@ -76,6 +91,19 @@ MODELS = {
                       "promoted_epoch": 625, "saved": "2026-09-29 14:22"}},
     "latest": {"net": _load_net(CKPT), "info": _latest_info(os.path.getmtime(CKPT))},
 }
+# 2026-10-11 (user): festival candidates frozen in model/festival_candidates/ can be chosen too
+for _ep, _note in ((880, "축제 1순위 후보, 졸업 3/3"), (890, "Rapfi 최강 3,440"), (900, "13수 필패 3/3"), (905, "현재 best, 게이트 57.5%")):
+    _p = os.path.join(TENX, "model", "festival_candidates", f"ep{_ep}.pth")
+    if os.path.exists(_p):
+        MODELS[f"ep{_ep}"] = {"net": _load_net(_p),
+                              "info": {"key": f"ep{_ep}", "name": f"NAPS-{_ep} ({_note})", "checkpoint": f"ep{_ep}.pth",
+                                       "promoted_epoch": _ep, "saved": "2026-10-10"}}
+# 2026-10-26 (user): NOON model v3 ep530 (정오 충족 10/25 14:14:29), the festival pick
+_V3_530 = r"C:\Users\My PC\Desktop\final\11x11_v2\v3\model\v3_ep530.pth"
+if os.path.exists(_V3_530):
+    MODELS["v3_ep530"] = {"net": _load_net(_V3_530),
+                          "info": {"key": "v3_ep530", "name": "NAPS v3 ep530 (정오)", "checkpoint": "v3_ep530.pth",
+                                   "promoted_epoch": 530, "saved": "2026-10-25 11:29"}}
 DEFAULT_MODEL = "dawn"
 CKPT_INFO = MODELS["latest"]["info"]  # kept for the stats page
 
@@ -178,20 +206,21 @@ def get_game(sid):
         if g is None:
             if len(GAMES) >= MAX_SESSIONS:
                 GAMES.pop(next(iter(GAMES)))
-            g = GAMES[sid] = {"lock": threading.Lock()}
+            g = GAMES[sid] = {"lock": threading.Lock(), "sid": sid}
             new_game(g, "O", 1100)
             g["started"] = False  # nothing happens until the visitor presses "new game"
         return g
 
 
 def new_game(g, human, sims, model_key=DEFAULT_MODEL):
-    lock, gen = g["lock"], g.get("gen", 0)
+    lock, gen, sid = g["lock"], g.get("gen", 0), g.get("sid")
     model_key = model_key if model_key in MODELS else DEFAULT_MODEL
     g.clear()
     g.update(lock=lock, board=[[' '] * N for _ in range(N)], turn='X', human=human, ai='O' if human == 'X' else 'X',
              sims=sims, moves=[], winrate=[], analysis=None, over=False, result=None, thinking=False,
              engine=engine_mod.MCTSEngine(), gen=gen + 1, started=True,
-             model_key=model_key, model_info=public_info(model_key))
+             model_key=model_key, model_info=public_info(model_key), sid=sid)
+    persist_games()
 
 
 def snapshot(g, engine, player, cands, rv, raw_p, raw_v, sims_done):
@@ -225,10 +254,49 @@ def place(g, r, c, player):
     g["turn"] = 'O' if player == 'X' else 'X'
     if g["over"]:
         save_game(g)
+    persist_games()
     return True
 
 
 GAME_LOG = os.path.join(HERE, "games.jsonl")
+
+# 2026-10-13 (user): in-progress games are written to disk after every move, so a server restart no longer
+# loses them (a won game vs the best was lost to a restart). Restored on start; an AI turn resumes thinking.
+LIVE_PATH = os.path.join(HERE, "live_games.json")
+LIVE_KEYS = ("board", "turn", "human", "ai", "sims", "moves", "winrate", "over", "result", "model_key",
+             "model_info", "started", "undos", "gen", "sid")
+_LIVE_LOCK = threading.Lock()
+
+
+def persist_games():
+    try:
+        with _LIVE_LOCK:
+            data = {sid: {k: g[k] for k in LIVE_KEYS if k in g} for sid, g in list(GAMES.items())
+                    if g.get("started") and g.get("moves")}
+            tmp = LIVE_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            os.replace(tmp, LIVE_PATH)
+    except Exception as e:
+        print(f"live-game save failed: {e!r}", flush=True)
+
+
+def restore_games():
+    if not os.path.exists(LIVE_PATH):
+        return 0
+    try:
+        data = json.load(open(LIVE_PATH, encoding="utf-8"))
+    except Exception as e:
+        print(f"live-game restore failed: {e!r}", flush=True)
+        return 0
+    for sid, d in data.items():
+        g = {"lock": threading.Lock()}
+        g.update(d)
+        g.update(sid=sid, engine=engine_mod.MCTSEngine(), thinking=False, analysis=None)
+        if g.get("model_key") not in MODELS:
+            g["model_key"] = DEFAULT_MODEL
+        GAMES[sid] = g
+    return len(data)
 
 
 def save_game(g):
@@ -280,6 +348,19 @@ def ai_think(g, gen):
         g["thinking"] = False
 
 
+def mate_info(g):
+    """2026-10-26 (user): chess-style 'M n' for the board -- each side's VCF (win by continuous fours) from the
+    engine, n = the attacker's moves. Cached per position; VCF only, so a slower forced win (threes) shows nothing."""
+    key = len(g["moves"])
+    if g.get("_mate", (None,))[0] != key:
+        res = {}
+        for side in ('X', 'O'):
+            mv, plies = engine_mod.vcf_move(g["board"], side, N, WIN_LENGTH)
+            res[side] = {"m": (plies + 1) // 2, "first": [mv // N, mv % N]} if mv >= 0 else None
+        g["_mate"] = (key, res)
+    return g["_mate"][1]
+
+
 def undo(g):
     """Take back the human's last move (and the AI reply that followed it).
     The search tree is discarded so the next AI search starts clean."""
@@ -296,6 +377,7 @@ def undo(g):
     g["analysis"] = None
     g["engine"] = engine_mod.MCTSEngine()
     g["undos"] = g.get("undos", 0) + 1
+    persist_games()
     return True
 
 
@@ -377,7 +459,7 @@ def state(g):
     return {k: g[k] for k in ("board", "turn", "human", "ai", "sims", "moves", "winrate", "analysis", "over",
                               "result", "thinking", "started")} | {"undos": g.get("undos", 0),
             "model": g.get("model_info") or public_info(DEFAULT_MODEL),
-            "models": {k: public_info(k) for k in MODELS}}
+            "models": {k: public_info(k) for k in MODELS}, "mate": mate_info(g) if g.get("started") else None}
 
 
 class H(BaseHTTPRequestHandler):
@@ -431,5 +513,12 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("HLT web board on http://127.0.0.1:8765", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", 8765), H).serve_forever()
+    # 2026-10-13 (user): "--lan" also serves other devices on the same network (festival QR code access)
+    host = "0.0.0.0" if "--lan" in sys.argv else "127.0.0.1"
+    n_restored = restore_games()
+    for _g in list(GAMES.values()):
+        if not _g.get("over") and _g.get("turn") == _g.get("ai"):
+            start_ai(_g)   # the AI was to move when the server stopped
+    print(f"restored {n_restored} in-progress game(s) from {LIVE_PATH}", flush=True)
+    print(f"HLT web board on http://{host}:8765", flush=True)
+    ThreadingHTTPServer((host, 8765), H).serve_forever()

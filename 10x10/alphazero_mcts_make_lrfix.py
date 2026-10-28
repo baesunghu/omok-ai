@@ -474,7 +474,31 @@ random.Random(1109).shuffle(_ALL_CELLS)
 # monitoring/deployment (e.g. play_vs_ai.py) independent of whatever the
 # latest raw weights happen to be doing.
 BEST_CHECKPOINT_PATH = f"model/best_mcts{_SUFFIX}.pth"
-GATE_PROMOTION_THRESHOLD = 0.55  # AlphaGo Zero's own threshold; draws count as 0.5
+GATE_PROMOTION_THRESHOLD = 0.35  # 2026-10-13 (user): 0.25 -> 0.35 (6-8-6, an even result, scored 0.275 and promoted ep1005). 2026-10-12: 0.50 -> 0.25. 2026-10-11: was 0.55 (AlphaGo Zero, draws 0.5)
+# 2026-10-11 (user): "a model that does not lose" -- a loss now costs points:
+# score = (wins + 0.5*draws - GATE_LOSS_PENALTY*losses) / n, promoted only if score > 0.50 (strictly).
+# With 0.75 that is exactly "wins > 2.5 x losses"; draws alone can never promote (all draws = 0.50).
+GATE_LOSS_PENALTY = 0.75
+# 2026-10-13 (user): two-stage promotion. The gate (vs the current best only) can pick a model that is
+# weaker by the Rapfi ladder (ep1050 beat ep960 12-5-3 but measured 2,404 vs 4,432). A gate pass now only
+# makes a CANDIDATE: its weights go to model/gate_candidates/ and model/gate_candidate.json; the ladder
+# watcher measures it and promotes it (model/ladder_promote.json) only if it is not weaker than the best.
+GATE_CANDIDATE_MODE = True
+RECORD_LEAGUE_SIDE = False   # 2026-10-13 (user): see _play_one_mcts_vs_league_game
+_LAST_GATE_CANDIDATE = {"path": None}
+
+
+def _save_gate_candidate(model, score):
+    import json as _json
+    os.makedirs("model/gate_candidates", exist_ok=True)
+    tag = time.strftime("%Y%m%d_%H%M%S")
+    path = f"model/gate_candidates/cand_{tag}{_SUFFIX}.pth"
+    torch.save(model.state_dict(), path)
+    with open("model/gate_candidate.json", "w", encoding="utf-8") as f:
+        _json.dump({"ckpt": path, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "gate_score": round(score, 4),
+                    "status": "pending"}, f, indent=1)
+    _LAST_GATE_CANDIDATE["path"] = path
+    return path
 
 
 def _play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sims=None, boost_threshold=0,
@@ -599,9 +623,12 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
         draws = sum(1 for r in results if r == 'draw')
         losses = len(results) - wins - draws
         n = max(1, wins + draws + losses)
-        score = (wins + 0.5 * draws) / n
-        promoted = score >= GATE_PROMOTION_THRESHOLD
-        if promoted:
+        score = (wins + 0.5 * draws - GATE_LOSS_PENALTY * losses) / n
+        promoted = score > GATE_PROMOTION_THRESHOLD
+        if promoted and GATE_CANDIDATE_MODE:
+            _save_gate_candidate(model, score)
+            promoted = False
+        elif promoted:
             torch.save(model.state_dict(), BEST_CHECKPOINT_PATH)
             gen_model.load_state_dict(model.state_dict())
         return wins / n, draws / n, losses / n, promoted
@@ -638,9 +665,12 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
             pooled_best.stop()
 
     n = max(1, wins + draws + losses)
-    score = (wins + 0.5 * draws) / n
-    promoted = score >= GATE_PROMOTION_THRESHOLD
-    if promoted:
+    score = (wins + 0.5 * draws - GATE_LOSS_PENALTY * losses) / n
+    promoted = score > GATE_PROMOTION_THRESHOLD
+    if promoted and GATE_CANDIDATE_MODE:
+        _save_gate_candidate(model, score)
+        promoted = False
+    elif promoted:
         torch.save(model.state_dict(), BEST_CHECKPOINT_PATH)
         gen_model.load_state_dict(model.state_dict())
     return wins / n, draws / n, losses / n, promoted
@@ -660,7 +690,7 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
 SIM_RAMP_PATH = f"model/sim_ramp_state{_SUFFIX}.json"
 SIM_RAMP_START = 150
 SIM_RAMP_STEP = 100
-SIM_RAMP_CEILING = 1100
+SIM_RAMP_CEILING = 1600  # 2026-10-13 (user): 1100 -> 1600 (deeper full searches = better policy targets)
 BOOST_RAMP_START = 300
 BOOST_RAMP_STEP = 200
 BOOST_RAMP_CEILING = 2200
@@ -1391,7 +1421,9 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
             best_action = max(root.children.items(), key=lambda kv: kv[1].n_visits)[0]
             r, c = divmod(best_action, BOARD_SIZE)
 
-            if league_full:
+            # 2026-10-13 (user): league-side plies are no longer training targets -- the opponents are older,
+            # weaker checkpoints (some ~700-1,000 equal nodes), so their visit counts taught weaker moves.
+            if league_full and RECORD_LEAGUE_SIDE:
                 board_3d = board_to_input_array(board, current_player)
                 # League-side ply: its search value comes from a different
                 # (older) network, so this ply keeps a pure-z value target.
@@ -3309,6 +3341,13 @@ def train_mcts_alpha_zero(
     # 2026-09-27: value target = (1-w)*z + w*q for generated games (see
     # mixed_value_target). 0.0 = pure game result (previous behavior).
     value_target_q_weight=0.0,
+    # 2026-10-10 (user): half-life decay of the q weight. From epoch
+    # value_target_q_decay_start on, w(epoch) = value_target_q_weight *
+    # 0.5 ** ((epoch - start) / value_target_q_halflife); below
+    # value_target_q_floor it becomes exactly 0 (pure z). halflife 0 = off.
+    value_target_q_halflife=0,
+    value_target_q_decay_start=0,
+    value_target_q_floor=0.01,
     # 2026-09-28: cap self-play / league game length (plies); None = no cap.
     max_game_plies=None,
     # 2026-09-28: vs-Deterministic games inside the refresh-epoch MINING pass
@@ -3338,11 +3377,42 @@ def train_mcts_alpha_zero(
     # down to it.
     # 2026-09-30 (user): gate stuck 15 checks (650-720) while losses kept falling ->
     # halve the LR band (1e-4..5e-5 -> 5e-5..1e-5) to consolidate instead of drifting.
-    optimizer = optim.Adam(model.parameters(), lr=0.00005, weight_decay=1e-4)
+    # 2026-10-11 (user): ep937 cooldown ended -> LR jumped 1e-5 -> 4.4e-5 and ep940 fell to ~1,092 Rapfi nodes.
+    # Cosine peak 5e-5 -> 2e-5 (band 2e-5..1e-5) to polish rather than shake before the festival.
+    optimizer = optim.Adam(model.parameters(), lr=0.00002, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150, T_mult=1, eta_min=1e-5)
     start_epoch = load_start_epoch()
     for _ in range(start_epoch):
         scheduler.step()
+    # 2026-10-12 (user): restore Adam's moments across restarts. Every restart used to reset them
+    # (loss spikes at 905/911/913/945). Loaded only if saved right after the epoch we resume at;
+    # the LR stays whatever the schedule/cooldown says now (the saved param_groups LR is discarded).
+    OPT_STATE_PATH = f"model/optimizer_state{_SUFFIX}.pth"
+    # 2026-10-13: a fresh Adam moves every weight by ~LR on its first steps (bias-corrected m/sqrt(v) ~ sign(g)),
+    # which caused the loss spikes after every restart/rollback (ep1003 0.38, ep1047 0.41). If the moments
+    # are not restored, ramp the LR over the first epochs instead.
+    _fresh_opt_warmup = [0.1, 0.3, 0.6]
+    if os.path.exists(OPT_STATE_PATH):
+        try:
+            _os = torch.load(OPT_STATE_PATH, map_location="cpu")
+            if _os.get("next_epoch") == start_epoch:
+                _keep = [(g["lr"], g.get("initial_lr")) for g in optimizer.param_groups]
+                optimizer.load_state_dict(_os["optimizer"])
+                for g, (lr_, ilr) in zip(optimizer.param_groups, _keep):
+                    g["lr"] = lr_
+                    if ilr is not None:
+                        g["initial_lr"] = ilr
+                print(f"Optimizer state restored (saved after epoch {start_epoch - 1}).")
+                _fresh_opt_warmup = []
+            else:
+                print(f"Optimizer state not restored (saved for epoch {_os.get('next_epoch')}, resuming at {start_epoch}).")
+        except Exception as e:
+            print(f"Optimizer state load notice ({e}); starting with a fresh optimizer.")
+    if _fresh_opt_warmup:   # first trained epoch uses the first factor; the rest follow each scheduler step
+        _f0 = _fresh_opt_warmup.pop(0)
+        for _pg in optimizer.param_groups:
+            _pg['lr'] = _pg['lr'] * _f0
+        print(f"Fresh optimizer: LR warm-up x{_f0} for the first trained epoch, then {_fresh_opt_warmup}", flush=True)
     # reduction='none' so prioritized replay (below) can reweight per-sample
     # before averaging; when use_prioritized_replay=False the weights are
     # all 1.0 so this is numerically identical to 'batchmean'/'mean'.
@@ -3442,6 +3512,38 @@ def train_mcts_alpha_zero(
     epoch = start_epoch
     for _local_i in range(num_epochs):
         epoch = start_epoch + _local_i
+        cur_q_weight = value_target_q_weight
+        if value_target_q_halflife and epoch >= value_target_q_decay_start:
+            cur_q_weight = value_target_q_weight * 0.5 ** ((epoch - value_target_q_decay_start) / value_target_q_halflife)
+            if cur_q_weight < value_target_q_floor:
+                cur_q_weight = 0.0
+        print(f"  [value target] epoch {epoch}: q weight {cur_q_weight:.4f} (z weight {1 - cur_q_weight:.4f})", flush=True)
+        # 2026-10-12 (user): second promotion path -- Rapfi ladder. The gate (vs the current best only)
+        # can be blocked by a matchup ("상성"); if the ladder watcher finds a measured checkpoint stronger
+        # than the best with P >= 80% (bootstrap), it writes model/ladder_promote.json and the checkpoint
+        # becomes the best AND the self-play generation model here, at the start of the next epoch.
+        try:
+            _lp_path = "model/ladder_promote.json"
+            if os.path.exists(_lp_path):
+                import json as _json
+                with open(_lp_path, encoding="utf-8") as _f:
+                    _lp = _json.load(_f)
+                if not _lp.get("applied") and os.path.exists(_lp["ckpt"]):
+                    _sd = torch.load(_lp["ckpt"], map_location="cpu")
+                    if os.path.exists(BEST_CHECKPOINT_PATH):
+                        __import__("shutil").copy2(BEST_CHECKPOINT_PATH, BEST_CHECKPOINT_PATH + f".before_ladder_promo_ep{epoch}")
+                    torch.save(_sd, BEST_CHECKPOINT_PATH)
+                    gen_model.load_state_dict(_sd)
+                    gen_model.to(self_play_device, memory_format=preferred_memory_format(self_play_device))
+                    gen_model.eval()
+                    _lp["applied"] = True; _lp["applied_at_epoch"] = epoch
+                    with open(_lp_path, "w", encoding="utf-8") as _f:
+                        _json.dump(_lp, _f, ensure_ascii=False, indent=1)
+                    report_logger(f"Epoch {epoch} | Ladder promotion: {_lp.get('name', _lp['ckpt'])} -> best "
+                                  f"(eq {_lp.get('eq', '?')} vs best {_lp.get('best_eq', '?')}, P {_lp.get('p', '?')}) -> PROMOTED (ladder)")
+                    print(f"  [ladder promotion] {_lp['ckpt']} is now best + generation model", flush=True)
+        except Exception as _e:
+            print(f"  [ladder promotion] notice: {_e!r}", flush=True)
         if epoch % 10 == 0:
             snap_path = f"model/model_MCTS_ep{epoch}{_SUFFIX}.pth"
             torch.save(model.state_dict(), snap_path)
@@ -3518,7 +3620,7 @@ def train_mcts_alpha_zero(
                 num_curriculum_games=num_curriculum_games, num_opening_games=num_opening_games,
                 pooled_evaluator=pooled_evaluator,
                 full_search_prob=full_search_prob, fast_sims=fast_sims,
-                value_q_weight=value_target_q_weight, max_plies=max_game_plies
+                value_q_weight=cur_q_weight, max_plies=max_game_plies
             )
             _vd, _vd_counts = None, None
             if num_vs_deterministic_games > 0:
@@ -3528,7 +3630,7 @@ def train_mcts_alpha_zero(
                     temperature_moves=temperature_moves, dirichlet_alpha=vs_det_dirichlet_alpha, noise_weight=vs_det_noise_weight,
                     c_puct=c_puct_exploit, eval_cache=epoch_eval_cache, boost_when_narrow=boost_when_narrow,
                     pooled_evaluator=pooled_evaluator, full_search_prob=_fsp_other, fast_sims=fast_sims,
-                    epoch=epoch, value_q_weight=value_target_q_weight
+                    epoch=epoch, value_q_weight=cur_q_weight
                 )
             _lg, _lg_counts = None, None
             _lm = league_model[0] if isinstance(league_model, list) else league_model  # fallback: first opponent only
@@ -3539,7 +3641,7 @@ def train_mcts_alpha_zero(
                     temperature_moves=temperature_moves, dirichlet_alpha=vs_det_dirichlet_alpha, noise_weight=vs_det_noise_weight,
                     c_puct=c_puct_exploit, eval_cache=epoch_eval_cache, boost_when_narrow=boost_when_narrow,
                     pooled_evaluator=pooled_evaluator, full_search_prob=_fsp_other, fast_sims=fast_sims,
-                    epoch=epoch, value_q_weight=value_target_q_weight, max_plies=max_game_plies
+                    epoch=epoch, value_q_weight=cur_q_weight, max_plies=max_game_plies
                 )
             return _sp, _sp_counts, _vd, _vd_counts, _lg, _lg_counts
 
@@ -3565,7 +3667,7 @@ def train_mcts_alpha_zero(
                 num_curriculum_games=num_curriculum_games, num_opening_games=num_opening_games,
                 vsdet_cfg=_vsdet_cfg, num_vs_det_games=num_vs_deterministic_games,
                 league_model=league_model, num_league_games=num_league_games,
-                fallback=_sequential_generation, value_q_weight=value_target_q_weight,
+                fallback=_sequential_generation, value_q_weight=cur_q_weight,
             )
         else:
             (raw_samples, outcome_counts, vs_det_samples, vs_det_outcome_counts,
@@ -3629,7 +3731,9 @@ def train_mcts_alpha_zero(
                            f"League-win {league_outcome_counts['league_win']} / "
                            f"Draw {league_outcome_counts['draw']}")
 
-        if len(replay_buffer) < batch_size:
+        # 2026-10-13 (user, clean rollback to ep960): with an emptied buffer, only generate data until
+        # NAPS_MIN_BUFFER samples exist, so the first training steps do not overfit a tiny buffer.
+        if len(replay_buffer) < max(batch_size, int(os.environ.get("NAPS_MIN_BUFFER", "0") or 0)):
             print(f"  Replay buffer warming up: {len(replay_buffer)}/{batch_size} samples "
                   f"(need at least one full batch). Skipping the training step this epoch.")
             report_logger(f"Epoch {epoch + 1}/{num_epochs} | Warming up ({len(replay_buffer)}/{batch_size}) | "
@@ -3779,6 +3883,11 @@ def train_mcts_alpha_zero(
             for _pg in optimizer.param_groups:
                 _pg['lr'] = scheduler.eta_min
             cur_lr_cooldown -= 1
+        if _fresh_opt_warmup:
+            _f = _fresh_opt_warmup.pop(0)
+            for _pg in optimizer.param_groups:
+                _pg['lr'] = _pg['lr'] * _f
+            print(f"  [fresh optimizer] LR warm-up x{_f} this epoch ({len(_fresh_opt_warmup)} warm-up epochs left)", flush=True)
 
         # 2026-09-22: tactical_refresh() (the periodic burst supervised
         # re-injection that used to run here) was REMOVED -- see
@@ -3812,11 +3921,20 @@ def train_mcts_alpha_zero(
             # would add unnecessary cost for no extra signal at this pace.
             model.to(self_play_device, memory_format=preferred_memory_format(self_play_device))
             torch.set_num_threads(1)
+            _LAST_GATE_CANDIDATE["path"] = None
             gate_win, gate_draw, gate_loss, promoted = run_gating_check(
                 model, gen_model, self_play_device, eval_simulations, boosted_sims=boosted_sims,
                 boost_threshold=boost_threshold, boost_when_narrow=boost_when_narrow, c_puct=c_puct_exploit,
                 runner=_runner
             )
+            # 2026-10-11 (user): keep the weights of every gate where the OLD rule (W + D/2 >= 55%) would
+            # have promoted but the new loss-penalty rule did not, so the new rule's judgement can be checked
+            # later (e.g. Rapfi ladder). Only these disagreements are saved (~34 MB each).
+            if not promoted and gate_win + 0.5 * gate_draw >= 0.55:
+                os.makedirs("model/gate_disagree", exist_ok=True)
+                _gd_path = f"model/gate_disagree/ep{epoch}{_SUFFIX}.pth"
+                torch.save(model.state_dict(), _gd_path)
+                print(f"  [gate] old rule would have promoted ep{epoch}; weights kept at {_gd_path}", flush=True)
             print(f"  [refresh-timing] mining+relabel {_t_refresh1 - _t_refresh0:.1f}s | "
                   f"gate {time.monotonic() - _t_refresh1:.1f}s", flush=True)
             ramp_note = ""
@@ -3841,7 +3959,7 @@ def train_mcts_alpha_zero(
                         ramp_note = f" -> sim budget now {cur_num_simulations}/{cur_boosted_sims} (stagnation bump)"
                 save_sim_budget(cur_num_simulations, cur_boosted_sims, cur_stagnation_count, cur_lr_cooldown)
             gate_note = (f" | Gate vs best ({len(_GATE_OPENING_SQUARES) * 2} games): Win {gate_win:.0%} / "
-                         f"Draw {gate_draw:.0%} / Loss {gate_loss:.0%} -> {'PROMOTED' if promoted else 'kept'}{ramp_note}")
+                         f"Draw {gate_draw:.0%} / Loss {gate_loss:.0%} -> {'PROMOTED' if promoted else ('CANDIDATE (ladder check pending)' if _LAST_GATE_CANDIDATE['path'] else 'kept')}{ramp_note}")
             model.train()
 
         _t_gate_done = time.monotonic()
@@ -3876,6 +3994,11 @@ def train_mcts_alpha_zero(
         # Saving epoch+1 here, right after this epoch's own checkpoint write,
         # closes that window: a kill after this line correctly resumes at
         # epoch+1; a kill before it correctly redoes only epoch (never more).
+        try:   # 2026-10-12: optimizer moments for the next restart (atomic write)
+            torch.save({"next_epoch": epoch + 1, "optimizer": optimizer.state_dict()}, OPT_STATE_PATH + ".tmp")
+            os.replace(OPT_STATE_PATH + ".tmp", OPT_STATE_PATH)
+        except Exception as e:
+            print(f"Optimizer state save notice ({e})")
         save_cumulative_epoch(epoch + 1)
 
         # Periodically measure the actual research goal: win rate against the

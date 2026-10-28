@@ -36,3 +36,36 @@
 !/manual/build_*.py
 /manual/_*.html
 !/LICENSE
+
+# --- 2026-10-28: v2 / v3 (Gumbel + CATFISH) / 15x15 sources, README figures, festival videos' HTML sources ---
+!/assets/
+!/11x11_v2/
+/11x11_v2/*
+!/11x11_v2/*.py
+!/11x11_v2/v3/
+/11x11_v2/v3/*
+!/11x11_v2/v3/*.py
+!/11x11_v2/v3/cpp/
+/11x11_v2/v3/cpp/*
+!/11x11_v2/v3/cpp/*.cpp
+!/11x11_v2/v3/cpp/*.bat
+!/11x11_v2/v3/cpp/*.py
+!/15x15/
+/15x15/*
+!/15x15/*.py
+!/festival/
+/festival/*
+!/festival/intro_html/
+/festival/intro_html/*
+!/festival/intro_html/intro.html
+!/festival/intro_html/summary.html
+!/festival/intro_html/data/
+!/festival/render_intro_video.py
+!/festival/render_summary.py
+
+# never: backups, generated game viewers (visitor games)
+*.bak*
+*.reverted_*
+/10x10/hlt/web/games_viewer.html
+/10x10/hlt/web/watch_list.html
+/10x10/docs/*.pdf

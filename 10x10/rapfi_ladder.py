@@ -21,7 +21,7 @@ import sys
 import time
 
 TENX = r"C:\Users\My PC\Desktop\final\10x10"
-LEVELS = [int(x) for x in os.environ.get("RAPFI_LEVELS", "300,1000,2000,3000").split(",")]  # Rapfi search nodes per move (around the current equal-strength point)
+LEVELS = [int(x) for x in os.environ.get("RAPFI_LEVELS", "1000,2000,3000,5000,10000,20000").split(",")]  # 2026-10-10 night (user): 20000 added (the 정오 bar sits around 20k)  # 2026-10-10 evening (user, option B): 300 dropped (85%+, no information), 10000 added (890 scored 62% at 5000)  # 2026-10-10 (user): 5000 added -- 860/880 still scored ~42% at 3000, so the top end was unmeasurable  # Rapfi search nodes per move (around the current equal-strength point)
 LOG = os.path.join(TENX, "model", "rapfi_ladder_log.jsonl")
 MATCH_LOG = os.path.join(TENX, "model", "rapfi_match_log.jsonl")
 

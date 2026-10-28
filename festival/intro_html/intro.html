@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI는 어떻게 공부할까? — 전주 영상</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Noto+Sans+KR:wght@300;400;700&family=Noto+Serif+KR:wght@400;700&display=block" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  /* fixed 1920x1080 stage, scaled to fit the window */
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background: #000;
+           transform-origin: 0 0; overflow: hidden; }
+  #cam { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+  .layer { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+  .serif { font-family: 'Noto Serif KR', serif; }
+  .sans { font-family: 'Noto Sans KR', sans-serif; }
+  .txt { position: absolute; white-space: nowrap; color: #fff; opacity: 0; }
+  .center { left: 0; width: 1920px; text-align: center; }
+  #hud { position: fixed; right: 8px; bottom: 8px; color: #8a8; font: 12px/1.4 Consolas, monospace;
+         background: rgba(0,0,0,.6); padding: 4px 8px; z-index: 10; }
+  .capture #hud { display: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="cam">
+    <!-- S01 -->
+    <div id="s01" class="layer">
+      <div id="s01t1" class="txt serif center" style="top:470px;font-size:64px;font-weight:400">
+        인공지능이 <span id="cheon">천</span><span id="jae">재</span>라 불리기 시작한 날</div>
+      <div id="s01t2" class="txt sans center" style="top:590px;font-size:32px;color:#cfcfcf;letter-spacing:1px">Google DeepMind Challenge Match 제4국 · 2016. 3. 13. · 이세돌 9단 대 AlphaGo</div>
+    </div>
+    <!-- S07 / S08 year ticker lives in the camera too, so S08 can zoom into it -->
+    <div id="s07" class="layer"></div>
+  </div>
+  <!-- layers outside the camera -->
+  <svg id="board" class="layer" viewBox="0 0 1920 1080" style="opacity:1"></svg>
+  <div id="s02cap" class="txt sans center" style="top:982px;font-size:32px;color:#eee;letter-spacing:1px;line-height:1.35"></div>
+  <div id="lines" class="layer"></div>
+  <div id="s08split" class="layer"></div>
+  <div id="s09" class="layer"></div>
+  <div id="late" class="layer"></div>
+  <div id="voice" class="layer" style="background:#000;opacity:0"></div>
+</div>
+<div id="hud"></div>
+
+<script src="data/game4.js"></script>
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// Deterministic timeline: render(t) draws the frame for time t (seconds).
+// Live play uses requestAnimationFrame; capture calls window.seek(t).
+// ---------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const seg = (t, t0, t1) => clamp((t - t0) / (t1 - t0));          // 0..1 progress of t in [t0,t1]
+const ease = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;  // easeInOutCubic
+const easeOut = k => 1 - Math.pow(1 - k, 3);
+const fade = (t, a, b, c, d) => Math.min(seg(t, a, b), 1 - seg(t, c, d));  // in a..b, out c..d
+
+// --- the festival model (S11-2). Decided around 2026-10-25: fill in epoch and name.
+// If Dawn itself goes to the festival, set NOW_MODEL = null: S11-2 disappears and the video is 4 s shorter.
+const NOW_MODEL = null;   // 2026-10-22 v2: no festival-model scene
+const S112 = NOW_MODEL ? 4 : 0;
+
+// --- timing (seconds) ---
+// 2026-10-22 (user): v2 -- technical results instead of the 『날개』 narration, no logo. Removed scenes
+// keep a zero-length slot (Z) so the render code stays as it was; their elements are hidden in render().
+const Z = t => [t, t + 0.001];
+const T = {
+  s01: [0, 7],         // 인공지능이 천재라 불리기 시작한 날 / 2016. 3. 13.
+  s02: [7, 26],        // 천재 -> strokes -> grid -> game 4 to move 78 (78 at 23.8 s)
+  s03: Z(26),          // (removed 10/24)
+  s05: Z(26),          // (removed: voices)
+  sq1: Z(26),          // (removed)
+  s06x: [27.5, 37.5],  // server wall: TPU 5,000 vs GTX 1050, 25만 분의 1
+  s06: Z(37.5),        // (removed)
+  s07: [37.5, 45],     // 2016 -> 2026, 10주년
+  s08: [45, 49],       // ㄴ -> baseline (no white half, no title)
+  // 10/24 (user): the axis stops at 여명 and at 3,000, cuts to those scenes, comes back; at 메기 리그 the 78th-move
+  // sound plays and the last lines join at once, landing on v3 -- "우리 프로젝트의 78수: 메기 (CATFISH)"
+  s09: [49, 83],       // whole time-axis span (sweeps + the two cut-aways inside it)
+  s10: [61, 66],       // 2026/09/29 14:22:13 -- 첫 졸업 (cut-away from the axis at day 45)
+  s101: [70, 75.5],    // Rapfi 대등점 959 -> 3,454 (cut-away at day 55)
+  s096: [83, 87],      // 68일
+  s11: [87, 93.5],     // 2026. 10. 22. 공부법을 바꾸자
+  s112: Z(93.5),       // (removed)
+  s13: Z(93.5),        // (removed)
+  sfin: [93.5, 101.5], // evidence: festival, Rapfi
+  s17: Z(101.5),       // (removed: logo)
+  s18: Z(101.5),       // (removed)
+};
+// axis keyframes [time, day]; between the pairs the axis is hidden for the cut-aways
+// 10/26 (user): after each cut-away the axis first stands still while the flash marks the playhead, then moves on
+const AXK = [[50, 0], [60, 45], [66.4, 45], [67.8, 45], [69.4, 55], [75.9, 55], [77.4, 55], [78.4, 64], [78.6, 64], [79.8, 71]];
+const JOIN_T = 79.8;      // the outlines close on v3 at the same moment the playhead lands there
+const CATFISH_T = 78.6;   // 78th-move hit; the outlines start joining the label tips
+function axisDay(t) {
+  if (t <= AXK[0][0]) return 0;
+  for (let i = 0; i + 1 < AXK.length; i++) {
+    const [t0, d0] = AXK[i], [t1, d1] = AXK[i + 1];
+    if (t <= t1) return d0 + (d1 - d0) * (i === 8 ? easeOut(seg(t, t0, t1)) : seg(t, t0, t1));
+  }
+  return AXK[AXK.length - 1][1];
+}
+function axisVis(t) {   // 0 while the 여명 / 3,000 scenes are on screen
+  const cut = (a, b) => 1 - fade(t, a - .5, a, b, b + .4);
+  return cut(T.s10[0], T.s10[1]) * cut(T.s101[0], T.s101[1]);
+}
+let DURATION = T.sfin[1];
+// 10/26 (user): the short version is not cut from the rendered video any more (scenes lost their set-up and
+// pay-off); the page itself plays a warped clock: pieces of the original timeline at their own speeds.
+const SHORT = new URLSearchParams(location.search).has('short');
+let WARP = null;   // [[origStart, origEnd, speed], ...]
+const warp = ts => { let acc = 0;
+  for (const [a, b, v] of WARP) { const len = (b - a) / v; if (ts <= acc + len) return a + (ts - acc) * v; acc += len; }
+  const l = WARP[WARP.length - 1]; return l[1]; };
+// the 여명 cut-away is not in the short version, so the axis only flashes where it comes back from 3,000
+
+
+// ---------------------------------------------------------------------------
+// Measure glyph boxes (stage coordinates, camera at identity) once fonts are ready.
+// ---------------------------------------------------------------------------
+const M = {};
+function measure() {
+  const st = $('stage').getBoundingClientRect();
+  const sc = st.width / 1920;
+  const box = el => { const r = el.getBoundingClientRect();
+    return { x: (r.left - st.left) / sc, y: (r.top - st.top) / sc, w: r.width / sc, h: r.height / sc }; };
+  $('cam').style.transform = 'none';
+  M.jae = box($('jae'));
+  M.nyeon = box($('nyeon'));
+  // exact stroke boxes, as ratios of the glyph's span box (measured once from the
+  // Noto Serif KR 400 glyphs rendered at 800px; see glyph_calib.py)
+  const R = (b, x0, x1, y0, y1) => ({ x: b.x + b.w * x0, y: b.y + b.h * y0, w: b.w * (x1 - x0), h: b.h * (y1 - y0) });
+  M.jv = R(M.jae, 0.806, 0.8784, 0.2183, 0.8757);     // 재: right stem of ㅐ
+  M.jh = R(M.jae, 0.674, 0.806, 0.4843, 0.5174);      // 재: short horizontal tick of ㅐ
+  M.nh = R(M.nyeon, 0.3726, 0.9082, 0.82, 0.8496);    // 년: bottom stroke of the final ㄴ
+}
+// white bars laid exactly over a glyph stroke, then stretched. They are drawn in SCREEN space
+// (outside the zoomed camera): inside a scale(8) layer Chrome snaps sub-pixel boxes to whole
+// local pixels first and then magnifies them, which made thin bars jump in thickness.
+const barLayer = document.createElement('div'); barLayer.className = 'layer';
+$('stage').insertBefore(barLayer, $('cam').nextSibling);
+const BARS = [];
+const camBar = () => { const d = document.createElement('div');
+  d.style.cssText = 'position:absolute;background:#fff;opacity:0'; barLayer.appendChild(d);
+  const b = { d, r: [0, 0, 0, 0], op: 0 }; BARS.push(b); return b; };
+const barV = camBar(), barH = camBar(), barN = camBar();
+function bar(b, l, t, r, bo, op) { b.r = [l, t, r, bo]; b.op = op; }        // stage coordinates
+function placeBars(cx, cy, k) {
+  for (const b of BARS) {
+    const [l, t, r, bo] = b.r;
+    const L = 960 + (l - cx) * k, T_ = 540 + (t - cy) * k, R = 960 + (r - cx) * k, B = 540 + (bo - cy) * k;
+    b.d.style.left = L + 'px'; b.d.style.top = T_ + 'px';
+    b.d.style.width = Math.max(0, R - L) + 'px'; b.d.style.height = Math.max(0, B - T_) + 'px';
+    b.d.style.opacity = b.op;
+  }
+}
+// camera: show stage point (cx,cy) at screen centre with scale k
+function camera(cx, cy, k) {
+  $('cam').style.transform = `translate(${960 - cx * k}px, ${540 - cy * k}px) scale(${k})`;
+}
+
+// ---------------------------------------------------------------------------
+// Go board (S02)
+// ---------------------------------------------------------------------------
+const N = 19, GAP = 48, BX = 960 - 9 * GAP, BY = 540 - 9 * GAP;
+const svgNS = 'http://www.w3.org/2000/svg';
+const board = $('board');
+const vlines = [], hlines = [], stones = [];
+for (let i = 0; i < N; i++) {
+  const v = document.createElementNS(svgNS, 'line'); v.setAttribute('stroke', '#fff'); board.appendChild(v); vlines.push(v);
+  const h = document.createElementNS(svgNS, 'line'); h.setAttribute('stroke', '#fff'); board.appendChild(h); hlines.push(h);
+}
+const stars = [];
+for (const [a, b] of [[3,3],[3,9],[3,15],[9,3],[9,9],[9,15],[15,3],[15,9],[15,15]]) {
+  const c = document.createElementNS(svgNS, 'circle'); c.setAttribute('cx', BX + a * GAP); c.setAttribute('cy', BY + b * GAP);
+  c.setAttribute('r', 4.5); c.setAttribute('fill', '#fff'); board.appendChild(c); stars.push(c);
+}
+// replay the game with captures so each move knows which stones are on the board
+const MOVES = window.GAME4;               // [colour, x, y]
+const alive = [];                          // alive[i] = list of move indices on board after move i
+(function replay() {
+  const g = Array.from({ length: N }, () => Array(N).fill(-1));   // move index occupying point
+  const col = i => MOVES[i][0];
+  const nbrs = (x, y) => [[x+1,y],[x-1,y],[x,y+1],[x,y-1]].filter(([a,b]) => a >= 0 && b >= 0 && a < N && b < N);
+  const group = (x, y) => { const c = col(g[y][x]), seen = new Set([x+','+y]), st = [[x,y]], pts = []; let libs = 0;
+    while (st.length) { const [a,b] = st.pop(); pts.push([a,b]);
+      for (const [p,q] of nbrs(a,b)) { const k = p+','+q; if (seen.has(k)) continue;
+        if (g[q][p] === -1) { seen.add(k); libs++; } else if (col(g[q][p]) === c) { seen.add(k); st.push([p,q]); } } }
+    return { pts, libs }; };
+  MOVES.forEach(([c, x, y], i) => {
+    g[y][x] = i;
+    for (const [p,q] of nbrs(x,y)) if (g[q][p] !== -1 && col(g[q][p]) !== c) {
+      const gr = group(p,q); if (gr.libs === 0) gr.pts.forEach(([a,b]) => g[b][a] = -1); }
+    alive.push(g.flat().filter(v => v !== -1));
+  });
+})();
+MOVES.forEach(([c, x, y], i) => {
+  const s = document.createElementNS(svgNS, 'circle');
+  s.setAttribute('cx', BX + x * GAP); s.setAttribute('cy', BY + y * GAP); s.setAttribute('r', GAP * 0.46);
+  s.setAttribute('fill', c === 'B' ? '#0a0a0a' : '#f4f4f4');
+  s.setAttribute('stroke', c === 'B' ? '#ffffff' : '#f4f4f4'); s.setAttribute('stroke-width', c === 'B' ? 2.6 : 1.6);
+  s.style.opacity = 0; board.appendChild(s); stones.push(s);
+});
+const ring = document.createElementNS(svgNS, 'circle');
+ring.setAttribute('cx', BX + MOVES[77][1] * GAP); ring.setAttribute('cy', BY + MOVES[77][2] * GAP);
+ring.setAttribute('fill', 'none'); ring.setAttribute('stroke', '#fff'); ring.setAttribute('stroke-width', 3);
+board.appendChild(ring);
+const lbl78 = document.createElementNS(svgNS, 'text');
+lbl78.setAttribute('x', BX + MOVES[77][1] * GAP); lbl78.setAttribute('y', BY + MOVES[77][2] * GAP + 7);
+lbl78.setAttribute('text-anchor', 'middle'); lbl78.setAttribute('font-size', 20); lbl78.setAttribute('font-weight', 700);
+lbl78.setAttribute('font-family', 'Noto Sans KR'); lbl78.setAttribute('fill', '#000'); lbl78.textContent = '78';
+board.appendChild(lbl78);
+$('s02cap').innerHTML = '2016. 3. 13 · 이세돌 9단(백) 대 알파고(흑) 제4국'   // 10/26 (user): readable, says what 78 is
+  + '<br><span style="font-size:30px;color:#E0893A;font-weight:700">백 78수 : 사람이 AI의 착각을 깬 한 수</span>';
+
+
+// ---------------------------------------------------------------------------
+// Simple text helpers for single-line scenes
+// ---------------------------------------------------------------------------
+function makeText(id, html, top, size, cls = 'serif', extra = '') {
+  const d = document.createElement('div'); d.id = id; d.className = 'txt center ' + cls;
+  d.style.cssText = `top:${top}px;font-size:${size}px;${extra}`; d.innerHTML = html; $('stage').appendChild(d); return d;
+}
+const s03 = makeText('s03', '그 뒤, AI는 선생님 없이 공부하기 시작했다.', 440, 56);
+const s04 = makeText('s04', '알파고 제로 2017 · 알파제로 2018', 560, 32, 'sans', 'color:#aaa;letter-spacing:2px');
+const s06a = makeText('s06a', '그래서 나는 박제되며 살기로 했다.', 470, 56);
+const s06b = makeText('s06b', '『날개』 인용 ― 문장을 정해 주세요', 580, 28, 'serif', 'color:#888');
+const s061 = makeText('s061', '알파제로의 자가대국: TPU 5,000개', 380, 52);
+const s062a = makeText('s062a', '이 프로젝트: GTX 1050 한 개 (2016년 출시 노트북 GPU)', 520, 52);
+const s062b = makeText('s062b', '계산 능력 약 25만 분의 1', 640, 52, 'sans', 'font-weight:400');
+for (const el of [s061, s062a, s062b]) { el.style.textShadow = '0 0 18px #000, 0 0 36px #000, 0 0 60px #000';
+  el.style.background = 'rgba(0,0,0,.72)'; el.style.padding = '10px 0'; }   // 10/26: racks no longer show through the words
+const sq1 = makeText('sq1', '내가 만들 수 있을까?', 500, 56);
+// server wall behind S#06x: racks fill in column by column -- the "sanctuary"
+const racks = document.createElement('div'); racks.className = 'layer'; $('stage').insertBefore(racks, $('stage').firstChild.nextSibling);
+const RACKS = [];
+for (let c = 0; c < 14; c++) for (let r = 0; r < 4; r++) {
+  const d = document.createElement('div');
+  d.style.cssText = `position:absolute;left:${40 + c * 132}px;top:${150 + r * 200}px;width:112px;height:180px;`
+    + 'background:#141414;border:1px solid #2c2c2c;opacity:0';
+  d.innerHTML = Array.from({ length: 7 }, (_, k) =>
+    `<div style="margin:${k ? 8 : 14}px 12px 0;height:12px;border-bottom:1px solid #262626;position:relative">`
+    + `<span style="position:absolute;right:0;top:3px;width:6px;height:6px;border-radius:50%;background:#3a3a3a"></span></div>`).join('');
+  racks.appendChild(d); RACKS.push({ d, c, r });
+}
+
+// S05: people and the words they said
+const s05 = document.createElement('div'); s05.className = 'layer'; $('stage').appendChild(s05);
+const VOICES = [
+  ['너가 가능하겠는가?', 300, 300], ['자원도 없는데?', 1430, 380], ['너 같은 것이 뭘 하냐…', 700, 760],
+];
+const people = [], voices = [];
+[[560, 600], [960, 560], [1360, 600], [760, 820], [1180, 820]].forEach(([x, y]) => {
+  const p = document.createElement('div');
+  p.style.cssText = `position:absolute;left:${x - 40}px;top:${y - 90}px;width:80px;height:150px;opacity:0`;
+  p.innerHTML = '<div style="width:46px;height:46px;border-radius:50%;background:#555;margin:0 auto"></div>'
+    + '<div style="width:80px;height:92px;border-radius:40px 40px 6px 6px;background:#555;margin-top:8px"></div>';
+  s05.appendChild(p); people.push(p);
+});
+VOICES.forEach(([w, x, y]) => {
+  const v = document.createElement('div'); v.className = 'txt serif';
+  v.style.cssText = `left:${x}px;top:${y}px;font-size:44px`; v.textContent = '“' + w + '”'; s05.appendChild(v); voices.push(v);
+});
+
+// S07: year ticker 2016 -> 2026, then "— 알파고 챌린지 매치 10주년"
+const years = [];
+for (let y = 2016; y <= 2026; y++) {
+  const d = document.createElement('div'); d.className = 'txt sans';
+  d.style.cssText = 'left:0;width:1920px;text-align:center;font-size:120px;font-weight:300;top:0';
+  d.textContent = y; $('s07').appendChild(d); years.push(d);
+}
+const anniv = document.createElement('div'); anniv.className = 'txt serif';
+anniv.style.cssText = "font-size:56px;top:0;left:0;font-family:'Noto Serif KR',serif";
+anniv.innerHTML = '― 알파고 챌린지 매치 10주<span id="nyeon">년</span>';
+$('s07').appendChild(anniv);
+
+// S08: split screen
+const split = $('s08split');
+split.innerHTML = '<div id="white" style="position:absolute;left:0;width:1920px;background:#fff;top:0;height:0"></div>'
+  + '<div id="baseline" style="position:absolute;left:0;width:1920px;height:4px;background:#fff;opacity:0"></div>'
+  + '<div id="dasi" class="txt serif center" style="font-size:72px;color:#000;font-weight:400">AI는 어떻게 공부할까?</div>'
+  + '<div id="nalja" class="txt serif center" style="font-size:36px;color:#ccc">알파고 10년, 노트북 한 대로 다시 걸어 본 길</div>'
+  + '<div id="siren1" class="txt serif center" style="top:330px;font-size:54px"></div>'
+  + '<div id="siren2" class="txt serif center" style="top:690px;font-size:54px"></div>';
+// the noon siren of 『날개』, drawn as the baseline sending pulses up and down
+const PULSES = [];
+for (let k = 0; k < 6; k++) for (const dir of [-1, 1]) {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:absolute;left:0;width:1920px;height:2px;background:#fff;opacity:0';
+  $('s08split').insertBefore(d, $('baseline')); PULSES.push({ d, k, dir });
+}
+
+// ---------------------------------------------------------------------------
+// S09: time axis. Day 0 = 8/15, day 45 = 9/29. Early days are compressed so the
+// real dates make the milestones get denser by themselves.
+// ---------------------------------------------------------------------------
+const AX0 = 140, AX1 = 1780, EARLY = 17, EARLY_W = 0.15, LAST = 71;   // day 68 = 10/22, 10/26: to day 71 = 10/25 정오
+const dayX = d => d < EARLY ? AX0 + (d / EARLY) * EARLY_W * (AX1 - AX0)
+                            : AX0 + (EARLY_W + (d - EARLY) / (LAST - EARLY) * (1 - EARLY_W)) * (AX1 - AX0);
+const MILESTONES = [
+  [0, '3x3 틱택토'], [9, '10x10'], [17, '11x11 오목'], [20, 'Gen1 자가대국'], [24, '신경망 확대'],
+  [30, '지도학습 재출발'], [33, '대규모 지도학습'], [38, 'NAPS 시작'], [43, '가치망 초기화'], [44, 'Rapfi 측정 · 웹 대국판'],
+  [45, '첫 졸업 여명'], [55, '대등점 3,000 돌파'], [56, 'NAPS-880 축전'], [58, '가치망 제거 실험'], [59, '음수 게이팅 · 축제 고정'],
+  [60, '15x15 실험'], [64, '메기 리그'], [67, 'VCF · C++ 엔진'], [68, '메기 · 검벨 알파제로'], [71, '정오 ep530'],
+];
+const DATE_TICKS = [[0, '8/15'], [17, '9/1'], [38, '9/22'], [45, '9/29'], [59, '10/13'], [68, '10/22'], [71, '10/25']];
+const DAILY = ['공부', '학원', '중간고사 준비', '공부', '학원', '공부', '중간고사 준비', '학원', '공부'];
+const s09 = $('s09');
+const msEls = MILESTONES.map(([d, label], i) => {
+  const e = document.createElement('div'); e.className = 'txt sans';
+  // v2d: black backing + above the tick lines, so a long tick never crosses another label
+  e.style.cssText = `font-size:30px;font-weight:400;left:${dayX(d)}px;transform:translateX(-50%);background:#000;padding:0 10px;z-index:2`;
+  e.textContent = label; s09.appendChild(e);
+  const tick = document.createElement('div');
+  tick.style.cssText = `position:absolute;left:${dayX(d) - 1.5}px;width:3px;background:#fff;opacity:0`;
+  s09.appendChild(tick);
+  return { d, e, tick, row: i % 8 };   // v2d: even rows below the axis, odd rows above
+});
+const dtEls = DATE_TICKS.map(([d, label]) => {
+  const e = document.createElement('div'); e.className = 'txt sans';
+  e.style.cssText = `font-size:24px;color:#000;left:${dayX(d)}px;transform:translateX(-50%)`;
+  e.textContent = label; s09.appendChild(e); return { d, e };
+});
+const dailyEl = document.createElement('div'); dailyEl.className = 'txt serif';
+dailyEl.style.cssText = 'font-size:40px;color:#000;transform:translateX(-50%)'; s09.appendChild(dailyEl);
+const head = document.createElement('div');                 // playhead on the axis
+head.style.cssText = 'position:absolute;width:14px;height:14px;border-radius:50%;background:#fff;opacity:0;transform:translate(-50%,-50%);z-index:1';
+s09.appendChild(head);
+// 10/26 (user): after the 여명 / 3,000 cut-aways the eye did not find where the axis picks up again -- a ring bursts
+// from the playhead, a light beam flashes through it and the dot glows, each time the axis comes back
+const RESUME_T = new URLSearchParams(location.search).has('short') ? [75.9] : [66.4, 75.9];
+const flashRing = document.createElement('div');
+flashRing.style.cssText = 'position:absolute;border:4px solid #fff;border-radius:50%;opacity:0;transform:translate(-50%,-50%);pointer-events:none';
+const beam = document.createElement('div');
+beam.style.cssText = 'position:absolute;width:6px;opacity:0;transform:translate(-50%,-50%);border-radius:3px;'
+  + 'background:linear-gradient(to bottom,rgba(255,255,255,0),#fff 50%,rgba(255,255,255,0));pointer-events:none';
+const flashRing2 = flashRing.cloneNode();
+s09.appendChild(beam); s09.appendChild(flashRing); s09.appendChild(flashRing2);
+// 10/24 (user): the finished axis is a fish swimming LEFT -- head at 3x3 틱택토, tail at v3. At the CATFISH moment the
+// label tips join into a top and a bottom outline (both closing on v3), the grey ticks turn white, and the head gets a
+// round eye and whiskers.
+const fishSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+fishSvg.setAttribute('width', '1920'); fishSvg.setAttribute('height', '1080');
+fishSvg.style.cssText = 'position:absolute;left:0;top:0;opacity:0;overflow:visible;z-index:1';
+// 10/24 (user): the labels themselves are laid out as a catfish. Every tick reaches a smooth body envelope (round head
+// at 3x3 틱택토, widest early, tapering to the tail at v3); a label sits on the envelope, or further out when it would
+// overlap its same-side neighbour. The outline is the envelope itself, so it is smooth and touches every tick.
+const FISH_H = 235;
+const env = x => { const u = (x - dayX(0)) / (dayX(LAST) - dayX(0));
+  return u < 0.3 ? FISH_H * Math.pow(Math.sin(Math.max(0, u) / 0.3 * Math.PI / 2), 0.55)
+                 : FISH_H * Math.pow(Math.max(0, (1.06 - u) / 0.76), 1.25); };
+const TAIL_X = dayX(0) + 1.06 * (dayX(LAST) - dayX(0));
+let fishLaidOut = false;
+// 10/24 (user): label points follow a real catfish photo (head left). Profile measured from the photo, as distance from
+// the fish's centre line (photo px), at fractions u of head->tail: a low flat back, a deep front-middle belly.
+const DORSAL = [[0, 3], [.08, 12], [.23, 14], [.34, 17], [.54, 10], [.75, 6.4], [.91, 6.7], [1, 10]];
+const VENTRAL = [[0, 3.3], [.09, 11.7], [.23, 24], [.38, 34], [.54, 40.7], [.69, 39.5], [.85, 25], [.94, 14], [1, 8]];
+const PX = 6;   // photo px -> stage px (deepest belly ~ 245 px)
+const prof = (tab, u) => { for (let i = 0; i + 1 < tab.length; i++) { const [u0, v0] = tab[i], [u1, v1] = tab[i + 1];
+  if (u <= u1) return v0 + (v1 - v0) * clamp((u - u0) / (u1 - u0)); } return tab[tab.length - 1][1]; };
+function layoutFish() {          // needs the label widths, so it runs on the first frame of the time axis
+  const placed = { up: [], down: [] };
+  msEls.forEach((m, i) => {
+    const x = dayX(m.d), u = (x - dayX(0)) / (TAIL_X - dayX(0)), w = m.e.offsetWidth;
+    const side = m.row % 2 === 1 ? 'up' : 'down';
+    let dist = Math.max(50, PX * prof(side === 'up' ? DORSAL : VENTRAL, u));
+    for (let g = 0; g < 8; g++) {   // a label that would overlap its same-side neighbour moves one row outward
+      const hit = placed[side].find(q => Math.abs(q.x - x) < (q.w + w) / 2 + 8 && Math.abs(q.dist - dist) < 44);
+      if (!hit) break; dist = hit.dist + 46;
+    }
+    m.side = side; m.dist = dist; placed[side].push({ x, w, dist });
+  });
+  fishLaidOut = true;
+  buildOutline();
+}
+// 10/24 (user): connect the label points themselves -- head -> every tip on that side in date order -> tail, one curved
+// segment per neighbouring pair (Catmull-Rom tangents so the joins are smooth). Built after layoutFish().
+let outlines = [];
+function buildOutline() {
+  const segs = [];
+  for (const side of ['up', 'down']) {
+    const sg = side === 'up' ? -1 : 1;
+    const pts = [[dayX(0), 540], ...msEls.filter(m => m.side === side).map(m => [dayX(m.d), 540 + sg * m.dist]), [TAIL_X, 540]];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      segs.push({ d: `M${p1[0]} ${p1[1]} C${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${p2[0]} ${p2[1]}`, x0: p1[0], x1: p2[0] });
+    }
+  }
+  const ns = 'http://www.w3.org/2000/svg';
+  outlines = segs.map(sgm => { const e = document.createElementNS(ns, 'path');
+    e.setAttribute('d', sgm.d); e.setAttribute('fill', 'none'); e.setAttribute('stroke', '#fff'); e.setAttribute('stroke-width', '3');
+    e.setAttribute('stroke-linecap', 'round'); e.setAttribute('pathLength', '1'); e.setAttribute('stroke-dasharray', '1'); e.setAttribute('stroke-dashoffset', '1');
+    fishSvg.insertBefore(e, fishSvg.firstChild); return { e, ...sgm }; });
+}
+fishSvg.innerHTML = ''
+  + '<circle cx="196" cy="522" r="10" fill="#fff" stroke="#fff" stroke-width="3"/>'
+  + ['M136 536 C95 520 70 470 25 430', 'M136 544 C100 552 60 568 8 590',
+     'M140 532 C110 505 95 455 85 400', 'M140 548 C112 560 70 590 30 640']
+    .map(d => `<path class="wh" d="${d}" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"/>`).join('');
+s09.appendChild(fishSvg);
+
+const whiskers = [...fishSvg.querySelectorAll('path.wh')];
+
+// voices that cut in over the time axis: [start offset in S09, text, style]
+const VOICE_CUTS = [];   // 2026-10-22 v2: no voices
+const voiceText = document.createElement('div'); voiceText.className = 'txt serif center';
+voiceText.style.cssText = 'top:490px;font-size:60px'; $('voice').appendChild(voiceText);
+
+// later scenes
+function lateText(html, top, size, extra = '') {
+  const d = document.createElement('div'); d.className = 'txt serif center';
+  d.style.cssText = `top:${top}px;font-size:${size}px;${extra}`; d.innerHTML = html; $('late').appendChild(d); return d;
+}
+const axCap = lateText('2026. 8. 15. 노트북 한 대로 시작', 150, 46, 'color:#fff');   // 10/26: say what the axis is
+const s096 = lateText('2026. 8. 15. ~ 10. 22. · 68일', 500, 56, "font-family:'Noto Sans KR';font-weight:300;letter-spacing:3px");
+const s10 = lateText('', 470, 96, "font-family:'Noto Sans KR';font-weight:300;letter-spacing:4px");
+const s10k = lateText('KST', 600, 28, "font-family:'Noto Sans KR';color:#aaa;letter-spacing:6px");
+const s10n = lateText('첫 졸업 NAPS-625 여명 · 졸업 문제 3/3 · Rapfi 대등점 959', 700, 34, 'color:#ccc;letter-spacing:2px');
+const s101a = lateText('Rapfi 대등점 (단위: 노드)', 400, 40, 'color:#cfcfcf');
+const s10x = lateText('졸업 = 사람에게 진 판에서 뽑은 필수 문제를 Rapfi 상대로 풀기(이기거나 끝까지 버티기) · 3번 중 2번 이상', 790, 34, "font-family:'Noto Sans KR';color:#d4d4d4");   // 10/26 (user): explain our own words
+const s101x = lateText('대등점 = 세계 최상위권 엔진 Rapfi의 생각량(탐색 노드 수)을 조절해 50 대 50이 되는 지점 · 클수록 강하다', 730, 34, "font-family:'Noto Sans KR';color:#d4d4d4");
+const s101w = lateText('그리고 200 에폭이 넘도록, 3,000~4,000 근처에서 멈췄다', 820, 44, 'color:#fff');   // 10/26: the wall, so the catfish has a reason
+const laptop = lateText('<div style="display:inline-block;position:relative;width:150px;height:104px">'
+  + '<div style="position:absolute;left:15px;top:0;width:116px;height:76px;border:3px solid #fff;border-radius:6px"></div>'
+  + '<div style="position:absolute;left:0;top:84px;width:150px;height:10px;border:3px solid #fff;border-radius:0 0 10px 10px"></div></div>',
+  280, 20);
+const s101b = lateText('959 → 4,432', 500, 96, "font-family:'Noto Sans KR';font-weight:300");
+const s101c = lateText('여명 → NAPS-960 · 2026. 10. 12.', 640, 32, 'color:#cfcfcf');
+const fish78 = lateText('우리 프로젝트의 78수 : 메기 (CATFISH)', 150, 60, "font-weight:700;color:#E0893A");
+const fish78b = lateText('약한 나와 두며 착각을 고치다', 235, 42, 'color:#ededed');
+const s11a = lateText('2026. 10. 22. 메기와 함께 백지에서 다시,', 380, 48, 'color:#ddd');
+const s11b = lateText('6시간 만에 한 달 공부한 선배 AI를 넘어서다', 480, 72);
+const s11c = lateText('이틀 만에 이전 최고 기록(4,432)의 약 10배', 620, 40, "font-family:'Noto Sans KR';color:#e6e6e6;letter-spacing:1px");
+const s11x = lateText('메기 · 검벨 알파제로 = 약한 나와 두는 연습 + 적게 검산하고도 잘 배우는 공부법(딥마인드, 2022)', 710, 34, "font-family:'Noto Sans KR';color:#d4d4d4");
+const s112a = lateText('그리고 지금,', 400, 48, 'color:#ccc');
+const s112b = lateText(NOW_MODEL ? `NAPS-${NOW_MODEL.epoch} <b style="font-weight:700">${NOW_MODEL.name}</b>` : '', 500, 96);
+const s12a = lateText('지난 축전 관람객 760판 승률 (NAPS-880)', 250, 36, 'color:#cfcfcf');
+const s12b = lateText('0.0%', 295, 90, "font-family:'Noto Sans KR';font-weight:300");
+const rapA = lateText('정오 모델 ep530이 세계 최상위권 오목 엔진 Rapfi와 겨루면', 490, 36, 'color:#cfcfcf');
+const rapB = lateText('Rapfi 약 5만 노드와 대등 · 29만 노드 상대로 40%', 545, 44);
+const noonX = lateText('정오 = 필수 문제 10개 전부 + 어려운 문제 18개 중 15개 이상 · 2026. 10. 25. 달성', 680, 36, "font-family:'Noto Sans KR';color:#e6e6e6");
+const musicCredit = lateText('Music: “Your New Home” (Evan Alderete &amp; Gooseworx) · Epic arrangement by Carameii · youtube.com/@carameii', 1010, 22, "font-family:'Noto Sans KR';color:#a8a8a8;letter-spacing:1px");   // 10/25: credit required by Carameii's terms
+const S13 = ['목도하라.', '자원이 부족한 곳에서,', '인력이 부족한 곳에서,', '가장 높은 곳까지 이르는,', '여명의 날갯짓을.']
+  .map((s, i) => lateText(s, 300 + i * 100, i === 0 ? 64 : 52));
+const quest = lateText('', 190, 48, 'color:#ddd');
+const answer = lateText('가능하다.', 650, 72);
+const qed = lateText([...'Q.E.D.'].map(c => `<span style="display:inline-block">${c}</span>`).join(''), 755, 110,
+  "font-family:'Great Vibes',cursive;letter-spacing:2px");
+const qedChars = [...qed.children];
+// S#17: logo A (wordmark on the baseline) -- the line is drawn first, from the centre out
+const logoLine = document.createElement('div');
+logoLine.style.cssText = 'position:absolute;left:960px;top:556px;height:6px;width:0;background:#fff;opacity:0';
+$('late').appendChild(logoLine);
+const logoName = lateText('배성훈', 380, 112, 'font-weight:700;letter-spacing:9px');
+const logoInd = lateText('INDUSTRY', 600, 38, "font-family:'Noto Sans KR';font-weight:300;letter-spacing:34px;text-indent:34px");
+const s18 = lateText('배성훈은 혁신한다.', 500, 64);
+
+// ---------------------------------------------------------------------------
+function render(t) {
+  // reset camera
+  let cam = [960, 540, 1];
+
+  // ---- S01 ----
+  const [a1, b1] = T.s01;
+  $('s01t1').style.opacity = seg(t, a1 + .5, a1 + 2.2) * (t < T.s02[0] + 5.6 ? 1 : 0);
+  $('s01t2').style.opacity = fade(t, a1 + 2.6, a1 + 3.6, T.s02[0], T.s02[0] + .8);
+  // dim everything but 재 while the camera closes in
+  const dim = seg(t, T.s02[0], T.s02[0] + 1.2);
+  $('s01t1').style.color = '#fff';
+  // text nodes outside spans: fade by colour
+  $('s01t1').style.color = `rgba(255,255,255,${1 - dim})`;
+  $('cheon').style.color = '#fff';                       // 천재 stays lit together
+  $('jae').style.color = '#fff';
+
+  // ---- S02: zoom into 재; the glyph's own strokes stretch into the centre grid lines ----
+  // The right stem of ㅐ stretches vertically, the short tick of ㅐ stretches horizontally;
+  // the camera is centred on (stem x, tick y) so the cross lands on the board's centre point.
+  const [a2] = T.s02;
+  const KZ = 6;
+  const V = M.jv, H = M.jh;
+  const ccx = V.x + V.w / 2, ccy = H.y + H.h / 2;
+  const zoomK = ease(seg(t, a2 + .4, a2 + 3.2));
+  if (t >= a2 && t < T.s03[0]) cam = [lerp(960, ccx, zoomK), lerp(540, ccy, zoomK), lerp(1, KZ, zoomK)];
+  const half = 9 * GAP / KZ, hair = 1.5 / KZ;                // stage units that become screen px at KZ
+  const vb = ease(seg(t, a2 + 3.4, a2 + 5.6));               // stem stretches
+  const hb = ease(seg(t, a2 + 5.0, a2 + 6.8));               // tick stretches
+  // thickness thins geometrically (equal ratios per frame), so it reads as one smooth taper
+  const geo = (a, b, k) => Math.exp(lerp(Math.log(a), Math.log(b), k));
+  const vth = geo(V.w, hair, ease(seg(t, a2 + 3.4, a2 + 6.0)));
+  const hth = geo(H.h, hair, ease(seg(t, a2 + 5.0, a2 + 7.0)));
+  const vcx = lerp(V.x + V.w / 2, ccx, vb), hcy = lerp(H.y + H.h / 2, ccy, hb);
+  // bars hand over to the board's centre lines with a short cross-fade (same width, same place)
+  const fanStart = a2 + 7.1;
+  const barsOn = t >= a2 + 3.2 ? 1 - seg(t, fanStart + 1.6, fanStart + 2.4) : 0;
+  bar(barV, vcx - vth / 2, lerp(V.y, ccy - half, vb), vcx + vth / 2, lerp(V.y + V.h, ccy + half, vb), barsOn);
+  bar(barH, lerp(H.x, ccx - half, hb), hcy - hth / 2, lerp(H.x + H.w, ccx + half, hb), hcy + hth / 2, barsOn);
+  // the rest of the glyph fades while its two strokes keep going
+  $('jae').style.opacity = 1 - seg(t, a2 + 3.6, a2 + 5.4);
+  $('cheon').style.opacity = 1 - seg(t, a2 + 3.4, a2 + 5.0);   // 천 leaves a little before 재's strokes take over
+  // grid fans out from the centre lines (the board's centre lines sit exactly where the bars end)
+  const fan = ease(seg(t, fanStart, fanStart + 1.6));
+  const boardOn = t >= fanStart && t < T.s03[0] + 1.5;
+  const boardFade = 1 - seg(t, T.s03[0], T.s03[0] + 1.5);
+  board.style.opacity = boardOn ? boardFade : 0;
+  // the grid unfolds ring by ring: line pair k leaves the centre a little after pair k-1,
+  // so at most a couple of lines are ever near the centre (no smeared, doubled centre line)
+  const fanRaw = seg(t, fanStart, fanStart + 1.7);
+  const lineK = k => k === 0 ? 1 : ease(seg(fanRaw, (k - 1) * 0.07, (k - 1) * 0.07 + 0.4));
+  const pos = i => lerp(0, (i - 9) * GAP, lineK(Math.abs(i - 9)));           // offset from centre
+  let edge = 0; for (let i = 0; i < N; i++) edge = Math.max(edge, Math.abs(pos(i)));   // outermost line so far
+  for (let i = 0; i < N; i++) {
+    const k = Math.abs(i - 9), x = 960 + pos(i), y = 540 + pos(i);
+    // the centre lines keep their full length (they are the stretched strokes); the others
+    // only span the square opened so far, so nothing sticks out past the outer lines
+    const span = k === 0 ? 9 * GAP : edge;
+    vlines[i].setAttribute('x1', x); vlines[i].setAttribute('x2', x);
+    vlines[i].setAttribute('y1', 540 - span); vlines[i].setAttribute('y2', 540 + span);
+    hlines[i].setAttribute('y1', y); hlines[i].setAttribute('y2', y);
+    hlines[i].setAttribute('x1', 960 - span); hlines[i].setAttribute('x2', 960 + span);
+    const w = lerp(1.5, (i === 0 || i === N - 1) ? 2.6 : 1.5, lineK(k));
+    vlines[i].setAttribute('stroke-width', w); hlines[i].setAttribute('stroke-width', w);
+    const op = k === 0 ? seg(fanRaw, 0.5, 0.9) : seg(lineK(k), 0, 0.25);  // centre lines appear under the bars, then the bars fade
+    vlines[i].style.opacity = op; hlines[i].style.opacity = op;
+  }
+  stars.forEach(s => s.style.opacity = seg(t, a2 + 8.5, a2 + 9.0));
+  // moves 1..77 accelerate, pause, then 78
+  const playA = a2 + 9.1, playB = a2 + 16.0;   // v2d: slower
+  const p = seg(t, playA, playB);
+  let shown = Math.floor(Math.pow(p, 0.9) * 77);         // starts slow, speeds up a little
+  if (t >= a2 + 16.8) shown = 78;
+  const on = shown > 0 ? new Set(alive[shown - 1]) : new Set();
+  stones.forEach((s, i) => s.style.opacity = on.has(i) ? 1 : 0);
+  const pop = seg(t, a2 + 16.8, a2 + 17.8);
+  ring.setAttribute('r', GAP * lerp(0.5, 0.95, easeOut(pop)));
+  ring.style.opacity = shown === 78 ? (1 - pop) : 0;
+  lbl78.style.opacity = shown === 78 ? 1 : 0;
+  $('s02cap').style.opacity = fade(t, a2 + 17.2, a2 + 17.9, T.s03[0], T.s03[0] + 1);
+
+  // ---- S03 .. S06-2: single statements ----
+  s03.style.opacity = fade(t, T.s03[0] + 1.0, T.s03[0] + 1.9, T.s03[1] - .7, T.s03[1]);
+  s04.style.opacity = fade(t, T.s03[0] + 2.7, T.s03[0] + 3.6, T.s03[1] - .7, T.s03[1]);
+  const [a5, b5] = T.s05;
+  people.forEach((p, i) => p.style.opacity = fade(t, a5 + .2 + i * .25, a5 + 1 + i * .25, b5 - .8, b5));
+  voices.forEach((v, i) => v.style.opacity = fade(t, a5 + 1.6 + i * 1.6, a5 + 2.2 + i * 1.6, b5 - .8, b5));
+  const [ax, bx] = T.s06x;
+  RACKS.forEach(({ d, c, r }) => d.style.opacity = fade(t, ax + .2 + c * .12 + r * .05, ax + .7 + c * .12 + r * .05, bx - .8, bx));
+  s061.style.opacity = fade(t, ax + .8, ax + 1.8, bx - .8, bx);
+  s062a.style.opacity = fade(t, ax + 3.6, ax + 4.6, bx - .8, bx);
+  s062b.style.opacity = fade(t, ax + 5.4, ax + 6.4, bx - .8, bx);
+  sq1.style.opacity = fade(t, T.sq1[0] + .4, T.sq1[0] + 1.4, T.sq1[1] - .8, T.sq1[1]);
+  s06a.style.opacity = fade(t, T.s06[0] + .3, T.s06[0] + 1.3, T.s06[1] - .6, T.s06[1]);
+  s06b.style.opacity = 0;
+
+  // ---- S07: years roll up 2016 -> 2026 ----
+  const [a7, b7] = T.s07;
+  const roll = ease(seg(t, a7 + .8, a7 + 5.0)) * 10;     // 0..10 years
+  const yVis = t >= a7 && t < T.s08[1];
+  years.forEach((d, i) => {
+    const off = (i - roll) * 150;                          // 150 px per year
+    d.style.top = (540 - 85 + off) + 'px';
+    d.style.opacity = yVis ? clamp(1 - Math.abs(i - roll) * 1.25) * seg(t, a7, a7 + .8) : 0;
+  });
+  // 2026 slides left, the anniversary line appears on its right
+  const slide = ease(seg(t, a7 + 5.2, a7 + 6.2));
+  years[10].style.left = (-260 * slide) + 'px';
+  const yr = years[10];
+  anniv.style.left = (960 + 160 - 260 * slide) + 'px';
+  anniv.style.top = (540 - 42) + 'px';
+  anniv.style.opacity = yVis ? seg(t, a7 + 5.6, a7 + 6.6) : 0;
+
+  // ---- S08: zoom to the ㄴ of 년, its bottom stroke becomes the split line ----
+  const [a8, b8] = T.s08;
+  // the ㄴ's own bottom stroke stretches sideways across the whole screen and becomes the split line
+  const K8 = 8, Nb = M.nh;
+  const ncx = Nb.x + Nb.w / 2, ncy = Nb.y + Nb.h / 2;
+  if (t >= a8) {
+    const zk = ease(seg(t, a8, a8 + 2.0));
+    cam = [lerp(960, ncx, zk), lerp(540, ncy, zk), lerp(1, K8, zk)];
+  }
+  const nb = ease(seg(t, a8 + 2.0, a8 + 3.4));
+  const wide = 1000 / K8;
+  // the stroke thins geometrically to exactly the baseline's 3px, then cross-fades into it
+  const nth = Math.exp(lerp(Math.log(Nb.h), Math.log(4 / K8), ease(seg(t, a8 + 2.0, a8 + 3.6))));
+  const nyc = lerp(Nb.y + Nb.h / 2, ncy, nb);
+  const hand = t >= a8 + 3.7 ? 1 : 0;
+  bar(barN, lerp(Nb.x, ncx - wide, nb), nyc - nth / 2, lerp(Nb.x + Nb.w, ncx + wide, nb), nyc + nth / 2,
+      t >= a8 + 1.9 ? 1 - hand : 0);
+  // everything else of the year line fades while the stroke keeps going
+  $('s07').style.opacity = 1 - seg(t, a8 + 2.2, a8 + 3.0);
+  $('baseline').style.top = '538px';
+  $('baseline').style.opacity = t < b8 + 5 ? hand : 0;
+  // noon siren: pulses leave the baseline in both directions while the two lines appear
+  PULSES.forEach(({ d, k, dir }) => {
+    const p0 = a8 + 4.0 + k * 0.55, q = seg(t, p0, p0 + 2.2);
+    d.style.top = (539 + dir * 430 * easeOut(q)) + 'px';
+    d.style.opacity = 0;   // v2b: no pulses
+  });
+  $('siren1').style.opacity = fade(t, a8 + 4.4, a8 + 5.4, a8 + 8.8, a8 + 9.4);
+  $('siren2').style.opacity = fade(t, a8 + 6.2, a8 + 7.2, a8 + 8.8, a8 + 9.4);
+  const up = ease(seg(t, a8 + 4.0, a8 + 5.0));   // v2d: no wait after the line is drawn
+  $('white').style.height = '0px';   // 10/24 (user): no white half, the axis starts as soon as the line is drawn
+  $('dasi').style.top = (540 - 270 - 52) + 'px';
+  $('dasi').style.opacity = seg(t, a8 + 5.0, a8 + 5.8);
+  $('nalja').style.top = (540 + 270 - 52) + 'px';
+  $('nalja').style.opacity = seg(t, a8 + 6.0, a8 + 6.8);
+
+  // ---- S09: time axis ----
+  const [a9, b9] = T.s09;
+  const in9 = t >= a9 && t < T.s096[0] + 1;
+  const out9 = (1 - seg(t, b9 - .8, b9 + .2)) * axisVis(t);  // fades out at the end and for the two cut-aways
+  s09.style.opacity = in9 ? out9 : 0;
+  const day = axisDay(t);
+  const run = day / LAST;
+  // baseline rises as the project takes over; at the end the black swallows the white
+  // 2026-10-22 (user): no white area -- the white half folds away and the axis settles a little
+  // above the centre so the milestone rows below it sit in the middle of the screen
+  const AXIS_Y = 540;
+  const settle = ease(seg(t, a9, a9 + 1.2));
+  const bY = lerp(540, AXIS_Y, settle);
+  if (t >= a9) {
+    $('dasi').style.opacity = 1 - seg(t, a9, a9 + .6);
+    $('nalja').style.opacity = 1 - seg(t, a9, a9 + .6);
+    $('white').style.height = '0px';
+    $('baseline').style.top = (bY - 2) + 'px';
+    $('baseline').style.opacity = out9;
+  }
+  if (t >= T.s096[0]) $('s08split').style.opacity = 0; else $('s08split').style.opacity = 1;
+  const hx = dayX(day);
+  head.style.left = hx + 'px'; head.style.top = bY + 'px';
+  head.style.opacity = in9 && run > 0 ? out9 * (1 - seg(run, .97, 1)) : 0;
+  // 10/26 (user): the flash was too quick -- ring 2.4 s, beam and glow 3.0 s, a second ring follows 0.6 s later
+  const rt = RESUME_T.find(r => t >= r && t < r + 3.0);
+  if (rt !== undefined && in9) {
+    const p = seg(t, rt, rt + 2.4), q = seg(t, rt, rt + 3.0);
+    const rs = 14 + 260 * easeOut(p);
+    Object.assign(flashRing.style, {left: hx + 'px', top: bY + 'px', width: rs + 'px', height: rs + 'px', opacity: String(out9 * (1 - p))});
+    const bh = 520 * easeOut(seg(t, rt, rt + .35));
+    Object.assign(beam.style, {left: hx + 'px', top: bY + 'px', height: bh + 'px', opacity: String(out9 * (1 - q))});
+    const g = 1 - q;
+    head.style.boxShadow = `0 0 ${10 + 26 * g}px ${3 + 8 * g}px rgba(255,255,255,${0.85 * g})`;
+    head.style.transform = `translate(-50%,-50%) scale(${1 + 1.4 * g})`;
+    const p2 = seg(t, rt + .6, rt + 3.0), rs2 = 14 + 260 * easeOut(p2);
+    Object.assign(flashRing2.style, {left: hx + 'px', top: bY + 'px', width: rs2 + 'px', height: rs2 + 'px',
+      opacity: String(t >= rt + .6 ? out9 * (1 - p2) * .8 : 0)});
+  } else {
+    flashRing.style.opacity = 0; flashRing2.style.opacity = 0; beam.style.opacity = 0;
+    head.style.boxShadow = 'none'; head.style.transform = 'translate(-50%,-50%)';
+  }
+  msEls.forEach(m => {
+    const shown = seg(day, m.d - 0.8, m.d);   // fully shown when the playhead arrives (so day 68 = 10/22 shows too)
+    if (!fishLaidOut) layoutFish();
+    const up = m.side === 'up';
+    const rowY = up ? bY - m.dist - 40 : bY + m.dist;
+    m.e.style.top = rowY + 'px'; m.e.style.opacity = shown;
+    if (up) { m.tick.style.top = (rowY + 40) + 'px'; m.tick.style.height = m.dist + 'px'; }
+    else { m.tick.style.top = bY + 'px'; m.tick.style.height = m.dist + 'px'; }
+    m.tick.style.opacity = shown * lerp(.5, .95, seg(t, CATFISH_T, JOIN_T));   // grey, turning white as the outline joins
+  });
+  dtEls.forEach(d => { d.e.style.top = (bY + 330) + 'px'; d.e.style.color = '#b0b0b0'; d.e.style.opacity = day >= d.d - .5 ? 1 : 0; });
+  // the daily word rides above the playhead and changes as it moves right
+  const di = Math.min(DAILY.length - 1, Math.floor(run * DAILY.length));
+  dailyEl.textContent = DAILY[di];
+  dailyEl.style.left = hx + 'px'; dailyEl.style.top = Math.max(20, bY / 2 - 30) + 'px';
+  dailyEl.style.opacity = 0;   // 2026-10-22 (user): no daily-life words on the time axis
+  // voices cut in over everything
+  let vOp = 0, vTxt = '', vMe = false;
+  for (const [o, txt, who, len = 1.6] of VOICE_CUTS) {
+    const s = a9 + o;
+    if (t >= s && t < s + len) { vOp = fade(t, s, s + .12, s + len - .15, s + len); vTxt = txt; vMe = who === 'me'; }
+  }
+  $('voice').style.opacity = vOp;
+  voiceText.textContent = vTxt; voiceText.style.opacity = 1;
+  voiceText.style.color = vMe ? '#fff' : '#9a9a9a';
+  voiceText.style.fontWeight = vMe ? 700 : 400;
+
+  fishSvg.style.opacity = t >= CATFISH_T ? 1 : 0;
+  { const sx = lerp(dayX(0), TAIL_X, seg(t, CATFISH_T, JOIN_T));
+    outlines.forEach(o => o.e.setAttribute('stroke-dashoffset', 1 - seg(sx, o.x0, o.x1))); }
+  whiskers.forEach((w, i) => w.setAttribute('stroke-dashoffset', 1 - easeOut(seg(t, JOIN_T + i * .08, JOIN_T + .7 + i * .08))));
+  fishSvg.querySelector('circle').style.opacity = seg(t, JOIN_T + .3, JOIN_T + .7);
+  // the axis keeps only the fish's body: from the head (3x3) to the tail (v3)
+  { const k = easeOut(seg(t, JOIN_T, JOIN_T + .6));
+    $('baseline').style.left = lerp(0, dayX(0) - 2, k) + 'px';
+    $('baseline').style.width = lerp(1920, TAIL_X - dayX(0) + 2, k) + 'px'; }
+  fish78b.style.opacity = fade(t, JOIN_T + .6, JOIN_T + 1.2, T.s09[1] - .8, T.s09[1] + .2);
+  fish78.style.opacity = fade(t, JOIN_T, JOIN_T + .6, T.s09[1] - .8, T.s09[1] + .2);
+  axCap.style.opacity = fade(t, T.s09[0] + .3, T.s09[0] + 1.0, T.s09[0] + 6.0, T.s09[0] + 6.8);
+  // ---- S09-6 .. S18 ----
+  s096.style.opacity = fade(t, T.s096[0] + .4, T.s096[0] + 1.4, T.s096[1] - .7, T.s096[1]);
+  const [a10, b10] = T.s10;
+  const stamp = '2026/09/29 14:22:13';
+  const typed = Math.floor(seg(t, a10 + .3, a10 + 2.2) * stamp.length);
+  s10.textContent = stamp.slice(0, typed) + (t >= a10 && t < b10 && Math.floor(t * 2.5) % 2 === 0 ? '|' : ' ');
+  s10.style.opacity = fade(t, a10, a10 + .2, b10 - .6, b10);
+  s10k.style.opacity = fade(t, a10 + 2.4, a10 + 3.0, b10 - .6, b10);
+  s10n.style.opacity = fade(t, a10 + 3.0, a10 + 3.8, b10 - .6, b10);
+  s10x.style.opacity = fade(t, a10 + 3.2, a10 + 3.8, b10 - .6, b10);
+  s101a.style.opacity = fade(t, T.s101[0] + .3, T.s101[0] + 1.2, T.s101[1] - .7, T.s101[1]);
+  laptop.style.opacity = 0;
+  s101c.style.opacity = fade(t, T.s101[0] + 2.6, T.s101[0] + 3.4, T.s101[1] - .7, T.s101[1]);
+  s101x.style.opacity = fade(t, T.s101[0] + 1.4, T.s101[0] + 2.0, T.s101[1] - .7, T.s101[1]);
+  s101w.style.opacity = fade(t, T.s101[0] + 2.8, T.s101[0] + 3.4, T.s101[1] - .7, T.s101[1]);
+  s101b.style.opacity = fade(t, T.s101[0] + 1.0, T.s101[0] + 1.6, T.s101[1] - .7, T.s101[1]);
+  { const k = easeOut(seg(t, T.s101[0] + 1.2, T.s101[0] + 3.0));
+    s101b.textContent = '959 → ' + Math.round(lerp(959, 4432, k)).toLocaleString('en-US'); }   // 10/26: one previous best (4,432) everywhere
+  s11a.style.opacity = fade(t, T.s11[0] + .3, T.s11[0] + 1.2, T.s11[1] - .7, T.s11[1]);
+  s11b.style.opacity = fade(t, T.s11[0] + 1.5, T.s11[0] + 2.6, T.s11[1] - .7, T.s11[1]);
+  s11c.style.opacity = fade(t, T.s11[0] + 3.0, T.s11[0] + 3.8, T.s11[1] - .7, T.s11[1]);
+  s11x.style.opacity = fade(t, T.s11[0] + 3.3, T.s11[0] + 3.9, T.s11[1] - .7, T.s11[1]);
+  s112a.style.opacity = S112 ? fade(t, T.s112[0] + .3, T.s112[0] + 1.0, T.s112[1] - .7, T.s112[1]) : 0;
+  s112b.style.opacity = S112 ? fade(t, T.s112[0] + 1.1, T.s112[0] + 2.0, T.s112[1] - .7, T.s112[1]) : 0;
+  const [a13, b13] = T.s13;
+  S13.forEach((el, i) => el.style.opacity = fade(t, a13 + .3 + i * 1.6, a13 + 1.1 + i * 1.6, b13 - .9, b13));
+  // the proof: question -> evidence -> answer -> Q.E.D.
+  const [af, bf] = T.sfin;
+  quest.style.opacity = fade(t, af + .3, af + 1.3, bf - .8, bf);
+  s12a.style.opacity = fade(t, af + .3, af + .9, bf - .8, bf);
+  s12b.style.opacity = fade(t, af + .6, af + 1.0, bf - .8, bf);
+  s12b.textContent = (96.6 * easeOut(seg(t, af + .6, af + 2.1))).toFixed(1) + '%';   // update from the web record before the talk
+  rapA.style.opacity = fade(t, af + 3.4, af + 4.0, bf - .8, bf);
+  rapB.style.opacity = fade(t, af + 3.9, af + 4.7, bf - .8, bf);
+  noonX.style.opacity = fade(t, af + 4.6, af + 5.2, bf - .8, bf);
+  musicCredit.style.opacity = fade(t, af + .3, af + 1.3, bf - .8, bf);
+  answer.style.opacity = 0;
+  qed.style.opacity = 0;
+  qedChars.forEach((c, i) => {
+    const big = i % 2 === 0;                                     // letters take longer than the dots
+    const start = af + 7.6 + [0, .55, .75, 1.3, 1.5, 2.05][i];
+    const w = easeOut(seg(t, start, start + (big ? .5 : .18)));
+    c.style.clipPath = `inset(-20% ${(1 - w) * 100}% -20% 0)`;
+  });
+  const [a17, b17] = T.s17;
+  const lw = 760 * ease(seg(t, a17 + .3, a17 + 1.3));
+  logoLine.style.width = lw + 'px'; logoLine.style.left = (960 - lw / 2) + 'px';
+  const out17 = 1 - seg(t, b17 - .7, b17);
+  logoLine.style.opacity = t >= a17 ? out17 : 0;
+  logoName.style.opacity = fade(t, a17 + 1.1, a17 + 2.0, b17 - .7, b17);
+  logoName.style.transform = `translateY(${12 * (1 - easeOut(seg(t, a17 + 1.1, a17 + 2.0)))}px)`;
+  logoInd.style.opacity = fade(t, a17 + 1.7, a17 + 2.6, b17 - .7, b17);
+  s18.style.opacity = fade(t, T.s18[0] + .6, T.s18[0] + 1.8, T.s18[1] - 1.2, T.s18[1] - .2);
+
+  // v2: removed scenes stay hidden
+  for (const el of [s03, s04, $('dasi'), $('nalja'), ...people, ...voices, sq1, s06a, s06b, ...S13, logoLine, logoName, logoInd, s18, quest, s112a, s112b])
+    el.style.opacity = 0;
+  camera(...cam);
+  placeBars(...cam);
+  $('hud').textContent = `t=${t.toFixed(2)}s / ${DURATION}s  ·  space: 재생/정지  ←→: 1초  shift+←→: 5초`;
+}
+
+// ---------------------------------------------------------------------------
+function fit() {
+  const k = Math.min(innerWidth / 1920, innerHeight / 1080);
+  const st = $('stage');
+  st.style.transform = `translate(${(innerWidth - 1920 * k) / 2}px, ${(innerHeight - 1080 * k) / 2}px) scale(${k})`;
+}
+let playing = false, t0 = 0, tNow = 0;
+// sound effects (stone at 0:18.9, siren + booms from 1:05.5) on one track aligned to t = 0.
+// While it plays, the audio clock drives the picture, so sound and image never drift apart.
+const sfx = new Audio('../sfx/sfx_track_v2.wav');   // v2b: only the 78th-move hit (make_sfx_v2.py) sfx.preload = 'auto';
+function startPlay() {
+  playing = true; t0 = performance.now() - tNow * 1000;
+  if (!document.body.classList.contains('capture')) { sfx.currentTime = tNow; sfx.play().catch(() => {}); }
+}
+function stopPlay() { playing = false; sfx.pause(); }
+function tick(now) {
+  if (playing) {
+    tNow = !sfx.paused && sfx.readyState >= 2 ? sfx.currentTime : (now - t0) / 1000;
+    if (tNow >= DURATION) { tNow = DURATION; stopPlay(); }
+    render(SHORT ? warp(tNow) : tNow);
+  }
+  requestAnimationFrame(tick);
+}
+window.seek = t => { tNow = t; if (playing) { t0 = performance.now() - t * 1000; sfx.currentTime = t; } render(SHORT ? warp(t) : t); };
+
+addEventListener('resize', () => { fit(); measure(); render(tNow); });
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { playing ? stopPlay() : startPlay(); }
+  if (e.code === 'ArrowRight') window.seek(Math.min(DURATION, tNow + (e.shiftKey ? 5 : 1)));
+  if (e.code === 'ArrowLeft') window.seek(Math.max(0, tNow - (e.shiftKey ? 5 : 1)));
+});
+const params = new URLSearchParams(location.search);
+if (params.has('capture')) document.body.classList.add('capture');
+(SHORT ? fetch('short_warp.json').then(r => r.json()).then(w => { WARP = w.warp; DURATION = WARP.reduce((s, [a, b, v]) => s + (b - a) / v, 0); })
+        : Promise.resolve()).then(() => document.fonts.ready).then(() => {
+  fit(); measure();
+  // anniversary text measured after layout of S07 (put it at its final spot first)
+  render(T.s07[0] + 7); measure();
+  window.seek(parseFloat(params.get('t') || '0'));
+  window.DURATION = DURATION;
+  window.READY = true;
+  if (!params.has('capture') && params.has('play')) startPlay();   // browsers may hold the sound until the first key press
+  requestAnimationFrame(tick);
+});
+</script>
+</body>
+</html>

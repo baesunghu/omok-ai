@@ -2,6 +2,9 @@ import os
 import sys
 import psutil
 
+# 2026-10-13 (user, clean rollback to ep960): train only once the emptied buffer holds 40k samples of the
+# new best's self-play (harmless afterwards: the buffer stays far above this).
+os.environ.setdefault("NAPS_MIN_BUFFER", "40000")
 from alphazero_mcts_make_lrfix import train_mcts_alpha_zero
 
 # Single-instance lock (2026-09-24): the AZ11x11_Training scheduled task's
@@ -58,12 +61,16 @@ if __name__ == "__main__":
     # 2026-09-21 lr-fix restart: tactical_refresh_interval 21->5 so the gate
     # check (which rides this same cadence) samples ~4x more often over the
     # ~80-epoch observation window, instead of only 3-4 checks total.
-    train_mcts_alpha_zero(num_epochs=20000, num_self_play_games=16, num_simulations=900, batch_size=128, self_play_workers=10, eval_interval=0, eval_games=5, eval_simulations=600, num_vs_deterministic_games=0, temperature_moves=4, noise_weight=0.25, dirichlet_alpha=0.3, c_puct=1.6, c_puct_exploit=1.6, vs_det_noise_weight=0.15, vs_det_dirichlet_alpha=0.3, tactical_refresh_interval=5, tactical_refresh_epochs=8, boosted_sims=1800, boost_threshold=5, boost_when_narrow=True, num_curriculum_games=4,
+    # 2026-10-12 17:3x (user): temperature_moves reverted 6 -> 4 (ep980/1000 ladder fell). Earlier: 4 -> 6 (more varied midgames, quiet-threat exposure); workers 10 -> 8 (GPU 92-96C)
+    # 2026-10-13 (user): fast_sims 150 -> 300 (less noisy game outcomes = cleaner value targets)
+    # 2026-10-13 (user): q weight fixed at 0.2 (value target = 0.8 z + 0.2 q); half-life decay off (halflife=0)
+    train_mcts_alpha_zero(num_epochs=20000, num_self_play_games=16, num_simulations=900, batch_size=128, self_play_workers=8, eval_interval=0, eval_games=5, eval_simulations=600, num_vs_deterministic_games=0, temperature_moves=4, noise_weight=0.25, dirichlet_alpha=0.3, c_puct=1.6, c_puct_exploit=1.6, vs_det_noise_weight=0.15, vs_det_dirichlet_alpha=0.3, tactical_refresh_interval=5, tactical_refresh_epochs=8, boosted_sims=1800, boost_threshold=5, boost_when_narrow=True, num_curriculum_games=4,
                            num_opening_games=2,
                            num_league_games=12, league_pool_size=40, league_best_checkpoint_prob=0.28,
-                           full_search_prob=0.5, fast_sims=150,
+                           full_search_prob=0.5, fast_sims=300,
                            full_search_prob_other=0.5, use_unified_game_pool=True,
-                           value_target_q_weight=0.5,
+                           value_target_q_weight=0.2,  # 2026-10-10 ~20:50 (user): q weight 0.5 -> 0.2 (value target = 0.8 z + 0.2 q)
+                           value_target_q_halflife=0, value_target_q_decay_start=905,  # 2026-10-10 (user): q weight halves every 20 epochs (0.2 @905, 0.1 @925, 0.05 @945, ~0 after ep990)
                            max_game_plies=90, refresh_vsdet_games=0,
                            noise_weight_end=0.10, noise_anneal_epochs=150,
                            dirichlet_alpha_end=0.15,

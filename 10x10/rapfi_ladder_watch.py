@@ -25,7 +25,9 @@ def epoch():
 
 # 2026-10-09: the ep820 run died after the problem check -- on Windows, a child output that the
 # parent cannot decode with the locale codec leaves r.stdout as None. Force UTF-8 both ways.
-RUN_KW = {"encoding": "utf-8", "errors": "replace", "env": dict(os.environ, PYTHONIOENCODING="utf-8")}
+RUN_KW = {"encoding": "utf-8", "errors": "replace", "env": dict(os.environ, PYTHONIOENCODING="utf-8",
+          # 2026-10-13: 25 distinct openings (games of a level no longer share openings), 5 levels
+          RAPFI_MORE_OPENINGS="1", RAPFI_LEVELS="1000,2000,3000,5000,10000")}
 
 
 def same_weights(a, b):
@@ -46,17 +48,55 @@ def main():
     next_at = (e // EVERY + 1) * EVERY
     log(f"rapfi ladder watcher started at epoch {e}; next run at epoch {next_at}")
     while True:
-        e = epoch()
-        if e is not None and e >= next_at:
-            shutil.copy2(BEST, SNAP)
-            log(f"epoch {e}: running ladder on best checkpoint snapshot")
-            r = subprocess.run([sys.executable, "-u", "rapfi_ladder.py", str(GAMES), "1100", SNAP],
+        # 2026-10-13 (user): gate-passed candidates are measured as soon as they appear
+        try:
+            cpath = os.path.join(TENX, "model", "gate_candidate.json")
+            cand = json.load(open(cpath, encoding="utf-8")) if os.path.exists(cpath) else None
+        except Exception:
+            cand = None
+        if cand and cand.get("status") == "pending" and os.path.exists(os.path.join(TENX, cand["ckpt"])):
+            snap3 = os.path.join(TENX, "model", "_rapfi_" + os.path.basename(cand["ckpt"]))
+            shutil.copy2(os.path.join(TENX, cand["ckpt"]), snap3)
+            log(f"gate candidate {cand['ckpt']} (score {cand.get('gate_score')}): running ladder")
+            r = subprocess.run([sys.executable, "-u", "rapfi_ladder.py", str(GAMES), "1100", snap3],
                                cwd=TENX, capture_output=True, text=True, **RUN_KW)
-            log((r.stdout or '').strip() or (r.stderr or '').strip()[-500:])
-            # 11x11 graduation problems (end criterion 2), same snapshot
-            r2 = subprocess.run([sys.executable, "-u", "tactical_problem_check.py", SNAP],
+            log((r.stdout or '').strip()[-600:] or (r.stderr or '').strip()[-500:])
+            r2 = subprocess.run([sys.executable, "-u", "tactical_problem_check.py", snap3],
                                 cwd=TENX, capture_output=True, text=True, **RUN_KW)
             log(chr(10).join(l for l in (r2.stdout or '').splitlines() if not l.startswith("MESSAGE")) or (r2.stderr or '').strip()[-500:])
+            r3 = subprocess.run([sys.executable, "-u", "ladder_promo.py", os.path.basename(snap3),
+                                 os.path.relpath(snap3, TENX), "--candidate"], cwd=TENX, capture_output=True, text=True, **RUN_KW)
+            verdict = (r3.stdout or '').strip() or (r3.stderr or '').strip()[-300:]
+            log("candidate promotion check: " + verdict)
+            cand["status"] = "promoted" if "FLAG WRITTEN" in verdict else "rejected"
+            cand["verdict"] = verdict
+            json.dump(cand, open(cpath, "w", encoding="utf-8"), indent=1)
+        e = epoch()
+        if e is not None and e >= next_at:
+            # 2026-10-13: ladder + grading are deterministic (node-limited Rapfi, no search noise), so a best
+            # whose weights equal the last measured snapshot would replay identical games -- skip it.
+            _best_unchanged = os.path.exists(SNAP) and same_weights(BEST, SNAP)
+            shutil.copy2(BEST, SNAP)
+            if _best_unchanged:
+                _ref, _ref_ckpt = {"name": "last best snapshot"}, SNAP
+            # 2026-10-12: skip re-measuring a best that the ladder reference already covers (same weights)
+            if not _best_unchanged:
+                try:
+                    _ref = json.load(open(os.path.join(TENX, "model", "ladder_best_ref.json"), encoding="utf-8"))
+                    _ref_ckpt = os.path.join(TENX, _ref["ckpt"]) if _ref.get("ckpt") else None
+                except Exception:
+                    _ref, _ref_ckpt = None, None
+            if _ref_ckpt and os.path.exists(_ref_ckpt) and same_weights(_ref_ckpt, SNAP):
+                log(f"epoch {e}: best = ladder reference {_ref['name']} (already measured); best ladder skipped")
+            else:
+                log(f"epoch {e}: running ladder on best checkpoint snapshot")
+                r = subprocess.run([sys.executable, "-u", "rapfi_ladder.py", str(GAMES), "1100", SNAP],
+                                   cwd=TENX, capture_output=True, text=True, **RUN_KW)
+                log((r.stdout or '').strip() or (r.stderr or '').strip()[-500:])
+                # 11x11 graduation problems (end criterion 2), same snapshot
+                r2 = subprocess.run([sys.executable, "-u", "tactical_problem_check.py", SNAP],
+                                    cwd=TENX, capture_output=True, text=True, **RUN_KW)
+                log(chr(10).join(l for l in (r2.stdout or '').splitlines() if not l.startswith("MESSAGE")) or (r2.stderr or '').strip()[-500:])
             # 2026-09-28: also measure the newest training checkpoint (not just the gated best),
             # so progress is visible even while the gate keeps rejecting candidates
             latest = os.path.join(TENX, "model", f"model_MCTS_ep{next_at}_11x11.pth")
@@ -76,6 +116,10 @@ def main():
                 r2 = subprocess.run([sys.executable, "-u", "tactical_problem_check.py", snap2],
                                     cwd=TENX, capture_output=True, text=True, **RUN_KW)
                 log(chr(10).join(l for l in (r2.stdout or '').splitlines() if not l.startswith("MESSAGE")) or (r2.stderr or '').strip()[-500:])
+                # 2026-10-12 (user): Rapfi-ladder promotion path (P >= 80% stronger than the best)
+                r3 = subprocess.run([sys.executable, "-u", "ladder_promo.py", os.path.basename(snap2),
+                                     os.path.relpath(snap2, TENX)], cwd=TENX, capture_output=True, text=True, **RUN_KW)
+                log("ladder promotion check: " + ((r3.stdout or '').strip() or (r3.stderr or '').strip()[-300:]))
             else:
                 log(f"latest checkpoint ep{next_at} not found; skipped")
             next_at = (e // EVERY + 1) * EVERY

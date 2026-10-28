@@ -3976,6 +3976,156 @@
    ],
    "note": "2026-10-08 loss backtrack (MEASUREMENT ONLY). Dawn (ep625) lost to gomokuwithai Hard 2026-09-30 10:48:24 (time-matched). Dawn played (6, 7) here; Rapfi 3s on Dawn's side plays (3, 4) and holds 40 plies; after Dawn's move Rapfi on Dawn's side loses in 21 plies. Move types: make3 vs rapfi make3.",
    "tier": 3
+  },
+  {
+   "id": "web2000_1018_1435_p10",
+   "name": "웹 2000회 패배 10수 (백, 10-18 14:35)",
+   "type": "defense",
+   "stage": 2,
+   "tier": 3,
+   "side_to_move": "O",
+   "moves": [
+    [
+     "X",
+     5,
+     5
+    ],
+    [
+     "O",
+     4,
+     6
+    ],
+    [
+     "X",
+     6,
+     6
+    ],
+    [
+     "O",
+     4,
+     4
+    ],
+    [
+     "X",
+     7,
+     5
+    ],
+    [
+     "O",
+     4,
+     5
+    ],
+    [
+     "X",
+     4,
+     7
+    ],
+    [
+     "O",
+     5,
+     7
+    ],
+    [
+     "X",
+     6,
+     8
+    ]
+   ],
+   "bad_move": [
+    3,
+    6
+   ],
+   "note": "2026-10-18 human win vs NAPS-880 at 2000 sims (MEASUREMENT ONLY). NAPS played (3,6); Rapfi 300k nodes plays (3,4) (20k: (6,4)), eval -88; after (3,6) Rapfi finds a forced win for X (-M10 at move 12). NAPS saw its loss only at move 16."
+  },
+  {
+   "id": "web2000_1018_1514_p16",
+   "name": "웹 2000회 패배 16수 (백, 10-18 15:14)",
+   "type": "defense",
+   "stage": 2,
+   "tier": 3,
+   "side_to_move": "O",
+   "moves": [
+    [
+     "X",
+     5,
+     5
+    ],
+    [
+     "O",
+     4,
+     6
+    ],
+    [
+     "X",
+     4,
+     4
+    ],
+    [
+     "O",
+     6,
+     6
+    ],
+    [
+     "X",
+     6,
+     4
+    ],
+    [
+     "O",
+     5,
+     6
+    ],
+    [
+     "X",
+     3,
+     6
+    ],
+    [
+     "O",
+     7,
+     6
+    ],
+    [
+     "X",
+     8,
+     6
+    ],
+    [
+     "O",
+     7,
+     5
+    ],
+    [
+     "X",
+     7,
+     7
+    ],
+    [
+     "O",
+     5,
+     7
+    ],
+    [
+     "X",
+     8,
+     4
+    ],
+    [
+     "O",
+     4,
+     8
+    ],
+    [
+     "X",
+     3,
+     9
+    ]
+   ],
+   "bad_move": [
+    6,
+    8
+   ],
+   "note": "2026-10-18 human win vs NAPS-880 at 2000 sims (MEASUREMENT ONLY). NAPS played (6,8) with its own win rate 77%; Rapfi 100k nodes plays (4,7) (the point X later took at move 21), eval -45; after (6,8) X has a forced win (-M20 at move 18). NAPS rated move 14 at 86% while Rapfi called it -25."
   }
  ]
 }

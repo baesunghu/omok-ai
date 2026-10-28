@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<title>AI는 어떻게 공부할까? — 3분 요약</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700&family=Noto+Sans+KR:wght@300;400;700&display=swap">
+<style>
+html,body{margin:0;background:#000;overflow:hidden}
+#stage{position:relative;width:1920px;height:1080px;background:#000;color:#fff;overflow:hidden}
+.t{position:absolute;left:0;width:1920px;text-align:center;opacity:0;white-space:nowrap;will-change:transform,opacity,filter}
+.serif{font-family:'Noto Serif KR',serif}
+.sans{font-family:'Noto Sans KR',sans-serif}
+canvas{position:absolute;left:0;top:0}
+#credit{position:absolute;left:0;width:1920px;top:1020px;text-align:center;font:22px 'Noto Sans KR';color:#a8a8a8;opacity:0}
+#flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+#wipe{position:absolute;top:538px;height:4px;left:0;width:0;background:#E0893A;opacity:0}
+</style></head><body><div id="stage">
+<canvas id="bg" width="1920" height="1080"></canvas>
+<canvas id="fx" width="1920" height="1080"></canvas>
+<div id="credit">Music: “Your New Home” (Evan Alderete &amp; Gooseworx) · Epic arrangement by Carameii · youtube.com/@carameii</div>
+<div id="wipe"></div><div id="flash"></div></div>
+<script>
+// 2026-10-28 (user) v2: 3-minute standalone summary of the festival talk -- explanations for people who missed the talk,
+// entrance effects / wipes / flashes, and the 박력대고인 ending. Music: sfx/carameii_ynh_stereo.wav (193 s);
+// quiet 96-116 s = 좌절, rises again from 116 s. v1 kept as summary.html.bak_v1.
+window.DURATION = 190;
+const ACC = '#E0893A', MUTE = 'color:#aaa', SUB = 'color:#ccc';
+// [start, end, text, top, size, font, style, fx]   fx: rise | zoom | left | right | blur | type | drop
+const S = [
+  [1.0, 11.5, '2016. 3. 13. 알파고의 착수를 보며 자란 아이가 있었다.', 450, 50, 'serif', '', 'blur'],
+  [4.5, 11.5, '10년 뒤, 그 아이는 직접 인공지능을 만들었다.', 560, 40, 'serif', SUB, 'rise'],
+  [12.5, 22, '모두가 안 된다고 했던', 380, 52, 'serif', '', 'rise'],
+  [14.5, 22, '노트북 한 대로.', 490, 80, 'serif', 'font-weight:700', 'zoom'],
+  [17, 22, '그래픽카드 GTX 1050 한 개 · 알파제로가 쓴 계산 능력의 약 25만 분의 1', 650, 34, 'sans', MUTE, 'rise'],
+  [23, 33.5, 'AI는 어떻게 생각할까?', 70, 56, 'serif', '', 'drop'],
+  [24.5, 33.5, '① 직감 (신경망) : 판을 한 번 보고 "여기가 좋아 보인다"를 떠올린다', 790, 34, 'sans', '', 'left'],
+  [27, 33.5, '② 탐색 (검산) : 후보 수를 수백 번 미리 둬 보며 "정말 좋은 수인가?"를 확인한다', 850, 34, 'sans', '', 'left'],
+  [29.5, 33.5, '③ 자가대국 : 자기 자신과 둔 판으로 다시 공부한다 → 점점 강해진다', 910, 34, 'sans', 'color:' + ACC, 'left'],
+  [34.5, 44, '2026. 8. 15. 노트북 한 대로 시작', 360, 52, 'serif', '', 'type'],
+  [37, 44, '3x3 틱택토  →  10x10  →  11x11 오목', 480, 46, 'sans', SUB + ';letter-spacing:2px', 'zoom'],
+  [39.5, 44, '사람의 기보 없이, 규칙만 알려 주고 백지에서', 600, 36, 'sans', MUTE, 'rise'],
+  [45, 58, '실력은 오르기 시작했다', 140, 52, 'serif', '', 'drop'],
+  [46.5, 58, '실력 측정 = 세계 최상위권 오목 엔진 Rapfi와 50 대 50이 되는 지점 (Rapfi의 생각량, 클수록 강함)', 930, 28, 'sans', MUTE, 'rise'],
+  [59, 72, '첫 졸업 모델 "여명"', 360, 72, 'serif', 'font-weight:700', 'zoom'],
+  [61, 72, '졸업 시험 = 사람에게 진 판에서 뽑은 필수 문제를', 500, 36, 'sans', SUB, 'rise'],
+  [62, 72, '세계 최상위권 엔진을 상대로 풀어내기 (3번 중 2번 이상)', 556, 36, 'sans', SUB, 'rise'],
+  [64.5, 72, '2026. 9. 29. 시작 45일째', 680, 32, 'sans', 'color:' + ACC, 'type'],
+  [73, 94, '그러나 이 모델은 우물 안 개구리였다', 140, 52, 'serif', '', 'drop'],
+  [74.5, 94, '200번 넘게 공부를 반복해도(200 에폭), 3,000~4,000 근처에서 멈췄다', 900, 34, 'sans', '', 'rise'],
+  [83, 94, '원인: 판세를 읽는 눈(가치망, "지금 누가 이기고 있나")이 착각하고 있었다', 955, 30, 'sans', 'color:' + ACC, 'rise'],
+  [86, 94, '같은 착각을 가진 자기 자신과만 두니, 착각은 영영 고쳐지지 않았다', 1005, 30, 'sans', 'color:' + ACC, 'rise'],
+  [96, 104, '좌절했고, 포기할까 했다.', 450, 56, 'serif', 'color:#bbb', 'blur'],
+  [100, 108, '더 좋은 장비를 알아보며 장비 탓을 했다.', 545, 40, 'serif', 'color:#888', 'blur'],
+  [105, 115, '무엇을 해도 안 될 것 같은 시간', 640, 40, 'serif', 'color:#666', 'blur'],
+  [116.5, 127, '그러나 생각을 뒤집었다.', 330, 72, 'serif', 'font-weight:700', 'zoom'],
+  [119, 127, '판세를 읽는 눈을 아예 꺼 본 모델이, 가장 어려운 문제를 풀었다', 490, 40, 'sans', '', 'rise'],
+  [121.5, 127, '최고난도 문제 18번 : 0/3 → 3/3', 600, 64, 'sans', 'color:' + ACC + ';font-weight:700', 'zoom'],
+  [123.5, 127, '세계 최상위권 엔진도 꽤 오래 생각해야 푸는 문제', 710, 30, 'sans', MUTE, 'rise'],
+  [128, 140, '그렇다면, 판단력을 끈 나를 연습 상대로 넣으면?', 260, 48, 'serif', '', 'type'],
+  [130.5, 140, '메기 방법론 (CATFISH)', 400, 92, 'sans', 'color:' + ACC + ';font-weight:700', 'zoom'],
+  [133, 140, '미꾸라지만 있는 수조에 메기 한 마리를 넣으면, 미꾸라지들이 긴장해 더 건강해진다', 580, 34, 'sans', SUB, 'left'],
+  [135.5, 140, '메기 = 판세 판단을 끄거나 반쯤 끈 "나의 복사본" → 내 착각을 그대로 찔러 온다', 640, 34, 'sans', SUB, 'right'],
+  [141, 150, '메기에게 진 판 수', 150, 48, 'serif', '', 'drop'],
+  [146, 150, '찔리면 고치고, 다시 찔리면 다시 고친다 · 매번 새로운 메기와', 640, 36, 'sans', '', 'rise'],
+  [147.5, 150, '찾아본 논문과 자료 중에서는 같은 시도를 찾지 못했다', 710, 30, 'sans', MUTE, 'rise'],
+  [151, 162, '하나를 얻으면 하나를 내줘야 하는데, 다섯 마리 토끼를 한 번에', 150, 44, 'serif', 'font-weight:700', 'drop'],
+  [152.5, 162, '간단함 · 복사해서 판세를 읽는 눈 하나만 끄면 끝', 330, 40, 'sans', '', 'left'],
+  [154.2, 162, '저렴함 · 따로 학습시킬 것이 없다 (추가 비용 0)', 415, 40, 'sans', '', 'right'],
+  [155.9, 162, '범용성 · 스스로 배우는 AI라면 어떤 게임에도 쓸 수 있다', 500, 40, 'sans', '', 'left'],
+  [157.6, 162, '난도 자율 조절 · 메기는 매번 지금의 나에서 태어나 함께 자란다', 585, 40, 'sans', '', 'right'],
+  [159.3, 162, '순수성 · 사람의 기보도, 다른 엔진의 도움도 쓰지 않는다', 670, 40, 'sans', '', 'left'],
+  [163, 175, '메기 + 검벨 알파제로로 백지에서 다시 시작', 190, 44, 'serif', 'color:#ddd', 'drop'],
+  [164, 175, '검벨 알파제로 = 적게 검산하고도 잘 배우는 최신 공부법 (딥마인드, 2022)', 250, 28, 'sans', MUTE, 'rise'],
+  [165.5, 175, '약 70시간 만에, 최고난도 문제 18개 중 15개 통과', 380, 54, 'sans', 'font-weight:700', 'zoom'],
+  [168, 175, '한 달 동안 공부한 선배 모델 여명과 392판을 두어', 510, 44, 'serif', '', 'rise'],
+  [176, 180.5, '계산 능력이 25만 분의 1이어도,', 380, 44, 'serif', SUB, 'rise'],
+  [177, 180.5, '더 나은 방법 하나가 성적을 바꿨다.', 450, 44, 'serif', SUB, 'rise'],
+  [178, 180.5, '머리는 차갑게, 마음은 뜨겁게.', 580, 72, 'serif', 'font-weight:700', 'zoom'],
+  [180.8, 184.6, '어떠한 시련과 고난에도 굴하지 않는', 330, 44, 'serif', SUB, 'rise'],
+  [181.6, 184.6, '이성적 판단과 뜨거운 마음을 가진', 420, 54, 'serif', '', 'rise'],
+  [182.6, 184.6, '박력대고인으로서', 550, 96, 'serif', 'color:' + ACC + ';font-weight:700', 'zoom'],
+  [184.9, 189.3, '배성훈은, 혁신할 것입니다.', 450, 80, 'serif', 'font-weight:700', 'zoom'],
+  [186, 189.3, 'AI는 어떻게 공부할까? · 시카모어 차장 2학년 배성훈', 590, 30, 'sans', MUTE, 'rise'],
+];
+const st = document.getElementById('stage');
+const cl = (x) => Math.max(0, Math.min(1, x));
+const ease = (x) => 1 - Math.pow(1 - cl(x), 3);
+const els = S.map(([a, b, txt, top, size, font, ex]) => {
+  const d = document.createElement('div'); d.className = 't ' + font; d.textContent = txt;
+  d.style.cssText = `top:${top}px;font-size:${size}px;${ex || ''}`; st.insertBefore(d, document.getElementById('credit')); return d;
+});
+function drawText(i, t) {
+  const [a, b, txt, , , , , fx] = S[i], e = els[i];
+  const k = ease((t - a) / 0.9), out = cl((b - t) / 0.7);
+  let tr = '', fl = '';
+  if (fx === 'rise') tr = `translateY(${(1 - k) * 40}px)`;
+  else if (fx === 'drop') tr = `translateY(${-(1 - k) * 40}px)`;
+  else if (fx === 'zoom') { tr = `scale(${1 + (1 - k) * 0.35})`; fl = `blur(${(1 - k) * 12}px)`; }
+  else if (fx === 'left') tr = `translateX(${-(1 - k) * 160}px)`;
+  else if (fx === 'right') tr = `translateX(${(1 - k) * 160}px)`;
+  else if (fx === 'blur') fl = `blur(${(1 - k) * 18}px)`;
+  if (fx === 'type') { const n = Math.floor(cl((t - a) / 1.6) * txt.length); e.textContent = txt.slice(0, n) + (t - a < 1.9 && Math.floor(t * 3) % 2 ? '|' : ''); }
+  tr += ` translateY(${-(1 - out) * 20}px)`;
+  e.style.opacity = (fx === 'type' ? (t >= a ? 1 : 0) : k) * out * (t >= a ? 1 : 0);
+  e.style.transform = tr; e.style.filter = fl + (out < 1 ? ` blur(${(1 - out) * 8}px)` : '');
+}
+// ---------- background: a faint gomoku grid that slowly drifts ----------
+const bg = document.getElementById('bg').getContext('2d');
+function drawBg(t) {
+  bg.clearRect(0, 0, 1920, 1080);
+  const quiet = t > 95 && t < 116;
+  const a = quiet ? 0.03 : 0.07, s = 1 + (t % 30) / 300, g = 96 * s;
+  bg.save(); bg.translate(960, 540); bg.rotate(-0.06 + t * 0.0006); bg.strokeStyle = `rgba(255,255,255,${a})`; bg.lineWidth = 1;
+  for (let i = -12; i <= 12; i++) { bg.beginPath(); bg.moveTo(i * g, -1200); bg.lineTo(i * g, 1200); bg.stroke(); bg.beginPath(); bg.moveTo(-1200, i * g); bg.lineTo(1200, i * g); bg.stroke(); }
+  bg.restore();
+}
+// ---------- foreground graphics ----------
+const fx = document.getElementById('fx').getContext('2d');
+const BOARD = [[5,5,1],[5,6,2],[4,5,1],[6,5,2],[6,6,1],[4,4,2],[6,4,1],[3,5,2]];   // a sample position (1 = 흑, 2 = 백)
+function board(t) {   // 23-33.5: 직감 glow -> 탐색 branches -> 자가대국 stones
+  const vis = Math.min(ease((t - 23.3) / 0.8), cl((33.5 - t) / 0.7)); if (vis <= 0) return;
+  const N = 11, C = 52, X0 = 960 - 5 * C, Y0 = 200;
+  fx.save(); fx.globalAlpha = vis;
+  fx.fillStyle = '#c99a55'; fx.fillRect(X0 - 30, Y0 - 30, 10 * C + 60, 10 * C + 60);
+  fx.strokeStyle = '#3a2a14'; fx.lineWidth = 1.5;
+  for (let i = 0; i < N; i++) { fx.beginPath(); fx.moveTo(X0, Y0 + i * C); fx.lineTo(X0 + 10 * C, Y0 + i * C); fx.stroke(); fx.beginPath(); fx.moveTo(X0 + i * C, Y0); fx.lineTo(X0 + i * C, Y0 + 10 * C); fx.stroke(); }
+  const stone = (r, c, p) => { fx.beginPath(); fx.arc(X0 + c * C, Y0 + r * C, 22, 0, 7); fx.fillStyle = p === 1 ? '#111' : '#f4f4f4'; fx.fill(); fx.strokeStyle = '#000'; fx.lineWidth = 1; fx.stroke(); };
+  BOARD.forEach(([r, c, p]) => stone(r, c, p));
+  // 직감: glowing candidate cells
+  const g1 = cl((t - 24.5) / 0.8);
+  [[2, 5, 1], [7, 3, 0.6], [3, 4, 0.45], [7, 5, 0.35]].forEach(([r, c, w], i) => {
+    const pulse = 0.75 + 0.25 * Math.sin(t * 5 + i);
+    fx.beginPath(); fx.arc(X0 + c * C, Y0 + r * C, 26 * w + 8, 0, 7); fx.fillStyle = `rgba(224,137,58,${0.75 * g1 * pulse})`; fx.fill(); });
+  // 탐색: branching lines from the top candidate
+  const g2 = cl((t - 27) / 1.5);
+  if (g2 > 0) { fx.strokeStyle = 'rgba(255,255,255,0.85)'; fx.lineWidth = 2;
+    const sx = X0 + 5 * C, sy = Y0 + 2 * C;
+    for (let i = 0; i < 9; i++) { const ang = -Math.PI / 2 - 1.1 + i * 0.275, L = 200 * g2;
+      fx.beginPath(); fx.moveTo(sx, sy); fx.lineTo(sx + Math.cos(ang) * L * 0.6, sy + Math.sin(ang) * L * 0.6 - 0); fx.stroke(); } }
+  // 자가대국: stones keep landing
+  const g3 = t - 29.5;
+  if (g3 > 0) { const extra = [[2, 5, 1], [7, 3, 2], [3, 6, 1], [8, 4, 2], [2, 7, 1], [1, 3, 2]];
+    extra.slice(0, Math.min(extra.length, Math.floor(g3 * 2))).forEach(([r, c, p]) => stone(r, c, p)); }
+  fx.restore();
+}
+const PTS = [[0, 0], [10, 80], [20, 260], [30, 959], [40, 2100], [50, 3454], [58, 4432], [70, 3600], [85, 4100], [100, 3900]];
+function chart(t) {
+  let k, flat = 0, vis = 0;
+  if (t >= 45 && t < 59) { k = cl((t - 46.5) / 10) * 0.32; vis = Math.min(ease((t - 45) / 0.8), cl((59 - t) / 0.6)); }
+  else if (t >= 73 && t < 95) { k = 0.32 + cl((t - 74.5) / 8) * 0.68; flat = cl((t - 83) / 1.5); vis = Math.min(ease((t - 73) / 0.8), cl((94.5 - t) / 0.8)); }
+  if (vis <= 0) return;
+  const OX = 380, OY = 260, W = 1160, H = 560;
+  const X = (d) => OX + 80 + d / 100 * (W - 100), Y = (v) => OY + H - 50 - v / 4800 * (H - 90);
+  fx.save(); fx.globalAlpha = vis;
+  fx.strokeStyle = '#555'; fx.lineWidth = 2; fx.beginPath(); fx.moveTo(X(0), Y(4800)); fx.lineTo(X(0), Y(0)); fx.lineTo(X(100), Y(0)); fx.stroke();
+  fx.font = "24px 'Noto Sans KR'"; fx.fillStyle = '#888'; fx.textAlign = 'right';
+  [0, 1000, 2000, 3000, 4000].forEach(v => fx.fillText(v.toLocaleString('en-US'), X(0) - 14, Y(v) + 8));
+  fx.textAlign = 'left'; fx.fillText('실력 (Rapfi 대등점)', X(0) - 60, Y(4800) - 18);
+  fx.textAlign = 'right'; fx.fillText('공부한 시간 →', X(100), Y(0) + 40);
+  const end = k * 100; let px = X(0), py = Y(0);
+  fx.strokeStyle = '#fff'; fx.lineWidth = 5; fx.shadowColor = 'rgba(255,255,255,0.6)'; fx.shadowBlur = 14; fx.beginPath();
+  for (let i = 0; i < PTS.length; i++) {
+    const [d, v] = PTS[i];
+    if (d > end) { const [d0, v0] = PTS[i - 1]; const f = (end - d0) / (d - d0); px = X(end); py = Y(v0 + (v - v0) * f); fx.lineTo(px, py); break; }
+    px = X(d); py = Y(v); i ? fx.lineTo(px, py) : fx.moveTo(px, py);
+  }
+  fx.stroke(); fx.shadowBlur = 0;
+  fx.beginPath(); fx.arc(px, py, 9, 0, 7); fx.fillStyle = '#fff'; fx.fill();   // the moving pen tip
+  if (end >= 30) { fx.fillStyle = ACC; fx.beginPath(); fx.arc(X(30), Y(959), 11, 0, 7); fx.fill(); fx.textAlign = 'left'; fx.font = "bold 28px 'Noto Sans KR'"; fx.fillText('여명 959', X(30) + 20, Y(959) + 36); }
+  if (flat > 0) { fx.globalAlpha = vis * flat; fx.fillStyle = 'rgba(224,137,58,0.2)'; fx.fillRect(X(55), Y(4700), X(100) - X(55), Y(3000) - Y(4700));
+    fx.setLineDash([12, 10]); fx.strokeStyle = ACC; fx.lineWidth = 2; fx.strokeRect(X(55), Y(4700), X(100) - X(55), Y(3000) - Y(4700)); fx.setLineDash([]);
+    fx.fillStyle = ACC; fx.font = "bold 34px 'Noto Sans KR'"; fx.textAlign = 'center'; fx.fillText('벽', (X(55) + X(100)) / 2, Y(4700) - 16); }
+  fx.restore();
+}
+function catfishNums(t) {   // 141-150: 6 -> 1 -> 5 -> 1 -> 6, each number lands with a pulse
+  const vis = cl((150 - t) / 0.7); if (t < 142 || vis <= 0) return;
+  const N = [6, 1, 5, 1, 6], H = [6, 1, 5, 1, 6];
+  fx.save(); fx.globalAlpha = vis; fx.textAlign = 'center';
+  N.forEach((n, i) => {
+    const ti = t - (142 + i * 0.7); if (ti < 0) return;
+    const k = ease(ti / 0.5), x = 560 + i * 200, base = 600;
+    const bh = H[i] * 34 * k;   // bar height ~ games lost
+    fx.fillStyle = i % 2 ? 'rgba(255,255,255,0.35)' : 'rgba(224,137,58,0.85)'; fx.fillRect(x - 40, base - bh, 80, bh);
+    fx.font = `300 ${Math.round(96 * (1 + (1 - k) * 0.6))}px 'Noto Sans KR'`; fx.fillStyle = '#fff'; fx.fillText(String(n), x, base - bh - 20);
+    if (i < 4 && t > 142 + (i + 1) * 0.7) { fx.font = "300 54px 'Noto Sans KR'"; fx.fillStyle = '#777'; fx.fillText('→', x + 100, base - 60); }
+  });
+  fx.restore();
+}
+function bigNumber(t) {   // 170-175: 81% counts up, with a ring
+  if (t < 169.5 || t > 175.2) return;
+  const k = ease((t - 169.8) / 1.8), out = cl((175 - t) / 0.7), v = Math.round(81 * k);
+  fx.save(); fx.globalAlpha = Math.min(cl((t - 169.5) / 0.4), out); fx.textAlign = 'center';
+  fx.strokeStyle = 'rgba(224,137,58,0.35)'; fx.lineWidth = 14; fx.beginPath(); fx.arc(960, 760, 165, 0, 7); fx.stroke();
+  fx.strokeStyle = ACC; fx.beginPath(); fx.arc(960, 760, 165, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * 0.81 * k); fx.stroke();
+  fx.fillStyle = ACC; fx.font = "bold 120px 'Noto Sans KR'"; fx.fillText(v + '%', 960, 800);
+  if (k > 0.98) { fx.font = "28px 'Noto Sans KR'"; fx.fillStyle = '#ccc'; fx.fillText('265승 107무 20패 (무승부는 반 판으로 계산)', 960, 980); }
+  fx.restore();
+}
+function rings(t) {   // shock rings on the big moments
+  [116.5, 130.5, 182.6, 184.9].forEach((a) => { const d = t - a; if (d < 0 || d > 1.4) return;
+    fx.save(); fx.strokeStyle = `rgba(224,137,58,${0.6 * (1 - d / 1.4)})`; fx.lineWidth = 6;
+    fx.beginPath(); fx.arc(960, 540, 120 + d * 900, 0, 7); fx.stroke(); fx.restore(); });
+}
+// section wipes (an orange line sweeps across) and white flashes
+const WIPES = [12.2, 22.6, 34.2, 44.6, 58.6, 72.6, 140.6, 150.6, 162.6, 175.6];
+const FLASH = [116.4, 130.4, 169.9, 184.8];
+window.seek = function (t) {
+  drawBg(t);
+  fx.clearRect(0, 0, 1920, 1080);
+  board(t); chart(t); catfishNums(t); bigNumber(t); rings(t);
+  S.forEach((_, i) => drawText(i, t));
+  const w = WIPES.find((a) => t >= a - 0.4 && t < a + 0.4), wp = document.getElementById('wipe');
+  if (w !== undefined) { const k = (t - (w - 0.4)) / 0.8; wp.style.opacity = 1 - Math.abs(k - 0.5) * 1.6; wp.style.left = (k < 0.5 ? 0 : (k - 0.5) * 2 * 1920) + 'px'; wp.style.width = (k < 0.5 ? k * 2 * 1920 : (1 - k) * 2 * 1920) + 'px'; }
+  else wp.style.opacity = 0;
+  const f = FLASH.find((a) => t >= a && t < a + 0.6);
+  document.getElementById('flash').style.opacity = f !== undefined ? 0.55 * (1 - (t - f) / 0.6) : 0;
+  document.getElementById('credit').style.opacity = Math.min(cl((t - 1) / 1), cl((10 - t) / 1));
+  st.style.opacity = cl((190 - t) / 1.0);
+};
+document.fonts.ready.then(() => { window.seek(0); window.READY = true; });
+const q = new URLSearchParams(location.search);
+if (!q.get('capture')) { const t0 = performance.now() - (+q.get('t') || 0) * 1000; (function f() { window.seek((performance.now() - t0) / 1000); requestAnimationFrame(f); })(); }
+</script></body></html>
