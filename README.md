@@ -8,7 +8,7 @@
 
 ## [▶ 브라우저에서 바로 두기 · Play in your browser](https://baesunghu.github.io/omok-ai/)
 
-<sub>설치 없음 · 신경망이 방문자의 브라우저 안에서 돌아갑니다 (WebGPU / WASM). 경량판이라 VCF 탐색이 빠져 있어 PC 버전보다 약합니다.</sub>
+<sub>설치 없음 · 신경망이 방문자의 브라우저 안에서 돌아갑니다 (WebGPU / WASM). VCF(연속 4 공격) 탐색 포함 · 탐색 횟수가 적은 경량판이라 PC 버전보다는 약합니다.</sub>
 
 ![GPU](https://img.shields.io/badge/GPU-GTX%201050%204GB-76B900)
 ![CPU](https://img.shields.io/badge/CPU-i5--8300H-0071C5)
