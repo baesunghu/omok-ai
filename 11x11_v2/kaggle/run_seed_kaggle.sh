@@ -9,6 +9,7 @@
 # Usage: bash run_seed_kaggle.sh <seed number> [epochs=60] [hours budget=11.5]
 set -uo pipefail
 S=${1:?seed number}; EPOCHS=${2:-60}; HOURS=${3:-11.5}
+ARMS=${ARMS:-"A_nocatfish_s$S B_catfish_s$S"}   # 11-01: any two arm folders (e.g. E/F arms) can be passed instead
 W=${W:-/kaggle/working/naps}
 V3=$W/11x11_v2/v3
 DEADLINE=$(python -c "import time; print(int(time.time() + $HOURS * 3600))")
@@ -22,7 +23,7 @@ python -c "import sys; sys.path.insert(0, '$V3/cpp'); import mcts_core; print('m
 nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader; echo "cpus: $(nproc)"
 
 gpu=0
-for arm in A_nocatfish_s$S B_catfish_s$S; do
+for arm in $ARMS; do
   d=$V3/ab_scratch/$arm; mkdir -p "$d/model"
   if grep -q "\] Epoch $EPOCHS " "$d/training_report_v3.txt" 2>/dev/null; then echo "$arm already done"; gpu=$((gpu+1)); continue; fi
   rm -f "$d/STOP"
@@ -33,14 +34,14 @@ done
 
 while pgrep -f "train_v3.py" > /dev/null; do
   sleep 60
-  for arm in A_nocatfish_s$S B_catfish_s$S; do
+  for arm in $ARMS; do
     d=$V3/ab_scratch/$arm
     if grep -q "\] Epoch $((EPOCHS - 1)) " "$d/training_report_v3.txt" 2>/dev/null; then touch "$d/STOP"; fi
     if [ "$(date +%s)" -gt "$DEADLINE" ]; then touch "$d/STOP"; fi
   done
-  date +%H:%M; for arm in A_nocatfish_s$S B_catfish_s$S; do echo "  $arm: $(tail -n 1 $V3/ab_scratch/$arm/training_report_v3.txt 2>/dev/null | cut -c1-60)"; done
+  date +%H:%M; for arm in $ARMS; do echo "  $arm: $(tail -n 1 $V3/ab_scratch/$arm/training_report_v3.txt 2>/dev/null | cut -c1-60)"; done
 done
-for arm in A_nocatfish_s$S B_catfish_s$S; do
+for arm in $ARMS; do
   d=$V3/ab_scratch/$arm; tail -n 1 "$d/stderr.log"
   if grep -q "\] Epoch $EPOCHS " "$d/training_report_v3.txt" 2>/dev/null; then echo "$arm done"; else echo "$arm NOT finished (resume next session)"; fi
 done
