@@ -13,9 +13,12 @@ import os
 import shutil
 import subprocess
 
-SEED = globals().get("SEED", 3)
+import time
+
+SEEDS = globals().get("SEEDS") or [globals().get("SEED", 3)]   # several seeds run one after another in one session
 EPOCHS = globals().get("EPOCHS", 60)
-HOURS = globals().get("HOURS", 11.5)
+HOURS = globals().get("HOURS", 11.5)                             # budget for the whole session
+T_END = time.time() + HOURS * 3600
 W = "/kaggle/working/test/naps" if globals().get("TEST") else "/kaggle/working/naps"
 if globals().get("TEST"):
     shutil.rmtree(os.path.dirname(W), ignore_errors=True)
@@ -27,15 +30,32 @@ if not os.path.exists(f"{W}/11x11_v2/v3/net_v3.py"):
     shutil.rmtree("/kaggle/tmp_repo", ignore_errors=True)
     subprocess.run(["git", "clone", "-q", "--depth", "1", "https://github.com/baesunghu/omok-ai.git", "/kaggle/tmp_repo"], check=True)
     shutil.copytree("/kaggle/tmp_repo/11x11_v2", f"{W}/11x11_v2", dirs_exist_ok=True)
-for arm in (f"A_nocatfish_s{SEED}", f"B_catfish_s{SEED}"):
-    d = f"{W}/11x11_v2/v3/ab_scratch/{arm}"
-    os.makedirs(d, exist_ok=True)
-    if not os.path.exists(f"{d}/train_v3.py"):
-        shutil.copy(f"{W}/11x11_v2/kaggle/train_{arm}.py", f"{d}/train_v3.py")
-p = subprocess.Popen(["bash", f"{W}/11x11_v2/kaggle/run_seed_kaggle.sh", str(SEED), str(EPOCHS), str(HOURS)],
-                     env=dict(os.environ, W=W), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-for line in p.stdout:
-    if "warning" not in line and "^" not in line and "|" not in line[:8]:
-        print(line, end="", flush=True)
-p.wait()
-print("runner exit", p.returncode)
+for seed in SEEDS:
+    left = (T_END - time.time()) / 3600
+    if left < 0.5:
+        print(f"seed {seed}: not started, {left:.2f} h left", flush=True)
+        break
+    for arm in (f"A_nocatfish_s{seed}", f"B_catfish_s{seed}"):
+        d = f"{W}/11x11_v2/v3/ab_scratch/{arm}"
+        os.makedirs(d, exist_ok=True)
+        if not os.path.exists(f"{d}/train_v3.py"):
+            shutil.copy(f"{W}/11x11_v2/kaggle/train_{arm}.py", f"{d}/train_v3.py")
+    print(f"=== seed {seed} ({left:.1f} h left) ===", flush=True)
+    p = subprocess.Popen(["bash", f"{W}/11x11_v2/kaggle/run_seed_kaggle.sh", str(seed), str(EPOCHS), f"{left:.2f}"],
+                         env=dict(os.environ, W=W), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    for line in p.stdout:
+        if "warning" not in line and "^" not in line and "|" not in line[:8]:
+            print(line, end="", flush=True)
+    p.wait()
+    print(f"seed {seed}: runner exit {p.returncode}", flush=True)
+# keep only what evaluation needs in the output: epoch checkpoints, reports, logs (buffers are large; latest/buffer are
+# kept for a resume only if a seed is unfinished)
+for seed in SEEDS:
+    for arm in (f"A_nocatfish_s{seed}", f"B_catfish_s{seed}"):
+        d = f"{W}/11x11_v2/v3/ab_scratch/{arm}"
+        rep = f"{d}/training_report_v3.txt"
+        if os.path.exists(rep) and f"] Epoch {EPOCHS} " in open(rep).read():
+            for f in ("v3_buffer.npz",):
+                if os.path.exists(f"{d}/model/{f}"):
+                    os.remove(f"{d}/model/{f}")
+shutil.rmtree(f"{W}/../tmp_repo", ignore_errors=True)
