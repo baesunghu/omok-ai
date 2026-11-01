@@ -50,6 +50,14 @@
 !/11x11_v2/v3/cpp/*.cpp
 !/11x11_v2/v3/cpp/*.bat
 !/11x11_v2/v3/cpp/*.py
+# 2026-11-01: in-browser demo sources (the .onnx model is published only on the gh-pages branch)
+!/11x11_v2/web/
+/11x11_v2/web/*
+!/11x11_v2/web/*.py
+!/11x11_v2/web/site/
+/11x11_v2/web/site/*
+!/11x11_v2/web/site/index.html
+!/11x11_v2/web/site/app.js
 !/15x15/
 /15x15/*
 !/15x15/*.py

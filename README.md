@@ -2,9 +2,13 @@
 
 # 🐟 omok-ai
 
-### 노트북 한 대로 만든 11x11 오목 AlphaZero, 그리고 메기 방법론(CATFISH)
+### 고등학생이 노트북 한 대로 만든 11x11 오목 AlphaZero, 그리고 메기 학습법(CATFISH)
 
-**AlphaZero 11x11 Gomoku trained on one laptop · CATFISH self-play anchors**
+**A high-school student's AlphaZero 11x11 Gomoku, trained from scratch on one laptop · CATFISH self-play anchors**
+
+## [▶ 브라우저에서 바로 두기 · Play in your browser](https://baesunghu.github.io/omok-ai/)
+
+<sub>설치 없음 · 신경망이 방문자의 브라우저 안에서 돌아갑니다 (WebGPU / WASM). 경량판이라 VCF 탐색이 빠져 있어 PC 버전보다 약합니다.</sub>
 
 ![GPU](https://img.shields.io/badge/GPU-GTX%201050%204GB-76B900)
 ![CPU](https://img.shields.io/badge/CPU-i5--8300H-0071C5)
@@ -28,7 +32,7 @@
 |---|---|
 | 🎓 **첫 졸업 모델 "여명"** (NAPS-625) | 2026. 9. 29. 졸업 문제 3/3 · Rapfi 대등점 959 노드 |
 | 🧱 **벽** | 200 에폭 넘게 Rapfi 대등점 3,000~4,000에서 정체 |
-| 🐟 **메기 방법론 (CATFISH)** | 가치망을 끄거나 반쯤 끈 *자기 복사본*을 자가대국 상대로 투입 |
+| 🐟 **메기 학습법 (CATFISH)** | 가치망을 끄거나 반쯤 끈 *자기 복사본*을 자가대국 상대로 투입 |
 | ⚡ **v3 (메기 + 검벨 알파제로)** | 백지에서 약 70시간 만에 최고난도 문제 **15/18** 통과 (정오, ep530) |
 | 🏆 **선배 모델과 대결** | 정오 vs 여명 392판 **265승 107무 20패 (81%)** |
 | 🎪 **축제 당일** | 관람객 대국 전승 |
@@ -82,6 +86,23 @@
 <img src="assets/elo_timeline.png" width="760" alt="Elo 추이">
 </div>
 
+## 🧪 지금 진행 중: 메기 학습법은 정말 효과가 있을까? (2026. 11.)
+
+메기를 넣은 v3가 강해진 것만으로는 메기 덕분인지 알 수 없습니다. 그래서 **메기만 다르고 나머지는 모두 같은** 통제 실험을 하고 있습니다.
+
+- 같은 코드, 같은 초기 가중치(시드 고정), 차이는 메기 설정 한 줄
+- 결과를 보기 전에 예측과 판정 기준을 파일로 기록하고 지문(SHA-256)을 남김 (사전 등록)
+- 평가: 두 모델의 직접 대결 200판, Rapfi 사다리, 전술 문제
+
+| 실험 | 상태 | 결과 |
+|---|---|---|
+| 처음부터 학습, 시드 1 | 완료 | 60 에폭 직접 대결에서 메기 쪽 **58.8%** (96승 43무 61패) |
+| 70 에폭 모델에서 분기 | 평가 중 | — |
+| 시드 2, 3 반복 | 예정 | — |
+
+> 시드 1 결과는 **한 번의 실험**입니다. 세 시드를 합친 600판의 신뢰구간으로 최종 판정하며,
+> 결과가 어떻게 나오든 모두 공개할 예정입니다.
+
 ---
 
 ## 📁 구조
@@ -94,12 +115,14 @@
 | `10x10/tactical_problems/` | 졸업 · 2단계 문제 (측정 전용, 학습에 쓰지 않음) |
 | `11x11_v2/` | VCF 엔진 + MEGA + 메기 리그 실험 |
 | `11x11_v2/v3/` | **v3: 검벨 알파제로 + 메기, 콜드 스타트** (`train_v3.py`, `net_v3.py`, C++ 엔진) |
+| `11x11_v2/web/` | 브라우저 대국판 (`site/`) 과 ONNX 내보내기 스크립트 |
 | `15x15/` | 15x15 확장 실험 |
 | `cpp_mcts/` | C++ MCTS 엔진과 depth-2 minimax 기준선 |
 | `festival/` | 축제 영상 소스(HTML)와 렌더링 스크립트 |
 
-포함하지 않은 것: 모델 가중치, 리플레이 버퍼, 로그, 컴파일된 바이너리, Rapfi, cloudflared,
+포함하지 않은 것: 학습 체크포인트, 리플레이 버퍼, 로그, 컴파일된 바이너리, Rapfi, cloudflared,
 같은 작업 폴더의 이전 3x3 / 5x5 프로젝트.
+예외: 브라우저 대국판용 v3(ep543) 모델 `naps_v3.onnx`는 [`gh-pages` 브랜치](https://github.com/baesunghu/omok-ai/tree/gh-pages)에 공개되어 있습니다.
 
 ## ▶️ 주요 진입점
 
