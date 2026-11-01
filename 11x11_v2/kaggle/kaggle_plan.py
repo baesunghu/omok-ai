@@ -24,6 +24,7 @@ PLANS = {
                     ("A_nocatfish_s2", "B_catfish_s2", 30), ("A_nocatfish_s3", "B_catfish_s3", 30)]),
            ("train", ["A_nocatfish_s4", "B_catfish_s4"]),
            ("h2h", [("A_nocatfish_s4", "B_catfish_s4", 60)]),
+           ("h2h", [("A_nocatfish_s2", "E_cf192_s2", 60), ("A_nocatfish_s2", "F_strongcat_s2", 60)]),  # if p3 ran
            ("train", ["A_nocatfish_s5", "B_catfish_s5"]),
            ("h2h", [("A_nocatfish_s5", "B_catfish_s5", 60)])],
     # session 3: why does catfish help/hurt -- data cost (E) and catfish strength (F), both against seed-2 A
