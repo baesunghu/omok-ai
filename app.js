@@ -1,6 +1,6 @@
 // NAPS 11x11 in the browser (2026-11-01). The v3 network runs locally via onnxruntime-web; the search is a
-// plain PUCT MCTS (c = 1.414, no noise) like v3/head2head.py, plus a quick win/block check in place of the
-// C++ VCF solver. Freestyle: five or more in a row wins.
+// plain PUCT MCTS (c = 1.414, no noise) like v3/head2head.py, plus a win/block check and a root VCF search
+// (11-01, port of the C++ engine's continuous-four solver). Freestyle: five or more in a row wins.
 const N = 11, NC = N * N, WIN = 5;
 const DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
 let session = null;
@@ -72,6 +72,54 @@ function forkPlane(b, who, out, off) {
   }
 }
 
+// VCF (victory by continuous fours), like the C++ engine's set_vcf(10, 3000): the attacker only plays moves that
+// make a four, the defender's reply is forced (block the one winning cell), and a double four or a five wins.
+const VCF_DEPTH = 10, VCF_NODES = 3000;
+function fives(b, who) {                  // cells where `who` completes five now (window counting)
+  const s = new Set();
+  for (const w of WINDOWS) {
+    let mine = 0, e = -1, bad = false;
+    for (const i of w) { if (b[i] === who) mine++; else if (b[i] === 0 && e < 0) e = i; else { bad = true; break; } }
+    if (!bad && mine === 4 && e >= 0) s.add(e);
+  }
+  return s;
+}
+function fourMoves(b, who) {              // empty cells that turn some window into four-of-five
+  const s = new Set();
+  for (const w of WINDOWS) {
+    let mine = 0, es = [], bad = false;
+    for (const i of w) { if (b[i] === who) mine++; else if (b[i] === 0) es.push(i); else { bad = true; break; } }
+    if (!bad && mine === 3 && es.length === 2) { s.add(es[0]); s.add(es[1]); }
+  }
+  return s;
+}
+export function vcf(board, who) {         // -> first move of a forced win for `who`, or -1
+  const b = Int8Array.from(board), opp = 3 - who;
+  let nodes = 0;
+  function attack(depth) {
+    const now = fives(b, who);
+    if (now.size) return [...now][0];
+    if (depth === 0 || fives(b, opp).size) return -1;   // the defender would just win instead of blocking
+    for (const m of fourMoves(b, who)) {
+      if (++nodes > VCF_NODES) return -1;
+      b[m] = who;
+      const threats = fives(b, who);
+      let ok = false;
+      if (threats.size >= 2) ok = true;                 // double four: cannot block both
+      else if (threats.size === 1) {
+        const d = [...threats][0];
+        b[d] = opp;
+        if (!isWin(b, d, opp)) ok = attack(depth - 1) >= 0;
+        b[d] = 0;
+      }
+      b[m] = 0;
+      if (ok) return m;
+    }
+    return -1;
+  }
+  return attack(VCF_DEPTH);
+}
+
 export function planes(b, toMove) {        // (5, 11, 11): curr, opp, empty, fork_self, fork_opp
   const x = new Float32Array(5 * NC), opp = 3 - toMove;
   for (let i = 0; i < NC; i++) {
@@ -101,6 +149,8 @@ export async function think(board, toMove, sims, onProgress) {
   if (mine.length) return { move: mine[0], value: 1, visits: null };
   const theirs = winningCells(b, 3 - toMove);
   if (theirs.length) return { move: theirs[0], value: -0.9, visits: null };
+  const win = vcf(b, toMove);
+  if (win >= 0) return { move: win, value: 1, visits: null, vcf: true };
   const root = new Node(1);
   for (let s = 0; s < sims; s++) {
     const path = [root], bb = Int8Array.from(b);
