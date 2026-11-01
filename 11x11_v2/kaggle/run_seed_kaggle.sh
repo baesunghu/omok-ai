@@ -16,7 +16,7 @@ DEADLINE=$(python -c "import time; print(int(time.time() + $HOURS * 3600))")
 if ! python -c "import sys; sys.path.insert(0, '$V3/cpp'); import mcts_core" 2>/dev/null; then
   pip install -q pybind11
   ( cd "$V3/cpp" && g++ -O2 -std=c++17 -shared -fPIC $(python -m pybind11 --includes) \
-      -DMCTS_MODULE_NAME=mcts_core mcts_core_solver.cpp -o "mcts_core$(python3-config --extension-suffix)" -lpthread ) || exit 1
+      -DMCTS_MODULE_NAME=mcts_core mcts_core_solver.cpp -o "mcts_core$(python -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")" -lpthread ) || exit 1
 fi
 python -c "import sys; sys.path.insert(0, '$V3/cpp'); import mcts_core; print('mcts_core ok', mcts_core.__file__)" || exit 1
 nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader; echo "cpus: $(nproc)"
