@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>노트북 한 대로 키운 오목 AI</title>
+<meta name="description" content="고등학생이 2018년형 노트북 한 대로 오목 AI를 백지에서 키운 기록, 그리고 메기 학습법(CATFISH).">
+<meta property="og:title" content="고등학생이 2018년형 노트북 한 대로 오목 AI를 백지에서 키운 기록">
+<meta property="og:description" content="사람 기보 0판, 연구비 0원, GTX 1050 한 장. 브라우저에서 바로 둬 볼 수 있습니다.">
+<meta property="og:image" content="https://raw.githubusercontent.com/baesunghu/omok-ai/main/assets/summary_stills.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@700&family=IBM+Plex+Sans+KR:wght@400;600&display=swap">
+<style>
+:root{--bg:#efe9dd;--ink:#22201b;--mut:#6f685b;--card:#fbf8f1;--rule:#d8cfbd;--acc:#8a3b1f}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17150f;--ink:#ece6d8;--mut:#a59d8c;--card:#221f17;--rule:#3a3428;--acc:#e08a5f}}
+:root[data-theme="dark"]{--bg:#17150f;--ink:#ece6d8;--mut:#a59d8c;--card:#221f17;--rule:#3a3428;--acc:#e08a5f}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.8 "IBM Plex Sans KR",system-ui,sans-serif}
+nav{max-width:720px;margin:0 auto;padding:16px;font-size:14px;display:flex;gap:16px}
+article{max-width:720px;margin:0 auto;padding:0 16px 64px}
+h1{font-family:"Gowun Batang",serif;font-size:32px;line-height:1.35;text-wrap:balance;margin:16px 0 20px}
+h2{font-family:"Gowun Batang",serif;font-size:23px;margin:44px 0 10px;text-wrap:balance}
+a{color:var(--acc)}
+img{max-width:100%;border-radius:8px;display:block;margin:16px auto}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--card);border-radius:8px}
+blockquote p{margin:0}
+table{border-collapse:collapse;font-size:15px;font-variant-numeric:tabular-nums}
+.tw{overflow-x:auto}
+td,th{border-bottom:1px solid var(--rule);padding:6px 12px;text-align:left}
+hr{border:0;border-top:1px solid var(--rule);margin:32px 0}
+code{font-size:.9em;background:var(--card);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<nav><a href="../">▶ 대국하러 가기</a><a href="https://github.com/baesunghu/omok-ai">GitHub</a></nav>
+<article id="post">불러오는 중…</article>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script>
+fetch("post-01.md").then(r => r.text()).then(md => {
+  const el = document.getElementById("post");
+  el.innerHTML = marked.parse(md);
+  el.querySelectorAll("table").forEach(t => { const w = document.createElement("div"); w.className = "tw"; t.replaceWith(w); w.appendChild(t); });
+}).catch(() => { document.getElementById("post").textContent = "글을 불러오지 못했습니다."; });
+</script>
+</body>
+</html>
