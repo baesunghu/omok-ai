@@ -77,3 +77,8 @@
 /10x10/hlt/web/games_viewer.html
 /10x10/hlt/web/watch_list.html
 /10x10/docs/*.pdf
+# 2026-11-01: Kaggle runner for the CATFISH seed replicates
+!/11x11_v2/kaggle/
+/11x11_v2/kaggle/*
+!/11x11_v2/kaggle/*.py
+!/11x11_v2/kaggle/*.sh
