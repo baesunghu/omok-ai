@@ -2,9 +2,9 @@
 
 # 🐟 omok-ai
 
-### 고등학생이 노트북 한 대로 만든 11x11 오목 AlphaZero, 그리고 메기 학습법(CATFISH)
+### 고등학생 혼자, 2018년형 게이밍 노트북 한 대로<br>백지에서 키운 11x11 오목 AlphaZero, 그리고 메기 학습법(CATFISH)
 
-**A high-school student's AlphaZero 11x11 Gomoku, trained from scratch on one laptop · CATFISH self-play anchors**
+**One high-school student · one 2018 laptop (GTX 1050, 4 GB VRAM) · no human games, no teacher engine · AlphaZero 11x11 Gomoku from scratch**
 
 ## [▶ 브라우저에서 바로 두기 · Play in your browser](https://baesunghu.github.io/omok-ai/)
 
@@ -27,6 +27,19 @@
 
 > 알파제로가 쓴 계산 능력의 **약 25만 분의 1**(GTX 1050 노트북 한 대)로,
 > 사람의 기보도 다른 엔진의 도움도 없이 백지에서 오목 AI를 학습시켰습니다.
+
+### 🔧 이 환경에서 만들었습니다
+
+| | 이 프로젝트 | 참고: AlphaZero (DeepMind, 2017) |
+|---|---|---|
+| 사람 | **고등학생 1명** (학업과 병행, 시험 기간 포함) | 연구팀 |
+| 하드웨어 | **2018년형 게이밍 노트북 1대** — GTX 1050 (4 GB), i5-8300H | TPU 5,000개로 자가대국 |
+| 연구비 | **0원** (가정용 전기) | — |
+| 학습 데이터 | 자가대국만 (사람 기보 0판, 외부 엔진 도움 0) | 자가대국만 |
+| GPU 온도 | 학습 내내 **90°C 안팎** | — |
+
+메모리 4 GB에 맞추려고 신경망을 2.7M 파라미터로 줄이고, 파이썬이 느린 탐색은 C++로 다시 짜고,
+하루에 돌릴 수 있는 실험이 한두 개뿐이라 실험마다 예측을 미리 적어 두고 시작했습니다.
 
 | | |
 |---|---|
