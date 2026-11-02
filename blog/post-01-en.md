@@ -54,15 +54,34 @@ Combining catfish with Gumbel AlphaZero, I retrained from a blank network:
 
 ![Rapfi equal point over training](https://raw.githubusercontent.com/baesunghu/omok-ai/main/assets/ladder_all_v3_ci.png)
 
-## But was it really the catfish?
+## But was it really the catfish? It wasn't
 
-Honestly, **I don't know yet** — it could be Gumbel AlphaZero, or luck. So I'm testing it properly:
+At first I couldn't tell whether v3 got stronger because of the catfish, Gumbel AlphaZero, or luck. So I tested it properly:
 
 - same code, same initial weights (fixed seed); the only difference is one config line that turns catfish on or off
-- predictions and pass/fail criteria are written down *before* results, and each file's SHA-256 is logged (a small pre-registration)
-- three seeds; the verdict is the confidence interval over all 600 games combined
+- predictions and pass/fail criteria were written down *before* the results, and each file's SHA-256 was logged (a small pre-registration)
+- three seeds; the verdict is the confidence interval over all games combined
 
-First seed: in a 200-game head-to-head at epoch 60, the catfish model scored **58.8%** (96 W / 43 D / 61 L). That's one run, so it's not a conclusion. The other seeds finish this week, and I'll publish the result **whichever way it goes**.
+**Result: the catfish had no effect.**
+
+| Seed | Catfish model's score (epoch-60 head-to-head) |
+|---|---|
+| 1 | 58.8% |
+| 2 | 43.0% (150 games) |
+| 3 | 44.5% |
+| **All 550 games** | **49.3%** (95% CI about 46–53%) |
+
+The first seed's 58.8% was luck. The pre-registered bar (lower bound of the pooled interval above 50%) was not met, so as promised the verdict is **"no effect"**.
+
+I then spent a day asking why:
+
+- **Stronger** catfish made it worse (42.5%).
+- When I deliberately planted a misjudgement in the value network, **plain self-play fixed it within 1–10 epochs.** In a two-player game the loser's positions get a "you were wrong" label every game, so a misjudgement can't hide for long.
+- Catfish games did reach somewhat newer positions (+4.6 points), but the random openings already in training reached far more.
+
+In short, **self-play was already doing on its own what the catfish was meant to do.** Larger boards or long-trained, plateaued models might differ, and I'm still testing those, but at this scale the answer is "no effect".
+
+Finding out an idea doesn't work is research too. I got to judge a result I didn't want by the rules I set beforehand.
 
 ## Try it
 
