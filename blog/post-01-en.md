@@ -79,7 +79,7 @@ I then spent a day asking why:
 - When I deliberately planted a misjudgement in the value network, **plain self-play fixed it within 1–10 epochs.** In a two-player game the loser's positions get a "you were wrong" label every game, so a misjudgement can't hide for long.
 - Catfish games did reach somewhat newer positions (+4.6 points), but the random openings already in training reached far more.
 
-In short, **self-play was already doing on its own what the catfish was meant to do.** Larger boards or long-trained, plateaued models might differ, and I'm still testing those, but at this scale the answer is "no effect".
+In short, **self-play was already doing on its own what the catfish was meant to do.** I also branched the main run at epoch 543 (a long-trained, plateaued model) and trained 27 more epochs with and without catfish: the catfish side scored 48.0% over 200 games, again no difference. At this scale the answer is "no effect".
 
 Finding out an idea doesn't work is research too. I got to judge a result I didn't want by the rules I set beforehand.
 
