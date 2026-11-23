@@ -24,7 +24,7 @@ INPUT_SIZE = NUM_CELLS * NUM_INPUT_CHANNELS
 # BOARD_SIZE=10, WIN_LENGTH=5 this is 192 windows total (60 horizontal +
 # 60 vertical + 36 diagonal "\" + 36 diagonal "/").
 
-# Optional native C++/pybind11 acceleration for _fork_mask
+# Optional native C++/pybind11 acceleration for fork_mask
 # (cpp_mcts/fork_mask_cpp.cpp, same build pattern as mcts_core/
 # deterministic_play_core -- see cpp_mcts/build_fork_mask_cpp.bat). Explored
 # via a workflow that tried 4 independent optimization strategies (numba
@@ -76,7 +76,7 @@ _LINES = _generate_lines()
 # Flattened board-index form of _LINES (num_lines, WIN_LENGTH), precomputed once,
 # for a fully vectorized (no Python-level line loop) _immediate_win_mask -- the
 # naive per-line Python loop is fine on a 5x5/28-line board but far too slow on
-# a 10x10/192-line board once _fork_mask calls it once per empty candidate cell
+# a 10x10/192-line board once fork_mask calls it once per empty candidate cell
 # (up to ~100 times per call, called for every MCTS simulation).
 _LINES_IDX = np.array([[r * BOARD_SIZE + c for (r, c) in line] for line in _LINES], dtype=np.int64)
 
@@ -105,7 +105,7 @@ def _immediate_win_mask(curr_plane, empty_plane):
     return mask.reshape(BOARD_SIZE, BOARD_SIZE)
 
 
-def _fork_mask(curr_plane, empty_plane):
+def fork_mask(curr_plane, empty_plane):
     """Dispatches to the native C++ extension (fork_mask_cpp, ~9-10x faster,
     see cpp_mcts/fork_mask_cpp.cpp) when available, else falls back to the
     pure-Python/numpy implementation below (_fork_mask_python) -- both are
@@ -232,8 +232,8 @@ def board_to_input_array(board_state, current_player):
     curr_plane = (arr == current_player).astype(np.float32)
     opp_plane = (arr == opponent_player).astype(np.float32)
     empty_plane = (arr == ' ').astype(np.float32)
-    fork_self = _fork_mask(curr_plane, empty_plane)
-    fork_opp = _fork_mask(opp_plane, empty_plane)
+    fork_self = fork_mask(curr_plane, empty_plane)
+    fork_opp = fork_mask(opp_plane, empty_plane)
     return np.stack([curr_plane, opp_plane, empty_plane, fork_self, fork_opp])
 
 
@@ -249,7 +249,7 @@ def board_to_input_array_from_numeric(raw_board_int8_array, current_player):
     Returns the same (NUM_INPUT_CHANNELS, BOARD_SIZE, BOARD_SIZE) float32
     stack as board_to_input_array -- planes in order
     [curr, opp, empty, fork_self, fork_opp] -- computed via direct integer
-    comparisons instead of numpy string equality, reusing _fork_mask
+    comparisons instead of numpy string equality, reusing fork_mask
     verbatim (not re-derived) for the fork planes so that logic stays in
     exactly one place."""
     arr = np.asarray(raw_board_int8_array)
@@ -258,8 +258,8 @@ def board_to_input_array_from_numeric(raw_board_int8_array, current_player):
     curr_plane = (arr == curr_val).astype(np.float32)
     opp_plane = (arr == opp_val).astype(np.float32)
     empty_plane = (arr == 0).astype(np.float32)
-    fork_self = _fork_mask(curr_plane, empty_plane)
-    fork_opp = _fork_mask(opp_plane, empty_plane)
+    fork_self = fork_mask(curr_plane, empty_plane)
+    fork_opp = fork_mask(opp_plane, empty_plane)
     return np.stack([curr_plane, opp_plane, empty_plane, fork_self, fork_opp])
 
 

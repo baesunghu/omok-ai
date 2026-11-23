@@ -11,8 +11,8 @@ from mcts_cpp import BOARD_SIZE, MCTS, PooledEvaluator, fast_check_draw, fast_ch
 from run_config import EVAL_BATCH, GATE_LOSS_PENALTY, GATE_OPENING_RADIUS, POOLED_TARGET_BATCH
 from nets import GomokuNetV3 as GomokuNet
 from board_encoding import preferred_memory_format
-from naps_common import _SUFFIX, sims_for_state
-from naps_openings import _OPENING_SQUARES
+from naps_common import FILE_SUFFIX, sims_for_state
+from naps_openings import OPENING_SQUARES
 
 # ============================================================
 # Promotion Gate (AlphaGo Zero style)
@@ -29,7 +29,7 @@ from naps_openings import _OPENING_SQUARES
 # updated, giving a "most robustly-validated so far" checkpoint for
 # monitoring/deployment (e.g. play_vs_ai.py) independent of whatever the
 # latest raw weights happen to be doing.
-BEST_CHECKPOINT_PATH = f"model/best_mcts{_SUFFIX}.pth"
+BEST_CHECKPOINT_PATH = f"model/best_mcts{FILE_SUFFIX}.pth"
 GATE_PROMOTION_THRESHOLD = 0.35  # 0.55 (AlphaGo Zero, draws 0.5) -> 0.50 -> 0.25 -> 0.35 (6-8-6, an even result, scored 0.275 and promoted ep1005)
 # "a model that does not lose" -- a loss now costs points:
 # score = (wins + 0.5*draws - GATE_LOSS_PENALTY*losses) / n, promoted only if score > 0.50 (strictly).
@@ -41,24 +41,24 @@ GATE_PROMOTION_THRESHOLD = 0.35  # 0.55 (AlphaGo Zero, draws 0.5) -> 0.50 -> 0.2
 # makes a CANDIDATE: its weights go to model/gate_candidates/ and model/gate_candidate.json; the ladder
 # watcher measures it and promotes it (model/ladder_promote.json) only if it is not weaker than the best.
 GATE_CANDIDATE_MODE = True
-RECORD_LEAGUE_SIDE = False   # See _play_one_mcts_vs_league_game
-_LAST_GATE_CANDIDATE = {"path": None}
+RECORD_LEAGUE_SIDE = False   # See play_one_mcts_vs_league_game
+LAST_GATE_CANDIDATE = {"path": None}
 
 
 def _save_gate_candidate(model, score):
     import json as _json
     os.makedirs("model/gate_candidates", exist_ok=True)
     tag = time.strftime("%Y%m%d_%H%M%S")
-    path = f"model/gate_candidates/cand_{tag}{_SUFFIX}.pth"
+    path = f"model/gate_candidates/cand_{tag}{FILE_SUFFIX}.pth"
     torch.save(model.state_dict(), path)
     with open("model/gate_candidate.json", "w", encoding="utf-8") as f:
         _json.dump({"ckpt": path, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "gate_score": round(score, 4),
                     "status": "pending"}, f, indent=1)
-    _LAST_GATE_CANDIDATE["path"] = path
+    LAST_GATE_CANDIDATE["path"] = path
     return path
 
 
-def _play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sims=None, boost_threshold=0,
+def play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sims=None, boost_threshold=0,
                            boost_when_narrow=False, c_puct=1.414, a_plays_x=True, opening=None,
                            eval_cache_a=None, eval_cache_b=None,
                            pooled_evaluator_a=None, pooled_evaluator_b=None):
@@ -106,17 +106,17 @@ def _play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sim
 # normal epoch's wall-clock -- ~42% of total training time in a 232-epoch
 # stretch -- and the 42-game (21 openings x 2 sides) gate check was the
 # dominant cost within it. Cut to 10 stratified openings (20 games): a
-# fixed-seed shuffle of _OPENING_SQUARES so the subset stays spatially
+# fixed-seed shuffle of OPENING_SQUARES so the subset stays spatially
 # spread rather than clustering in whatever order
 # _canonical_symmetry_openings happened to emit them (same principle as the
 # vs-Det opening fix). Trades some promotion-decision precision (10%-point
 # granularity instead of ~2.4%-point) for roughly half the gate-check cost.
 # 15x15: canonical openings include far corner squares; there the gate keeps squares within
 # Chebyshev distance GATE_OPENING_RADIUS of the centre. The 11x11 runs used every canonical square (radius None).
-_GATE_OPENING_SQUARES = [sq for sq in _OPENING_SQUARES if GATE_OPENING_RADIUS is None
+GATE_OPENING_SQUARES = [sq for sq in OPENING_SQUARES if GATE_OPENING_RADIUS is None
                          or max(abs(sq[0] - BOARD_SIZE // 2), abs(sq[1] - BOARD_SIZE // 2)) <= GATE_OPENING_RADIUS]
-random.Random(910).shuffle(_GATE_OPENING_SQUARES)
-_GATE_OPENING_SQUARES = _GATE_OPENING_SQUARES[:10]
+random.Random(910).shuffle(GATE_OPENING_SQUARES)
+GATE_OPENING_SQUARES = GATE_OPENING_SQUARES[:10]
 
 
 def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=None, boost_threshold=0,
@@ -174,7 +174,7 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
             results = runner.gate(model, best_model, device, dict(
                 num_simulations=num_simulations, boosted_sims=boosted_sims, boost_threshold=boost_threshold,
                 boost_when_narrow=boost_when_narrow, c_puct=c_puct),
-                [(opening, latest_plays_x) for opening in _GATE_OPENING_SQUARES for latest_plays_x in (True, False)])
+                [(opening, latest_plays_x) for opening in GATE_OPENING_SQUARES for latest_plays_x in (True, False)])
         except Exception as e:  # noqa: BLE001
             print(f"  [gate] unified-pool gate failed ({e!r}) -- threaded fallback", flush=True)
             results = None
@@ -193,7 +193,7 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
             gen_model.load_state_dict(model.state_dict())
         return wins / n, draws / n, losses / n, promoted
 
-    max_workers = max_workers or max(1, min(len(_GATE_OPENING_SQUARES) * 2, os.cpu_count() or 1))
+    max_workers = max_workers or max(1, min(len(GATE_OPENING_SQUARES) * 2, os.cpu_count() or 1))
     eval_cache_model = {}
     eval_cache_best = {}
     owns_pooled = device.type == "cuda"
@@ -203,9 +203,9 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = []
-            for opening in _GATE_OPENING_SQUARES:
+            for opening in GATE_OPENING_SQUARES:
                 for latest_plays_x in (True, False):
-                    futures.append(pool.submit(_play_gate_match_game, model, best_model, device, num_simulations,
+                    futures.append(pool.submit(play_gate_match_game, model, best_model, device, num_simulations,
                                                 boosted_sims, boost_threshold, boost_when_narrow, c_puct,
                                                 latest_plays_x, opening,
                                                 eval_cache_model, eval_cache_best, pooled_model, pooled_best))

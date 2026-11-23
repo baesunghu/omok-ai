@@ -12,9 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 
 from mcts_cpp import BOARD_SIZE, NUM_CELLS
-from naps_common import _SUFFIX
+from naps_common import FILE_SUFFIX
 from naps_tactics import (
-    _fork_geometries,
+    fork_geometries,
     generate_closed_three_examples,
     generate_diagnosed_positions_examples,
     generate_double_four_examples,
@@ -22,13 +22,13 @@ from naps_tactics import (
     generate_open_three_examples,
     generate_tactical_examples,
 )
-from naps_league import _pick_league_opponent
-from naps_vsdet import _sample_vs_det_max_depth
-from naps_openings import _tactical_windows
+from naps_league import pick_league_opponent
+from naps_vsdet import sample_vs_det_max_depth
+from naps_openings import tactical_windows
 from board_encoding import augment_sample, board_to_input_array, board_to_input_tensor
 from naps_hard_examples import (
-    RELABEL_SIMS, _classify_hard_examples, _load_hard_example_pool, _mine_one_selfplay_game, _mine_one_vsdet_game,
-    _mine_one_vsleague_game, _order_relabel_candidates, _relabel_hard_examples, _save_hard_example_pool,
+    RELABEL_SIMS, classify_hard_examples, load_hard_example_pool, mine_one_selfplay_game, mine_one_vsdet_game,
+    mine_one_vsleague_game, order_relabel_candidates, relabel_hard_examples, save_hard_example_pool,
 )
 
 
@@ -44,7 +44,7 @@ _open_three_injection_cache = None
 # verify_mined_examples.py for provenance and independent label
 # verification. Copied here (rather than read from scratch/) so the live
 # training code doesn't depend on a scratch directory.
-MINED_TACTICAL_EXAMPLES_PATH = f"model/mined_tactical_examples{_SUFFIX}.pkl"
+MINED_TACTICAL_EXAMPLES_PATH = f"model/mined_tactical_examples{FILE_SUFFIX}.pkl"
 
 
 def _multi_label_targets_from_rows(rows_by_key):
@@ -195,10 +195,10 @@ def _get_mined_tactical_tensors(device):
     return _mined_tactical_tensors_cache
 
 
-def _get_open_three_injection_samples(n_examples=120, sample_weight=1.0):
+def get_open_three_injection_samples(n_examples=120, sample_weight=1.0):
     """Per-epoch draw of open-three + open-3-3-fork (+ diagnosed-position)
     examples for the regular replay buffer, same pattern as
-    _get_hard_example_samples right below this.
+    get_hard_example_samples right below this.
 
     2026-09-22: replaces tactical_refresh()'s periodic burst supervised
     fine-tune as this curriculum's delivery mechanism. Isolated before/after
@@ -226,7 +226,7 @@ def _get_open_three_injection_samples(n_examples=120, sample_weight=1.0):
     global _open_three_injection_cache
     if _open_three_injection_cache is None:
         # generate_fork_examples() (the open-3-3 / double-open-
-        # three geometry -- see _fork_geometries) added to this SAME
+        # three geometry -- see fork_geometries) added to this SAME
         # continuous pool. It was already implemented and already used to
         # get delivered via tactical_refresh()'s burst fine-tune, but that
         # call was removed from the main loop this session (see the
@@ -297,7 +297,7 @@ def refresh_mined_tactical_pool(model, device, num_selfplay_games=16, num_vsdet_
     model (threaded, mirroring generate_mcts_self_play_data's own
     ThreadPoolExecutor pattern -- torch releases the GIL during the forward
     pass so this is real concurrency), scans every ply of every game for
-    the same "4-of-5+gap" pattern _tactical_windows() defines, appends any
+    the same "4-of-5+gap" pattern tactical_windows() defines, appends any
     matches to the on-disk pool at MINED_TACTICAL_EXAMPLES_PATH (capped at
     `cap` total examples -- oldest examples dropped first once exceeded, so
     the pool doesn't grow unboundedly over a 20000-epoch run), and
@@ -311,7 +311,7 @@ def refresh_mined_tactical_pool(model, device, num_selfplay_games=16, num_vsdet_
     scratch/multiproc_investigation/mine_tactical_examples.py).
 
     2026-09-11: the same games also feed a SECOND, outcome-based mining pass
-    (_classify_hard_examples / _relabel_hard_examples) writing to the
+    (classify_hard_examples / relabel_hard_examples) writing to the
     separate HARD_EXAMPLE_POOL_PATH -- see the block of comments/functions
     just above this one for the full design. Kept in the same function
     (rather than a second refresh call) so the expensive game-generation
@@ -327,19 +327,19 @@ def refresh_mined_tactical_pool(model, device, num_selfplay_games=16, num_vsdet_
 
     was_training = model.training
     model.eval()
-    windows = _tactical_windows()
-    forks = _fork_geometries()
+    windows = tactical_windows()
+    forks = fork_geometries()
     games = []  # (plies, outcome) per game, for the hard-example pass
     games_played = 0
     flagged = None
     # Opponent picks / depth draws happen here, once, for either path.
-    mine_depths = [_sample_vs_det_max_depth(epoch) for _ in range(num_vsdet_games)]
+    mine_depths = [sample_vs_det_max_depth(epoch) for _ in range(num_vsdet_games)]
     mine_league_model = None
     if num_vsleague_games > 0:
         # deep_history_prob=0.0: mining wants the model's CURRENT blind
         # spots (see docstring above), so this pick stays biased toward
         # recent/strong opponents only.
-        _mine_pick = _pick_league_opponent(device, league_pool_size, league_best_checkpoint_prob,
+        _mine_pick = pick_league_opponent(device, league_pool_size, league_best_checkpoint_prob,
                                            epoch=epoch, deep_history_prob=0.0)
         if _mine_pick is not None:
             mine_league_model = _mine_pick[0]
@@ -356,20 +356,20 @@ def refresh_mined_tactical_pool(model, device, num_selfplay_games=16, num_vsdet_
     try:
         if runner is None:
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = [pool.submit(_mine_one_selfplay_game, model, device, sims)
+                futures = [pool.submit(mine_one_selfplay_game, model, device, sims)
                            for _ in range(num_selfplay_games)]
                 for fut in futures:
                     games.append(fut.result())
             games_played += num_selfplay_games
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = [pool.submit(_mine_one_vsdet_game, model, device, sims, (g % 2 == 0), mine_depths[g])
+                futures = [pool.submit(mine_one_vsdet_game, model, device, sims, (g % 2 == 0), mine_depths[g])
                            for g in range(num_vsdet_games)]
                 for fut in futures:
                     games.append(fut.result())
             games_played += num_vsdet_games
             if mine_league_model is not None:
                 with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                    futures = [pool.submit(_mine_one_vsleague_game, model, mine_league_model, device, sims, (g % 2 == 0))
+                    futures = [pool.submit(mine_one_vsleague_game, model, mine_league_model, device, sims, (g % 2 == 0))
                                for g in range(num_vsleague_games)]
                     for fut in futures:
                         games.append(fut.result())
@@ -405,18 +405,18 @@ def refresh_mined_tactical_pool(model, device, num_selfplay_games=16, num_vsdet_
     _mined_tactical_tensors_cache = None  # force _get_mined_tactical_tensors to reload from disk next call
 
     if flagged is None:
-        flagged = _classify_hard_examples(games, windows, forks)
+        flagged = classify_hard_examples(games, windows, forks)
     relabeled = None
     if runner is not None:
         try:
-            relabeled = runner.relabel(model, device, _order_relabel_candidates(flagged), RELABEL_SIMS)
+            relabeled = runner.relabel(model, device, order_relabel_candidates(flagged), RELABEL_SIMS)
         except Exception as e:  # noqa: BLE001
             print(f"  [refresh] unified-pool relabel failed ({e!r}) -- sequential fallback", flush=True)
             relabeled = None
     if relabeled is None:
-        relabeled = _relabel_hard_examples(flagged, model, device)
-    hard_pool = _load_hard_example_pool()
-    hard_pool = _save_hard_example_pool(hard_pool + relabeled)
+        relabeled = relabel_hard_examples(flagged, model, device)
+    hard_pool = load_hard_example_pool()
+    hard_pool = save_hard_example_pool(hard_pool + relabeled)
     class_counts = Counter(r[4] for r in relabeled)
     class_note = " ".join(f"H{c}={class_counts.get(c,0)}" for c in (1, 2, 7, 3, 5, 6))
 

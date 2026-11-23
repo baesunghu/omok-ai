@@ -8,7 +8,8 @@ import torch
 from collections import deque
 from datetime import datetime
 
-from mcts_cpp import BOARD_SIZE, NUM_CELLS
+from mcts_cpp import NUM_CELLS
+from fast_board import FILE_SUFFIX   # "_11x11" / "_15x15" on every model, report and state file
 from nets import GomokuNetV3 as GomokuNet
 # (until 2026-11 the trainer was one file, alphazero_mcts_make_lrfix.py; see naps_trainer.py)
 
@@ -24,16 +25,11 @@ SURVIVAL_LOSS_WEIGHT = 0.25
 
 model = GomokuNet()
 
-# Keep 3x3 and other board sizes writing to separate checkpoint/log files so
-# concurrent runs (e.g. a 3x3 job still training while a 5x5 job starts)
-# never clobber each other's state on disk. 3x3 keeps its original unsuffixed
-# paths for continuity with earlier runs.
-_SUFFIX = "" if BOARD_SIZE == 3 else f"_{BOARD_SIZE}x{BOARD_SIZE}"
 
 # ============================================================
 # Report Logging (for research write-up: loss / entropy / win-rate vs. Deterministic)
 # ============================================================
-REPORT_LOG_PATH = f"model/training_report{_SUFFIX}.txt"
+REPORT_LOG_PATH = f"model/training_report{FILE_SUFFIX}.txt"
 
 
 def report_logger(msg):
@@ -74,7 +70,7 @@ def compute_policy_entropy(policies_np):
 # and is very likely why training_log.txt shows policy loss plateauing
 # around 1.59-1.61 instead of trending down. A persisted replay buffer fixes
 # that, and also survives across separate runs of this script.
-REPLAY_BUFFER_PATH = f"model/mcts_replay_buffer{_SUFFIX}.pkl"
+REPLAY_BUFFER_PATH = f"model/mcts_replay_buffer{FILE_SUFFIX}.pkl"
 # 24,000 -> 196,608 (~40 epochs of data instead of ~5). Training
 # no longer sweeps the whole buffer: each epoch draws TRAIN_SAMPLES_PER_EPOCH at random.
 REPLAY_BUFFER_MAX_SIZE = 196_608
@@ -204,7 +200,7 @@ def annealed_value(epoch, anneal_epochs, start_value, end_value):
 # promotion gate (run_gating_check) actually confirms real improvement,
 # rather than assuming compute should scale with epoch count alone. Persisted
 # the same way as cumulative_epoch/best_checkpoint so it survives restarts.
-SIM_RAMP_PATH = f"model/sim_ramp_state{_SUFFIX}.json"
+SIM_RAMP_PATH = f"model/sim_ramp_state{FILE_SUFFIX}.json"
 SIM_RAMP_START = 150
 SIM_RAMP_STEP = 100
 SIM_RAMP_CEILING = 1600  # 1100 -> 1600 (deeper full searches = better policy targets)
@@ -288,7 +284,7 @@ def save_replay_buffer(buffer):
 # cumulative epoch count here and offsetting the loop by it means those
 # schedules (and snapshot/eval/tactical-refresh timing) track real
 # cumulative progress instead of restarting every time.
-TRAIN_STATE_PATH = f"model/train_state{_SUFFIX}.json"
+TRAIN_STATE_PATH = f"model/train_state{FILE_SUFFIX}.json"
 
 
 def load_start_epoch():

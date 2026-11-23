@@ -9,9 +9,9 @@ import random
 
 from mcts_cpp import BOARD_SIZE, MCTS, NUM_CELLS, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH
-from naps_common import _SUFFIX
+from naps_common import FILE_SUFFIX
 from board_encoding import augment_sample, board_to_input_array
-from naps_threats import _fork_hits, _fork_safe_cells, _opponent_can_fork_next, _threat_gaps
+from naps_threats import fork_hits, fork_safe_cells, opponent_can_fork_next, threat_gaps
 
 
 def _root_entropy_info(root):
@@ -32,7 +32,7 @@ def _root_entropy_info(root):
     return float(-(probs * np.log(probs)).sum()), n
 
 
-def _mine_one_selfplay_game(model, device, sims, pooled_evaluator=None, eval_cache=None):
+def mine_one_selfplay_game(model, device, sims, pooled_evaluator=None, eval_cache=None):
     """Plays one self-play game (noise on, no training-data recording) to
     collect (board, current_player) snapshots for refresh_mined_tactical_pool
     to scan -- mirrors mine_tactical_parallel.py's _play_one_selfplay.
@@ -77,20 +77,20 @@ def _mine_one_selfplay_game(model, device, sims, pooled_evaluator=None, eval_cac
     return plies, outcome
 
 
-def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=deterministic_play.MAX_DEPTH,
+def mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=deterministic_play.MAX_DEPTH,
                          pooled_evaluator=None, eval_cache=None):
-    """vs-Deterministic counterpart to _mine_one_selfplay_game -- mirrors
+    """vs-Deterministic counterpart to mine_one_selfplay_game -- mirrors
     mine_tactical_parallel.py's _play_one_vsdet.
 
     2026-09-11 bugfix: this used to call deterministic_play.play(board,
     current_player) with no depth argument, silently mining exclusively
     against the fixed depth-2 opponent -- the same fixed opponent
     evaluate_vs_deterministic/run_gating_check hold as an untouched
-    promotion metric. Callers now pass _sample_vs_det_max_depth(epoch) so
+    promotion metric. Callers now pass sample_vs_det_max_depth(epoch) so
     mining draws from the same 0-3 depth ladder training data generation
     already uses, keeping the fixed-depth-2 metric uncontaminated.
 
-    pooled_evaluator/eval_cache: see _mine_one_selfplay_game."""
+    pooled_evaluator/eval_cache: see mine_one_selfplay_game."""
     mcts_player = 'X' if mcts_plays_x else 'O'
     mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
@@ -131,18 +131,18 @@ def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=determ
     return plies, outcome
 
 
-def _mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
+def mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
                             pooled_evaluator=None, eval_cache=None,
                             league_pooled_evaluator=None, league_eval_cache=None):
-    """vs-League counterpart to _mine_one_vsdet_game -- the opponent is a
+    """vs-League counterpart to mine_one_vsdet_game -- the opponent is a
     frozen past checkpoint's own greedy (no-noise) search instead of
-    deterministic_play, mirroring _play_one_mcts_vs_league_game's
+    deterministic_play, mirroring play_one_mcts_vs_league_game's
     opponent-side logic. Mining from vs-League games closes a gap the
     self-play/vs-Det mining above never reaches: whatever tactical patterns
     specifically arise when the model plays against its own past selves.
 
     pooled_evaluator/eval_cache route the model side, league_* the league
-    side (see _mine_one_selfplay_game); all None = original behavior."""
+    side (see mine_one_selfplay_game); all None = original behavior."""
     mcts_player = 'X' if mcts_plays_x else 'O'
     mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     league_mcts = MCTS(c_puct=1.6, eval_batch_size=EVAL_BATCH, shared_cache=league_eval_cache,
@@ -189,12 +189,12 @@ def _mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
 # Outcome-based hard-example mining
 # ============================================================
 # Adds a second, outcome/disagreement-based mining criterion on top of the
-# pattern-only scan below (_threat_gaps mirrors that scan's own "4-of-5+gap"
+# pattern-only scan below (threat_gaps mirrors that scan's own "4-of-5+gap"
 # test exactly, factored out so both share one implementation). Approved
 # design (see this session's diagnosis workflow, agent "diag:hard-mining-spec"):
 #   Hard-1: a winning move was available (own threat_gaps) and not played.
 #   Hard-2: opponent had an immediate winning threat and it was not blocked.
-#   Hard-3: a fork (_fork_geometries) was available/threatened and not taken/denied.
+#   Hard-3: a fork (fork_geometries) was available/threatened and not taken/denied.
 #   Hard-5: position within the last HARD5_LOOKBACK of the mover's own plies
 #           in a game that mover actually lost.
 #   Hard-6 (an addition, not in the original spec): the search's own
@@ -210,7 +210,7 @@ def _mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
 # the policy target -- purely a bigger dose of the exact fix already applied
 # this morning (more search), targeted at the positions where today's smaller
 # production budget still isn't enough.
-HARD_EXAMPLE_POOL_PATH = f"model/hard_mined_examples{_SUFFIX}.pkl"
+HARD_EXAMPLE_POOL_PATH = f"model/hard_mined_examples{FILE_SUFFIX}.pkl"
 RELABEL_CAP = 256
 # 800 -> 1800: production's own sim budget auto-ramped past this
 # (currently 1100 base) since RELABEL_SIMS was first set, so the "bigger dose
@@ -229,7 +229,7 @@ HARD5_LOOKBACK = 6
 FLAT_ENTROPY_MARGIN = 0.05  # within this of ln(n_candidates) counts as degenerate-flat
 
 
-def _classify_hard_examples(games, windows, forks):
+def classify_hard_examples(games, windows, forks):
     """games: list of (plies, outcome) from _mine_one_*_game -- each ply is
     (board, player, act_rc, is_model_ply, entropy_info_or_None). Scans only
     the mover's OWN plies (is_model_ply) and returns a deduped list of
@@ -244,14 +244,14 @@ def _classify_hard_examples(games, windows, forks):
             other = 'O' if player == 'X' else 'X'
             outcome_for_player = outcome if player == 'X' else -outcome
 
-            g_p = _threat_gaps(board, player, windows)
-            g_o = _threat_gaps(board, other, windows)
-            forked = _fork_hits(board, player, forks) + _fork_hits(board, other, forks)
+            g_p = threat_gaps(board, player, windows)
+            g_o = threat_gaps(board, other, windows)
+            forked = fork_hits(board, player, forks) + fork_hits(board, other, forks)
 
             # Hard-7: general, template-free fork check -- does
             # THIS move (act) leave `other` with SOME reply that manufactures
             # an unstoppable fork (or outright win)? Must look one ply past
-            # the move itself (_opponent_can_fork_next), not just inspect
+            # the move itself (opponent_can_fork_next), not just inspect
             # the board as-is -- see that function's docstring for why a
             # same-ply check (an earlier version of this) misses the real
             # case. Checked separately from g_p/g_o/forked above since none
@@ -261,7 +261,7 @@ def _classify_hard_examples(games, windows, forks):
             ar, ac = act
             after[ar][ac] = player
             allowed_fork = (not fast_check_win(after, player)
-                             and _opponent_can_fork_next(after, other))
+                             and opponent_can_fork_next(after, other))
 
             hard_class = None
             if g_p and act not in g_p:
@@ -289,7 +289,7 @@ def _classify_hard_examples(games, windows, forks):
     return flagged
 
 
-def _relabel_hard_examples(flagged, model, device, cap=RELABEL_CAP, sims=RELABEL_SIMS):
+def relabel_hard_examples(flagged, model, device, cap=RELABEL_CAP, sims=RELABEL_SIMS):
     """Re-searches each flagged position with the CURRENT model at a boosted
     sim count (no noise) and turns the resulting visit distribution into the
     policy target. Value target: Hard-1 gets a provable +1 (the flagged gap
@@ -299,13 +299,13 @@ def _relabel_hard_examples(flagged, model, device, cap=RELABEL_CAP, sims=RELABEL
     supervision), matching generate_tactical_examples' own block/fork
     convention -- none of those three license a value claim.
     Returns a list of (board, player, policy[NUM_CELLS] float32, value_or_None, hard_class)."""
-    ordered = _order_relabel_candidates(flagged, cap)
+    ordered = order_relabel_candidates(flagged, cap)
     was_training = model.training
     model.eval()
     relabeled = []
     try:
         for item in ordered:
-            r = _relabel_one(item, model, device, sims)
+            r = relabel_one(item, model, device, sims)
             if r is not None:
                 relabeled.append(r)
     finally:
@@ -313,9 +313,9 @@ def _relabel_hard_examples(flagged, model, device, cap=RELABEL_CAP, sims=RELABEL
     return relabeled
 
 
-def _order_relabel_candidates(flagged, cap=RELABEL_CAP):
+def order_relabel_candidates(flagged, cap=RELABEL_CAP):
     """Class-priority order + per-class shuffle + cap -- the selection step of
-    _relabel_hard_examples, factored out (2026-09-27) so the unified MP pool
+    relabel_hard_examples, factored out (2026-09-27) so the unified MP pool
     can relabel the SAME selection in parallel."""
     by_class = {}
     for f in flagged:
@@ -329,8 +329,8 @@ def _order_relabel_candidates(flagged, cap=RELABEL_CAP):
     return ordered
 
 
-def _relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, eval_cache=None):
-    """Relabels ONE flagged item (see _relabel_hard_examples); returns the
+def relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, eval_cache=None):
+    """Relabels ONE flagged item (see relabel_hard_examples); returns the
     (board, player, policy, value, hard_class) tuple, or None if the search
     found no children. Factored out 2026-09-27 so the unified MP pool can
     run relabels in parallel worker processes (pooled_evaluator/eval_cache
@@ -355,12 +355,12 @@ def _relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, 
     elif hard_class == 7:
         # Same forcing as Hard-1/2, but the "known
         # correct cells" have to be computed here (not stored at
-        # mining time) via _fork_safe_cells -- see that function's
+        # mining time) via fork_safe_cells -- see that function's
         # docstring for why this was needed (the re-searched policy
         # target could otherwise inherit the same weak-prior
         # blind spot it's supposed to correct).
         other = 'O' if player == 'X' else 'X'
-        safe_cells = _fork_safe_cells(board, player, other)
+        safe_cells = fork_safe_cells(board, player, other)
         argmax_rc = divmod(int(np.argmax(policy)), BOARD_SIZE)
         if safe_cells and argmax_rc not in safe_cells:
             forced = random.choice(safe_cells)
@@ -406,7 +406,7 @@ def _relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, 
     return ([row[:] for row in board], player, policy, value, hard_class)
 
 
-def _load_hard_example_pool():
+def load_hard_example_pool():
     if os.path.exists(HARD_EXAMPLE_POOL_PATH):
         try:
             with open(HARD_EXAMPLE_POOL_PATH, "rb") as f:
@@ -416,7 +416,7 @@ def _load_hard_example_pool():
     return []
 
 
-def _save_hard_example_pool(pool, cap=HARD_EXAMPLE_CAP):
+def save_hard_example_pool(pool, cap=HARD_EXAMPLE_CAP):
     if len(pool) > cap:
         pool = pool[-cap:]
     os.makedirs(os.path.dirname(HARD_EXAMPLE_POOL_PATH), exist_ok=True)
@@ -425,7 +425,7 @@ def _save_hard_example_pool(pool, cap=HARD_EXAMPLE_CAP):
     return pool
 
 
-def _get_hard_example_samples(device, n_positions=46, sample_weight=1.5):
+def get_hard_example_samples(device, n_positions=46, sample_weight=1.5):
     """Per-epoch draw from the hard-mined pool for the regular replay buffer
     (see train_mcts_alpha_zero's call site, right after the league samples).
     n_positions=46 x 8-way augmentation ~= 368 samples/epoch, matching the
@@ -434,7 +434,7 @@ def _get_hard_example_samples(device, n_positions=46, sample_weight=1.5):
     gradient signal (value_criterion is computed the same as every other
     source; 0.0 is a placeholder, not a claim -- see how tactical_refresh
     keeps a boolean mask instead if this ever needs stricter separation)."""
-    pool = _load_hard_example_pool()
+    pool = load_hard_example_pool()
     if not pool:
         return []
     chosen = random.sample(pool, min(n_positions, len(pool)))
@@ -448,14 +448,14 @@ def _get_hard_example_samples(device, n_positions=46, sample_weight=1.5):
     return samples
 
 
-def _get_fork_mistake_samples(n_positions=60, sample_weight=3.0):
+def get_fork_mistake_samples(n_positions=60, sample_weight=3.0):
     """Per-epoch DEDICATED draw from the Hard-7 (general, template-free
     fork) slice of the hard-mined pool, separate from
-    _get_hard_example_samples' whole-pool draw.
+    get_hard_example_samples' whole-pool draw.
 
     2026-09-23: Hard-7 is currently a small fraction of the shared 8000-cap
     pool (261/8000 the first time it was measured), so
-    _get_hard_example_samples' n_positions=46 draw only pulls ~1-2 Hard-7
+    get_hard_example_samples' n_positions=46 draw only pulls ~1-2 Hard-7
     examples per epoch by chance -- measured directly
     (hard7_adaptation_test.py): the live model still walked into 18/20
     freshly-mined Hard-7 positions one epoch after mining, essentially no
@@ -463,9 +463,9 @@ def _get_fork_mistake_samples(n_positions=60, sample_weight=3.0):
     real per-epoch volume regardless of how large the rest of the pool
     (mostly Hard-5, outcome-based) grows around it. sample_weight=2.0
     (higher than the shared draw's 1.5) since Hard-7 carries a confident
-    value=-1.0 label (see _relabel_hard_examples), not a policy-only one.
+    value=-1.0 label (see relabel_hard_examples), not a policy-only one.
     """
-    pool = _load_hard_example_pool()
+    pool = load_hard_example_pool()
     h7 = [item for item in pool if item[4] == 7]
     if not h7:
         return []

@@ -25,16 +25,16 @@ LEAGUE_WEIGHT = 1.25
 _WORKER_TABLES = {}
 
 
-def _tactical_tables(prod):
+def _tactical_tables(naps_games):
     """Per-worker cache of the (pure, deterministic) tactical window/fork
     geometry tables used by the hard-example classifier."""
     if not _WORKER_TABLES:
-        _WORKER_TABLES["windows"] = prod._tactical_windows()
-        _WORKER_TABLES["forks"] = prod._fork_geometries()
+        _WORKER_TABLES["windows"] = naps_games.tactical_windows()
+        _WORKER_TABLES["forks"] = naps_games.fork_geometries()
     return _WORKER_TABLES["windows"], _WORKER_TABLES["forks"]
 
 
-def _run_task(prod, kind, spec, cfg, proxy, cache):
+def run_task(naps_games, kind, spec, cfg, proxy, cache):
     """proxy(tag) / cache(tag): this worker's eval proxy and per-call eval
     cache for a model tag."""
     if kind in ("self", "vsdet", "league"):
@@ -47,17 +47,17 @@ def _run_task(prod, kind, spec, cfg, proxy, cache):
         )
         if kind == "self":
             start_board, start_player = spec
-            history, outcome, ply_indices, total_plies = prod._play_one_mcts_game(
+            history, outcome, ply_indices, total_plies = naps_games.play_one_mcts_game(
                 None, None, cfg["num_simulations"], start_board=start_board, start_player=start_player,
                 return_ply_info=True, max_plies=cfg.get("max_plies"), **common)
             return (history, outcome, ply_indices, total_plies)
         if kind == "vsdet":
             mcts_plays_x, opening, depth = spec
-            return prod._play_one_mcts_vs_deterministic_game(
+            return naps_games.play_one_mcts_vs_deterministic_game(
                 None, None, cfg["num_simulations"], mcts_plays_x, opening=opening, det_max_depth=depth, **common)
         mcts_plays_x, opening = spec[0], spec[1]
         ltag = spec[2] if len(spec) > 2 else TAG_LEAGUE  # One tag per league opponent
-        return prod._play_one_mcts_vs_league_game(
+        return naps_games.play_one_mcts_vs_league_game(
             None, None, None, cfg["num_simulations"], mcts_plays_x, opening=opening,
             league_pooled_evaluator=proxy(ltag), league_eval_cache=cache(ltag),
             max_plies=cfg.get("max_plies"), **common)
@@ -68,29 +68,29 @@ def _run_task(prod, kind, spec, cfg, proxy, cache):
     if kind in ("mine_self", "mine_vsdet", "mine_league"):
         if kind == "mine_self":
             (sims,) = spec
-            plies, outcome = prod._mine_one_selfplay_game(
+            plies, outcome = naps_games.mine_one_selfplay_game(
                 None, None, sims, pooled_evaluator=proxy(TAG_TRAIN), eval_cache=cache(TAG_TRAIN))
         elif kind == "mine_vsdet":
             sims, mcts_plays_x, depth = spec
-            plies, outcome = prod._mine_one_vsdet_game(
+            plies, outcome = naps_games.mine_one_vsdet_game(
                 None, None, sims, mcts_plays_x, depth, pooled_evaluator=proxy(TAG_TRAIN), eval_cache=cache(TAG_TRAIN))
         else:
             sims, mcts_plays_x = spec
-            plies, outcome = prod._mine_one_vsleague_game(
+            plies, outcome = naps_games.mine_one_vsleague_game(
                 None, None, None, sims, mcts_plays_x,
                 pooled_evaluator=proxy(TAG_TRAIN), eval_cache=cache(TAG_TRAIN),
                 league_pooled_evaluator=proxy(TAG_LEAGUE), league_eval_cache=cache(TAG_LEAGUE))
-        windows, forks = _tactical_tables(prod)
-        flagged = prod._classify_hard_examples([(plies, outcome)], windows, forks)
+        windows, forks = _tactical_tables(naps_games)
+        flagged = naps_games.classify_hard_examples([(plies, outcome)], windows, forks)
         return (plies, outcome, flagged)
 
     if kind == "relabel":
         item, sims = spec
-        return prod._relabel_one(item, None, None, sims, pooled_evaluator=proxy(TAG_TRAIN), eval_cache=cache(TAG_TRAIN))
+        return naps_games.relabel_one(item, None, None, sims, pooled_evaluator=proxy(TAG_TRAIN), eval_cache=cache(TAG_TRAIN))
 
     if kind == "gate":
         opening, a_plays_x = spec
-        return prod._play_gate_match_game(
+        return naps_games.play_gate_match_game(
             None, None, None, cfg["num_simulations"], cfg["boosted_sims"], cfg["boost_threshold"],
             cfg["boost_when_narrow"], cfg["c_puct"], a_plays_x, opening,
             cache(TAG_TRAIN), cache(TAG_BEST), proxy(TAG_TRAIN), proxy(TAG_BEST))
@@ -101,7 +101,7 @@ def _run_task(prod, kind, spec, cfg, proxy, cache):
 # ============================================================
 # Aggregation (mirrors the production generate_* functions exactly)
 # ============================================================
-def _aggregate_selfplay(results_in_order, augment_sample, mix, q_weight):
+def aggregate_selfplay(results_in_order, augment_sample, mix, q_weight):
     raw_samples = []
     outcome_counts = {'x_win': 0, 'o_win': 0, 'draw': 0}
     opening_rows = []
@@ -128,7 +128,7 @@ def _aggregate_selfplay(results_in_order, augment_sample, mix, q_weight):
     return raw_samples, outcome_counts, opening_rows
 
 
-def _aggregate_vsdet(results_in_order, depths, augment_sample, mix, q_weight):
+def aggregate_vsdet(results_in_order, depths, augment_sample, mix, q_weight):
     raw_samples = []
     outcome_counts = {'mcts_win': 0, 'det_win': 0, 'draw': 0}
     by_depth = {}
@@ -151,7 +151,7 @@ def _aggregate_vsdet(results_in_order, depths, augment_sample, mix, q_weight):
     return raw_samples, outcome_counts
 
 
-def _aggregate_league(results_in_order, augment_sample, mix, q_weight):
+def aggregate_league(results_in_order, augment_sample, mix, q_weight):
     raw_samples = []
     outcome_counts = {'mcts_win': 0, 'league_win': 0, 'draw': 0}
     for (history, outcome, mcts_result) in results_in_order:

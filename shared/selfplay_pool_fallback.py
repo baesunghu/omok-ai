@@ -52,7 +52,7 @@ This candidate's structure:
 1. Worker processes (persistent pool, spawned ONCE per training run, never
    respawned per epoch). Each is a plain CPU-only OS process with NO CUDA
    context. It plays games by calling the production
-   ``_play_one_mcts_game`` COMPLETELY UNMODIFIED, imported read-only from
+   ``play_one_mcts_game`` COMPLETELY UNMODIFIED, imported read-only from
    the live tree. This is the decisive advantage over the other two
    candidates, both of which hand-ported the game loop, the board encoding
    and/or the augmentation logic into their own files -- creating a second
@@ -174,11 +174,9 @@ PROD_DIR = HERE
 if PROD_DIR not in sys.path:
     sys.path.insert(0, PROD_DIR)
 
-# Which production module the workers take _play_one_mcts_game from, and
-# which one the threaded fallback calls. Defaults to the module the live
-# training run actually executes, so the MP path can NEVER diverge from the
-# game logic you are currently editing/training with. MP_SELFPLAY_PROD_MODULE overrides it.
-PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "naps_trainer")
+# The workers and the threaded fallback call the trainer's own game functions (no ported copy, so the two
+# can never diverge).
+GAMES_MODULE = "naps_games"   # the game functions the workers run (naps_games.py)
 
 import torch  # noqa: E402  (must follow the sys.path setup above)
 from board_encoding import preferred_memory_format  # noqa: E402
@@ -244,10 +242,10 @@ def _worker_main(worker_id, task_queue, result_queue, eval_conn, ready_queue, er
     None for them is safe.
     """
     try:
-        prod = __import__(PROD_MODULE)
-        _play_one_mcts_game = prod._play_one_mcts_game
+        naps_games = __import__(GAMES_MODULE)
+        play_one_mcts_game = naps_games.play_one_mcts_game
     except Exception as e:  # noqa: BLE001
-        error_queue.put(f"worker {worker_id} failed to import {PROD_MODULE}: {e!r}")
+        error_queue.put(f"worker {worker_id} failed to import {GAMES_MODULE}: {e!r}")
         ready_queue.put(worker_id)
         return
 
@@ -272,7 +270,7 @@ def _worker_main(worker_id, task_queue, result_queue, eval_conn, ready_queue, er
                 local_call_id = call_id
 
             try:
-                history, outcome, ply_indices, total_plies = _play_one_mcts_game(
+                history, outcome, ply_indices, total_plies = play_one_mcts_game(
                     None, None,  # model, device: never read -- see docstring
                     cfg["num_simulations"],
                     boosted_sims=cfg["boosted_sims"],
@@ -308,7 +306,7 @@ def _worker_main(worker_id, task_queue, result_queue, eval_conn, ready_queue, er
 
 class _PipeEvalProxy:
     """Duck-types ``PooledEvaluator.submit(input_arrays) -> (probs, values)``
-    so the unmodified production MCTS/_play_one_mcts_game work inside a
+    so the unmodified production MCTS/play_one_mcts_game work inside a
     worker process.
 
     ``input_arrays`` is already a list of (5, BOARD_SIZE, BOARD_SIZE) float32
@@ -775,9 +773,9 @@ def _threaded_fallback(reason, kwargs):
     """
     if reason:
         print(f"  [MP self-play] falling back to the threaded implementation: {reason}", flush=True)
-    prod = __import__(PROD_MODULE)
+    naps_games = __import__(GAMES_MODULE)
     t0 = time.monotonic()
-    result = prod.generate_mcts_self_play_data(**kwargs)
+    result = naps_games.generate_mcts_self_play_data(**kwargs)
     print(f"  [selfplay-timing] threaded {time.monotonic() - t0:.1f}s", flush=True)
     return result
 
@@ -872,7 +870,7 @@ def generate_mcts_self_play_data_mp(model, device, num_games=10, num_simulations
         # Reference-only imports, done lazily so that (a) importing this
         # module is cheap and (b) there is no circular-import problem when
         # the production module itself imports this one.
-        prod = __import__(PROD_MODULE)
+        naps_games = __import__(GAMES_MODULE)
         from board_encoding import augment_sample
 
         workers = _resolve_workers(max_workers, num_games)
@@ -896,11 +894,11 @@ def generate_mcts_self_play_data_mp(model, device, num_games=10, num_simulations
         for i in range(num_games):
             start_board, start_player = None, None
             if i < num_curriculum_games:
-                sampled = prod._sample_tactical_start()
+                sampled = naps_games.sample_tactical_start()
                 if sampled is not None:
                     start_board, start_player = sampled
             elif i < num_curriculum_games + num_opening_games:
-                start_board, start_player = prod._sample_forced_opening_start()
+                start_board, start_player = naps_games.sample_forced_opening_start()
             tasks_meta.append((i, start_board, start_player))
 
         cfg = dict(
@@ -935,7 +933,7 @@ def generate_mcts_self_play_data_mp(model, device, num_games=10, num_simulations
             # Real ply indices (PCR skips recording fast-search
             # plies, so len(history) - k would undercount plies-to-end).
             for (board_3d, player_turn, target_policy_map, q), ply_idx in zip(history, ply_indices):
-                final_val = prod.mixed_value_target(float(outcome if player_turn == 'X' else -outcome), q,
+                final_val = naps_games.mixed_value_target(float(outcome if player_turn == 'X' else -outcome), q,
                                                     value_q_weight)
                 mover_won = ((outcome == 1 and player_turn == 'X')
                              or (outcome == -1 and player_turn == 'O'))

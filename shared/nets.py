@@ -16,7 +16,7 @@ from board_encoding import (  # noqa: F401 -- re-exported for convenience
     BOARD_SIZE, WIN_LENGTH, NUM_CELLS, NUM_INPUT_CHANNELS, INPUT_SIZE,
     board_to_input_array, board_to_input_array_from_numeric,
     board_to_input_tensor, boards_to_input_tensor, preferred_memory_format,
-    _fork_mask,
+    fork_mask,
 )
 
 
@@ -256,7 +256,7 @@ def play(board, turn, model_name):
 # imports GomokuNetV2 instead of the original.
 
 
-def _group_norm(channels, max_groups=32):
+def group_norm(channels, max_groups=32):
     """GroupNorm needs channels % groups == 0 -- pick the largest divisor
     of `channels` that is <= max_groups instead of assuming 32 always
     divides evenly (true for 256, not guaranteed for arbitrary channel
@@ -306,7 +306,7 @@ class DSConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.norm = _group_norm(out_channels)
+        self.norm = group_norm(out_channels)
 
     def forward(self, x):
         x = self.conv(x)
@@ -370,14 +370,14 @@ class GomokuNetV2(nn.Module):
 
         self.conv_in = nn.Sequential(
             nn.Conv2d(NUM_INPUT_CHANNELS, num_channels, kernel_size=3, padding=1),
-            _group_norm(num_channels),
+            group_norm(num_channels),
             nn.ReLU(inplace=True)
         )
         self.res_blocks = nn.ModuleList([FusedSEResBlock(num_channels) for _ in range(num_res_blocks)])
 
         self.policy_head = nn.Sequential(
             nn.Conv2d(num_channels, 8, kernel_size=1),
-            _group_norm(8),
+            group_norm(8),
             nn.ReLU(inplace=True),
             nn.Flatten(),
             nn.Linear(8 * self.num_cells, self.num_cells),
@@ -386,7 +386,7 @@ class GomokuNetV2(nn.Module):
 
         self.value_head = nn.Sequential(
             nn.Conv2d(num_channels, 4, kernel_size=1),
-            _group_norm(4),
+            group_norm(4),
             nn.ReLU(inplace=True),
             nn.Flatten(),
             nn.Linear(4 * self.num_cells, value_hidden),
@@ -447,7 +447,7 @@ class GomokuNetV3(GomokuNetV2):
         num_channels = self.conv_in[0].out_channels
         self.survival_head = nn.Sequential(
             nn.Conv2d(num_channels, 2, kernel_size=1),
-            _group_norm(2),
+            group_norm(2),
             nn.ReLU(inplace=True),
             nn.Flatten(),
             nn.Linear(2 * self.num_cells, survival_hidden),

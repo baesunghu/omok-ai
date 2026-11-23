@@ -1,10 +1,7 @@
 """The NAPS training loop (train_mcts_alpha_zero): generate games, fill the replay buffer, train, gate, measure.
 Started by shared/train_run.py (each run folder's _restart_train.py). Until 2026-11 this file also held
-everything now in naps_common / naps_openings / naps_selfplay / naps_gate / naps_vsdet / naps_league /
-naps_tactics / naps_hard_examples.
+everything now in the other naps_*.py modules.
 """
-# The self-play pools (selfplay_pool_fallback.py, selfplay_pool.py) import this module by name and use
-# prod._play_one_mcts_game, prod._OPENING_SQUARES, ... -- those names are imported here for them too.
 import numpy as np
 import os
 import random
@@ -13,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from run_config import EVAL_BATCH, LR_MIN, LR_PEAK, POOLED_TARGET_BATCH
+from run_config import LR_MIN, LR_PEAK, POOLED_TARGET_BATCH
 from nets import GomokuNetV3 as GomokuNet
 from mcts_cpp import PooledEvaluator
 from selfplay_pool import generate_epoch_games_unified, get_task_runner
@@ -21,43 +18,18 @@ from selfplay_pool_fallback import generate_mcts_self_play_data_mp
 from board_encoding import preferred_memory_format
 from naps_common import (
     BOOST_RAMP_CEILING, BOOST_RAMP_STEP, LR_COOLDOWN_EPOCHS, SIM_RAMP_CEILING, SIM_RAMP_STEP, STAGNATION_RAMP_LIMIT,
-    SURVIVAL_LOSS_WEIGHT, TRAIN_SAMPLES_PER_EPOCH, TRAIN_STATE_PATH, _SUFFIX, annealed_value, compute_policy_entropy,
+    SURVIVAL_LOSS_WEIGHT, TRAIN_SAMPLES_PER_EPOCH, TRAIN_STATE_PATH, FILE_SUFFIX, annealed_value, compute_policy_entropy,
     get_devices, load_replay_buffer, logger, load_sim_budget, load_start_epoch, model, report_logger,
     save_cumulative_epoch, save_replay_buffer, save_sim_budget,
 )
-from naps_openings import _ALL_CELLS
-from naps_gate import BEST_CHECKPOINT_PATH, _GATE_OPENING_SQUARES, _LAST_GATE_CANDIDATE, run_gating_check
+from naps_openings import ALL_CELLS
+from naps_gate import BEST_CHECKPOINT_PATH, GATE_OPENING_SQUARES, LAST_GATE_CANDIDATE, run_gating_check
 from naps_vsdet import evaluate_vs_deterministic, format_by_depth, generate_mcts_vs_deterministic_data
 from naps_league import (
-    LEAGUE_NUM_OPPONENTS, _pick_league_opponent, _pick_league_opponents_multi, generate_mcts_vs_league_data,
+    LEAGUE_NUM_OPPONENTS, pick_league_opponent, pick_league_opponents_multi, generate_mcts_vs_league_data,
 )
-from naps_hard_examples import _get_fork_mistake_samples, _get_hard_example_samples
-from naps_tactical_refresh import _get_open_three_injection_samples, refresh_mined_tactical_pool
-# for the self-play pools, which use them as prod.<name> (see the note at the top)
-from naps_common import (  # noqa: F401
-    mixed_value_target,
-)
-from naps_openings import (  # noqa: F401
-    _OPENING_SQUARES, _sample_forced_opening_start, _sample_tactical_start, _tactical_windows,
-)
-from naps_selfplay import (  # noqa: F401
-    _play_one_mcts_game, generate_mcts_self_play_data,
-)
-from naps_gate import (  # noqa: F401
-    RECORD_LEAGUE_SIDE, _play_gate_match_game,
-)
-from naps_vsdet import (  # noqa: F401
-    _play_one_mcts_vs_deterministic_game, _sample_vs_det_max_depth,
-)
-from naps_league import (  # noqa: F401
-    _play_one_mcts_vs_league_game,
-)
-from naps_tactics import (  # noqa: F401
-    _fork_geometries,
-)
-from naps_hard_examples import (
-    _classify_hard_examples, _mine_one_selfplay_game, _mine_one_vsdet_game, _mine_one_vsleague_game, _relabel_one,
-)
+from naps_hard_examples import get_fork_mistake_samples, get_hard_example_samples
+from naps_tactical_refresh import get_open_three_injection_samples, refresh_mined_tactical_pool
 
 
 def train_mcts_alpha_zero(
@@ -159,7 +131,7 @@ def train_mcts_alpha_zero(
     # Restore Adam's moments across restarts. Every restart used to reset them
     # (loss spikes at 905/911/913/945). Loaded only if saved right after the epoch we resume at;
     # the LR stays whatever the schedule/cooldown says now (the saved param_groups LR is discarded).
-    OPT_STATE_PATH = f"model/optimizer_state{_SUFFIX}.pth"
+    OPT_STATE_PATH = f"model/optimizer_state{FILE_SUFFIX}.pth"
     # A fresh Adam moves every weight by ~LR on its first steps (bias-corrected m/sqrt(v) ~ sign(g)),
     # which caused the loss spikes after every restart/rollback (ep1003 0.38, ep1047 0.41). If the moments
     # are not restored, ramp the LR over the first epochs instead.
@@ -199,7 +171,7 @@ def train_mcts_alpha_zero(
     self_play_workers = self_play_workers or max(1, (os.cpu_count() or 4) - 2)
 
     os.makedirs('model', exist_ok=True)
-    checkpoint_path = f"model/alphazero_mcts{_SUFFIX}.pth"
+    checkpoint_path = f"model/alphazero_mcts{FILE_SUFFIX}.pth"
     if os.path.exists(checkpoint_path):
         try:
             model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
@@ -317,7 +289,7 @@ def train_mcts_alpha_zero(
         except Exception as _e:
             print(f"  [ladder promotion] notice: {_e!r}", flush=True)
         if epoch % 10 == 0:
-            snap_path = f"model/model_MCTS_ep{epoch}{_SUFFIX}.pth"
+            snap_path = f"model/model_MCTS_ep{epoch}{FILE_SUFFIX}.pth"
             torch.save(model.state_dict(), snap_path)
             print(f"Snapshot saved to {snap_path}")
 
@@ -364,15 +336,15 @@ def train_mcts_alpha_zero(
         league_model = None
         league_opponent_name = None
         if num_league_games > 0 and LEAGUE_NUM_OPPONENTS > 1:
-            _picks = _pick_league_opponents_multi(self_play_device, min(LEAGUE_NUM_OPPONENTS, num_league_games),
+            _picks = pick_league_opponents_multi(self_play_device, min(LEAGUE_NUM_OPPONENTS, num_league_games),
                                                   league_pool_size, epoch=epoch)
             if _picks:
                 league_model = [m for m, _ in _picks]
                 league_opponent_name = f"{len(_picks)} opponents: " + ", ".join(
-                    os.path.basename(p).replace("model_MCTS_", "").replace(f"{_SUFFIX}.pth", "").replace(".pth", "")
+                    os.path.basename(p).replace("model_MCTS_", "").replace(f"{FILE_SUFFIX}.pth", "").replace(".pth", "")
                     for _, p in _picks)
         elif num_league_games > 0:
-            league_pick = _pick_league_opponent(self_play_device, league_pool_size, league_best_checkpoint_prob,
+            league_pick = pick_league_opponent(self_play_device, league_pool_size, league_best_checkpoint_prob,
                                                  epoch=epoch)
             if league_pick is not None:
                 league_model, league_path = league_pick
@@ -460,23 +432,23 @@ def train_mcts_alpha_zero(
         # refresh. n_positions=46 -> ~368 augmented samples/epoch, in the same
         # ballpark as this epoch's vs-Det/league volume (the target ~0.70/
         # 0.15/0.15 self/league/hard split from the approved mining spec).
-        hard_samples = _get_hard_example_samples(self_play_device, n_positions=46)
+        hard_samples = get_hard_example_samples(self_play_device, n_positions=46)
         if hard_samples:
             replay_buffer.extend(hard_samples)
 
         # Continuous per-epoch open-three curriculum injection,
         # replacing tactical_refresh()'s periodic burst (see
-        # _get_open_three_injection_samples docstring for why).
-        open_three_samples = _get_open_three_injection_samples(n_examples=120)
+        # get_open_three_injection_samples docstring for why).
+        open_three_samples = get_open_three_injection_samples(n_examples=120)
         if open_three_samples:
             replay_buffer.extend(open_three_samples)
 
         # Dedicated Hard-7 (general fork) quota, on top of
         # hard_samples' whole-pool draw above -- see
-        # _get_fork_mistake_samples docstring (measured: without this,
+        # get_fork_mistake_samples docstring (measured: without this,
         # Hard-7 got ~1-2 exposures/epoch by chance, essentially no real
         # training signal one full mining cycle after being added).
-        fork_mistake_samples = _get_fork_mistake_samples(n_positions=60)
+        fork_mistake_samples = get_fork_mistake_samples(n_positions=60)
         if fork_mistake_samples:
             replay_buffer.extend(fork_mistake_samples)
 
@@ -669,7 +641,7 @@ def train_mcts_alpha_zero(
 
         # tactical_refresh() (the periodic burst supervised
         # re-injection that used to run here) was REMOVED -- see
-        # _get_open_three_injection_samples docstring for the measured
+        # get_open_three_injection_samples docstring for the measured
         # before/after evidence (immediate vs-Det win-rate drop, decays back
         # within ~2 epochs anyway). The open-three/diagnosed-position
         # curriculum is now injected continuously every epoch instead (see
@@ -699,7 +671,7 @@ def train_mcts_alpha_zero(
             # would add unnecessary cost for no extra signal at this pace.
             model.to(self_play_device, memory_format=preferred_memory_format(self_play_device))
             torch.set_num_threads(1)
-            _LAST_GATE_CANDIDATE["path"] = None
+            LAST_GATE_CANDIDATE["path"] = None
             gate_win, gate_draw, gate_loss, promoted = run_gating_check(
                 model, gen_model, self_play_device, eval_simulations, boosted_sims=boosted_sims,
                 boost_threshold=boost_threshold, boost_when_narrow=boost_when_narrow, c_puct=c_puct_exploit,
@@ -710,7 +682,7 @@ def train_mcts_alpha_zero(
             # later (e.g. Rapfi ladder). Only these disagreements are saved (~34 MB each).
             if not promoted and gate_win + 0.5 * gate_draw >= 0.55:
                 os.makedirs("model/gate_disagree", exist_ok=True)
-                _gd_path = f"model/gate_disagree/ep{epoch}{_SUFFIX}.pth"
+                _gd_path = f"model/gate_disagree/ep{epoch}{FILE_SUFFIX}.pth"
                 torch.save(model.state_dict(), _gd_path)
                 print(f"  [gate] old rule would have promoted ep{epoch}; weights kept at {_gd_path}", flush=True)
             print(f"  [refresh-timing] mining+relabel {_t_refresh1 - _t_refresh0:.1f}s | "
@@ -736,8 +708,8 @@ def train_mcts_alpha_zero(
                         cur_num_simulations, cur_boosted_sims = new_sims, new_boost
                         ramp_note = f" -> sim budget now {cur_num_simulations}/{cur_boosted_sims} (stagnation bump)"
                 save_sim_budget(cur_num_simulations, cur_boosted_sims, cur_stagnation_count, cur_lr_cooldown)
-            gate_note = (f" | Gate vs best ({len(_GATE_OPENING_SQUARES) * 2} games): Win {gate_win:.0%} / "
-                         f"Draw {gate_draw:.0%} / Loss {gate_loss:.0%} -> {'PROMOTED' if promoted else ('CANDIDATE (ladder check pending)' if _LAST_GATE_CANDIDATE['path'] else 'kept')}{ramp_note}")
+            gate_note = (f" | Gate vs best ({len(GATE_OPENING_SQUARES) * 2} games): Win {gate_win:.0%} / "
+                         f"Draw {gate_draw:.0%} / Loss {gate_loss:.0%} -> {'PROMOTED' if promoted else ('CANDIDATE (ladder check pending)' if LAST_GATE_CANDIDATE['path'] else 'kept')}{ramp_note}")
             model.train()
 
         _t_gate_done = time.monotonic()
@@ -790,7 +762,7 @@ def train_mcts_alpha_zero(
             # narrow/edge-heavy bias a fixed opening set had -- while a given
             # epoch's result stays exactly reproducible (re-evaluating the
             # same saved checkpoint later draws the same openings).
-            eval_opening_cells = list(_ALL_CELLS)
+            eval_opening_cells = list(ALL_CELLS)
             random.Random(epoch + 1).shuffle(eval_opening_cells)
             win_rate, draw_rate, loss_rate = evaluate_vs_deterministic(
                 model, self_play_device, num_games=eval_games, num_simulations=eval_simulations,
@@ -813,7 +785,7 @@ def train_mcts_alpha_zero(
               f"train {_t_train_done - _t_gen_done:.1f}s | refresh+gate {_t_gate_done - _t_train_done:.1f}s | "
               f"eval {_t_end - _t_gate_done:.1f}s | total {_t_end - _t_epoch_start:.1f}s", flush=True)
 
-    final_path = f"model/model_MCTS_ep{epoch + 1}_final{_SUFFIX}.pth"
+    final_path = f"model/model_MCTS_ep{epoch + 1}_final{FILE_SUFFIX}.pth"
     torch.save(model.state_dict(), checkpoint_path)
     torch.save(model.state_dict(), final_path)
     print(f"MCTS Model saved to {checkpoint_path} and {final_path}")

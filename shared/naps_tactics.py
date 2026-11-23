@@ -4,7 +4,7 @@ import random
 
 from mcts_cpp import BOARD_SIZE, fast_check_win
 from fast_board import WIN_LENGTH
-from naps_openings import _TACTICAL_DIRECTIONS, _tactical_clutter, _tactical_windows
+from naps_openings import TACTICAL_DIRECTIONS, tactical_clutter, tactical_windows
 
 
 def generate_tactical_examples():
@@ -19,7 +19,7 @@ def generate_tactical_examples():
     instead of only clean isolated ones.
     """
     examples = []
-    for cells in _tactical_windows():
+    for cells in tactical_windows():
         for gap_idx in range(WIN_LENGTH):
             filled_cells = [cells[k] for k in range(WIN_LENGTH) if k != gap_idx]
             gap_r, gap_c = cells[gap_idx]
@@ -36,7 +36,7 @@ def generate_tactical_examples():
                     for (r, c) in filled_cells:
                         board[r][c] = stone
                     if variant > 0:
-                        _tactical_clutter(board, set(cells), n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
+                        tactical_clutter(board, set(cells), n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
                     if board[gap_r][gap_c] != ' ':
                         continue  # clutter collided with the gap cell, skip
                     # The mover is always 'X' in these synthetic boards (see
@@ -73,25 +73,25 @@ def generate_tactical_examples():
 # offense and defense are policy-only here, mover_completes always False.
 # This keeps the two new curricula symmetric by construction, unlike the
 # existing family's offense/defense value-supervision asymmetry.
-_FORK_DIRECTION_PAIRS = [(_TACTICAL_DIRECTIONS[i], _TACTICAL_DIRECTIONS[j])
-                         for i in range(len(_TACTICAL_DIRECTIONS))
-                         for j in range(i + 1, len(_TACTICAL_DIRECTIONS))]
+_FORK_DIRECTION_PAIRS = [(TACTICAL_DIRECTIONS[i], TACTICAL_DIRECTIONS[j])
+                         for i in range(len(TACTICAL_DIRECTIONS))
+                         for j in range(i + 1, len(TACTICAL_DIRECTIONS))]
 
 
 def _closed_three_spans():
     """
     Every length-5 (blocker, 3-in-a-row, target) span on the board, in all 4
     directions -- same exhaustive per-direction/per-cell sweep as
-    _tactical_windows(), just anchored one cell later along the line (cells
+    tactical_windows(), just anchored one cell later along the line (cells
     run k=-1..3 relative to the loop cell instead of k=0..4), so index 0 is
     the blocker, indices 1-3 are the three-in-a-row, and index 4 is the
     target (the empty cell past the open end, with room to extend into).
     Translation-invariant along each line, so this covers the same total
-    count of length-5 windows as _tactical_windows() despite the different
+    count of length-5 windows as tactical_windows() despite the different
     anchor.
     """
     spans = []
-    for dr, dc in _TACTICAL_DIRECTIONS:
+    for dr, dc in TACTICAL_DIRECTIONS:
         for r in range(BOARD_SIZE):
             for c in range(BOARD_SIZE):
                 cells = [(r + dr * k, c + dc * k) for k in range(-1, 4)]
@@ -111,7 +111,7 @@ def generate_closed_three_examples():
     target cell -- denies the extension before 'O' can play it.
 
     Each span gets a clean variant plus a couple of clutter variants (reusing
-    _tactical_clutter, same pattern as generate_tactical_examples).
+    tactical_clutter, same pattern as generate_tactical_examples).
     """
     examples = []
     for cells in _closed_three_spans():
@@ -127,7 +127,7 @@ def generate_closed_three_examples():
                 for (r, c) in three_cells:
                     board[r][c] = three_color
                 if variant > 0:
-                    _tactical_clutter(board, set(cells), n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
+                    tactical_clutter(board, set(cells), n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
                 tr, tc = target_cell
                 if board[tr][tc] != ' ':
                     continue  # clutter collided with the target cell, skip
@@ -135,7 +135,7 @@ def generate_closed_three_examples():
     return examples
 
 
-def _fork_geometries():
+def fork_geometries():
     """
     Every (direction-pair, center) combo where a single move at the shared
     center cell would complete an open-three ("_XXX_") in BOTH directions at
@@ -145,7 +145,7 @@ def _fork_geometries():
     the center itself, which stays empty until the move is made. Exhaustive
     over all 6 direction pairs and every center cell whose full 8-cell
     footprint (4 per direction) stays in bounds -- same spirit as
-    _tactical_windows()'s exhaustive sweep, over direction PAIRS instead of
+    tactical_windows()'s exhaustive sweep, over direction PAIRS instead of
     single directions.
     """
     combos = []
@@ -175,12 +175,12 @@ def generate_fork_examples():
     way.
 
     Each geometry gets a clean variant plus a couple of clutter variants
-    (reusing _tactical_clutter, same pattern as generate_tactical_examples),
+    (reusing tactical_clutter, same pattern as generate_tactical_examples),
     excluding both the stone cells and the required-open end cells so
     clutter can't collide with either.
     """
     examples = []
-    for center, stone_cells, open_cells in _fork_geometries():
+    for center, stone_cells, open_cells in fork_geometries():
         for offense in (True, False):
             stone_color = 'X' if offense else 'O'
             for variant in range(3):  # 1 clean + a couple of clutter variants
@@ -189,7 +189,7 @@ def generate_fork_examples():
                     board[r][c] = stone_color
                 if variant > 0:
                     exclude = set(stone_cells) | set(open_cells) | {center}
-                    _tactical_clutter(board, exclude, n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
+                    tactical_clutter(board, exclude, n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
                 cr, cc = center
                 if board[cr][cc] != ' ' or any(board[r][c] != ' ' for (r, c) in open_cells):
                     continue  # clutter collided with the target or a required-open end, skip
@@ -208,7 +208,7 @@ def _double_four_geometries():
     The two directions' cells never overlap since they only meet at the
     center itself, which stays empty until the move is made. Exhaustive
     over all 6 direction pairs and every center cell whose full footprint
-    (4 per direction) stays in bounds -- same spirit as _fork_geometries().
+    (4 per direction) stays in bounds -- same spirit as fork_geometries().
     """
     combos = []
     for d1, d2 in _FORK_DIRECTION_PAIRS:
@@ -244,7 +244,7 @@ def generate_double_four_examples():
     a provable 5-in-a-row.
 
     Each geometry gets a clean variant plus a couple of clutter variants
-    (reusing _tactical_clutter, same pattern as generate_fork_examples),
+    (reusing tactical_clutter, same pattern as generate_fork_examples),
     excluding both the stone cells and the required-open end cells so
     clutter can't collide with either.
     """
@@ -258,7 +258,7 @@ def generate_double_four_examples():
                     board[r][c] = stone_color
                 if variant > 0:
                     exclude = set(stone_cells) | set(open_cells) | {center}
-                    _tactical_clutter(board, exclude, n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
+                    tactical_clutter(board, exclude, n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
                 cr, cc = center
                 if board[cr][cc] != ' ' or any(board[r][c] != ' ' for (r, c) in open_cells):
                     continue  # clutter collided with the target or a required-open end, skip
@@ -334,7 +334,7 @@ def generate_open_three_examples():
             # decayed from ~100% back to ~70% tactical accuracy within just
             # 2 epochs anyway -- net negative. Replaced by continuous
             # per-epoch injection into the ordinary replay buffer (see
-            # _get_open_three_injection_samples), so this pool now needs
+            # get_open_three_injection_samples), so this pool now needs
             # more inherent variant diversity since it's no longer refreshed
             # by a dedicated fine-tuning pass, just sampled from directly.
             for variant in range(n_variants):  # was: flat range(14); now edge/corner-weighted
@@ -342,7 +342,7 @@ def generate_open_three_examples():
                 for (r, c) in three_cells:
                     board[r][c] = three_color
                 if variant > 0:
-                    _tactical_clutter(board, set(cells), n_stones=random.randint(3, 36))
+                    tactical_clutter(board, set(cells), n_stones=random.randint(3, 36))
                 if board[end1[0]][end1[1]] != ' ' or board[end2[0]][end2[1]] != ' ':
                     continue  # clutter collided with one of the two open ends, skip
                 if fast_check_win(board, 'X') or fast_check_win(board, 'O'):
@@ -371,7 +371,7 @@ def generate_open_three_examples():
 # horizontal open-three earlier in the SAME game. Confirms the open-three
 # fix from generate_open_three_examples works on the shape in isolation but
 # does not yet fully generalize to busier boards -- clutter density was
-# widened 3-36 (was 3-6, see _tactical_clutter calls throughout this file)
+# widened 3-36 (was 3-6, see tactical_clutter calls throughout this file)
 # specifically to close this gap generically, and this exact position is
 # also hard-mined directly, same rationale as Position A.
 _DIAGNOSED_POSITIONS = [
@@ -486,7 +486,7 @@ def generate_diagnosed_positions_examples():
     """
     Hard-mines the exact real diagnosed position(s) in _DIAGNOSED_POSITIONS,
     each replicated across all 8 dihedral symmetries and a batch of clutter
-    variants (reusing _tactical_clutter), so this specific pattern gets
+    variants (reusing tactical_clutter), so this specific pattern gets
     meaningfully more representation than a single clean board would --
     comparable in order of magnitude to how other targeted families in this
     file are weighted, while staying a small fraction of the full curriculum.
@@ -514,7 +514,7 @@ def generate_diagnosed_positions_examples():
                 if variant > 0:
                     # Widened 2-5 -> 3-36 for consistency with the other families (see generate_open_three_examples'
                     # header comment)
-                    _tactical_clutter(board, placed_cells | set(correct_transformed), n_stones=random.randint(3, 36))
+                    tactical_clutter(board, placed_cells | set(correct_transformed), n_stones=random.randint(3, 36))
                 if any(board[r][c] != ' ' for (r, c) in correct_transformed):
                     continue  # clutter collided with a correct response cell, skip
                 if fast_check_win(board, 'X') or fast_check_win(board, 'O'):

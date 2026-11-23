@@ -34,14 +34,14 @@ def _canonical_symmetry_openings(board_size):
     return reps
 
 
-_OPENING_SQUARES = _canonical_symmetry_openings(BOARD_SIZE)
+OPENING_SQUARES = _canonical_symmetry_openings(BOARD_SIZE)
 # All board cells, not just one representative per symmetry class -- used by
-# evaluate_vs_deterministic (see its docstring): with only len(_OPENING_SQUARES)
+# evaluate_vs_deterministic (see its docstring): with only len(OPENING_SQUARES)
 # distinct openings, requesting a game count not coprime with that count made
 # many "games" exact repeats of an earlier one under a different index label.
 # Cycling through every cell instead gives eval_games far more room before
 # that collision recurs.
-_ALL_CELLS = [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)]
+ALL_CELLS = [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)]
 # Gen3 eval-diversification: row-major order meant every vs-Det
 # check (sliced to the first num_games) only ever sampled the top-left
 # edge/corner region of the board, every check, for the whole project's
@@ -49,7 +49,7 @@ _ALL_CELLS = [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)]
 # spread across the whole board, while keeping openings reproducible
 # run-to-run (same index -> same cell every time, preserving the
 # pure-function-of-weights property callers/caching rely on).
-random.Random(1109).shuffle(_ALL_CELLS)
+random.Random(1109).shuffle(ALL_CELLS)
 
 
 # ============================================================
@@ -66,12 +66,12 @@ random.Random(1109).shuffle(_ALL_CELLS)
 # plateau, entropy kept climbing) that faded over ~30 epochs as the much
 # larger stream of ordinary self-play/vs-det samples diluted it back out.
 # So instead of a single injection, refresh periodically throughout training.
-_TACTICAL_DIRECTIONS = [(0, 1), (1, 0), (1, 1), (1, -1)]
+TACTICAL_DIRECTIONS = [(0, 1), (1, 0), (1, 1), (1, -1)]
 
 
-def _tactical_windows():
+def tactical_windows():
     windows = []
-    for dr, dc in _TACTICAL_DIRECTIONS:
+    for dr, dc in TACTICAL_DIRECTIONS:
         for r in range(BOARD_SIZE):
             for c in range(BOARD_SIZE):
                 cells = [(r + dr * k, c + dc * k) for k in range(WIN_LENGTH)]
@@ -80,7 +80,7 @@ def _tactical_windows():
     return windows
 
 
-def _tactical_clutter(board, exclude_cells, n_stones=3, cluster_radius=3):
+def tactical_clutter(board, exclude_cells, n_stones=3, cluster_radius=3):
     """2026-09-14: clutter now clusters NEAR the tactical window (within
     cluster_radius of any exclude_cells cell) instead of scattering
     uniformly across the whole 11x11 board. Real games don't produce
@@ -118,14 +118,14 @@ def _tactical_clutter(board, exclude_cells, n_stones=3, cluster_radius=3):
             board[r][c] = ' '
 
 
-def _sample_tactical_start(max_attempts=10):
+def sample_tactical_start(max_attempts=10):
     """
     Builds one REACHABLE board matching a random tactical curriculum pattern
     (same "3-in-a-row + 1 gap" shapes as generate_tactical_examples), for
     self-play to occasionally start a game from instead of always from an
     empty board -- so self-play actually encounters this tactical family
     (and must resolve it with its own search) more often than it arises
-    naturally from full-game rollouts. Unlike _tactical_clutter, clutter
+    naturally from full-game rollouts. Unlike tactical_clutter, clutter
     here is piece-count constrained: exactly 2 stones of the color NOT used
     to fill the window, so count(X) == count(O) after placement -- the
     parity a real alternating game reaching this position (with 'X' to
@@ -141,7 +141,7 @@ def _sample_tactical_start(max_attempts=10):
     Returns (board, 'X'), or None if no valid placement is found within
     max_attempts (caller should fall back to a normal empty-board start).
     """
-    windows = _tactical_windows()
+    windows = tactical_windows()
     for _ in range(max_attempts):
         cells = random.choice(windows)
         gap_idx = random.randrange(WIN_LENGTH)
@@ -170,14 +170,14 @@ def _sample_tactical_start(max_attempts=10):
     return None
 
 
-def _sample_forced_opening_start():
+def sample_forced_opening_start():
     """
     Places a single stone at a stratified board-region sample (reusing
-    _OPENING_SQUARES -- the dihedral-symmetry-class representatives already
+    OPENING_SQUARES -- the dihedral-symmetry-class representatives already
     used for eval/gate openings, so this picks up their spread across the
     whole board for free) as self-play's starting position, for a small
     forced fraction of games -- see generate_mcts_self_play_data's
-    num_opening_games. Unlike _sample_tactical_start (a mid-game tactical
+    num_opening_games. Unlike sample_tactical_start (a mid-game tactical
     shape), this only forces the FIRST move, guaranteeing literal
     board-region coverage independent of whatever the network's own root
     prior plus Dirichlet noise would have picked on an empty board.
@@ -185,7 +185,7 @@ def _sample_forced_opening_start():
     Returns (board, next_player_to_move).
     """
     board = [[' '] * BOARD_SIZE for _ in range(BOARD_SIZE)]
-    r, c = random.choice(_OPENING_SQUARES)
+    r, c = random.choice(OPENING_SQUARES)
     first_player = random.choice(['X', 'O'])
     board[r][c] = first_player
     next_player = 'O' if first_player == 'X' else 'X'

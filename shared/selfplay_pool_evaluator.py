@@ -26,7 +26,7 @@ _EVAL_ERROR_TAG = "__MP_UNIFIED_EVAL_ERROR__"
 # ============================================================
 # Worker side
 # ============================================================
-class _TaggedPipeEvalProxy:
+class TaggedPipeEvalProxy:
     """Duck-types PooledEvaluator.submit(input_arrays) -> (probs, values).
     Several proxies (one per tag) share the worker's single pipe; a worker
     plays one game at a time and each submit blocks for its reply, so

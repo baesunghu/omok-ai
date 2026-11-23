@@ -16,7 +16,7 @@ import torch.nn as nn
 sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 11x11_v2 modules
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
 from nets import GomokuNetV3
-from nets import _group_norm
+from nets import group_norm
 
 CHANNELS, BLOCKS = 128, 8
 
@@ -27,10 +27,10 @@ class NetV3(GomokuNetV3):
                          value_hidden=max(64, num_channels), **kwargs)
         n = self.num_cells
         self.opp_policy_head = nn.Sequential(
-            nn.Conv2d(num_channels, 8, kernel_size=1), _group_norm(8), nn.ReLU(inplace=True),
+            nn.Conv2d(num_channels, 8, kernel_size=1), group_norm(8), nn.ReLU(inplace=True),
             nn.Flatten(), nn.Linear(8 * n, n), nn.LogSoftmax(dim=-1))
         self.owner_head = nn.Sequential(
-            nn.Conv2d(num_channels, 32, kernel_size=1), _group_norm(32), nn.ReLU(inplace=True),
+            nn.Conv2d(num_channels, 32, kernel_size=1), group_norm(32), nn.ReLU(inplace=True),
             nn.Conv2d(32, 3, kernel_size=1), nn.LogSoftmax(dim=1))
 
     def forward_all(self, x):

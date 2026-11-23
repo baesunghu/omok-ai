@@ -7,7 +7,7 @@ GPU through one PyTorch call per batch -- instead of 8 worker processes each
 sending small requests over pipes (measured average GPU batch 5.9 rows).
 
 Game rules, PCR, sims boost, temperature, forced playouts, MEGA and
-max_plies mirror _play_one_mcts_game / _play_one_mcts_vs_league_game; the
+max_plies mirror play_one_mcts_game / play_one_mcts_vs_league_game; the
 returned results have exactly the formats the pool workers return, so the
 aggregation code downstream is unchanged. vs-Det games are not supported
 here (the caller keeps using the worker pool when an epoch has any).
@@ -50,7 +50,7 @@ def _to_str_board(arr):
     return [['X' if v == 1 else ('O' if v == 2 else ' ') for v in row] for row in arr.tolist()]
 
 
-def run_tasks(tasks, models, device, prod, gen_tag):
+def run_tasks(tasks, models, device, naps_games, gen_tag):
     """tasks: unified-pool task tuples (tid, kind, spec, cfg), kind 'self' or 'league'.
     models: {tag: model}. Returns {tid: result} in the pool workers' formats."""
     global LAST_STATS
@@ -62,11 +62,11 @@ def run_tasks(tasks, models, device, prod, gen_tag):
 
     R = mcts_core.SelfPlayRunner()
     R.board_size, R.win_length = BOARD_SIZE, WIN_LENGTH
-    R.eval_batch = prod.EVAL_BATCH
+    R.eval_batch = naps_games.EVAL_BATCH
     R.forced_k = L.FORCED_PLAYOUT_K
     R.mega_d1, R.mega_d2 = L.MEGA_VISITS
     R.mega_min_sims = L.MEGA_MIN_SIMS
-    R.record_league_side = bool(prod.RECORD_LEAGUE_SIDE)
+    R.record_league_side = bool(naps_games.RECORD_LEAGUE_SIDE)
     for tid, kind, spec, cfg in tasks:
         if kind == "self":
             start_board, start_player = spec

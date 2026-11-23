@@ -84,6 +84,8 @@ v3의 성과(대등점, 문제 통과, 정오)는 측정된 사실이다. 다만
 | `selfplay_mp_unified.py` (통합 대국 풀) | `shared/selfplay_pool.py` + `selfplay_pool_tasks.py` + `selfplay_pool_evaluator.py` |
 | `selfplay_mp.py` (예전 자가대국 풀, 예비 경로) | `shared/selfplay_pool_fallback.py` |
 | `_restart_train.py`의 본문 | `shared/train_run.py` (실행 폴더의 `_restart_train.py`는 이것을 부른다) |
+| 다른 파일이 쓰는데 `_`로 시작하던 이름 39개 (`_play_one_mcts_game`, `_OPENING_SQUARES`, `_fork_mask` 등) | 앞의 `_`를 뺀 이름 (`play_one_mcts_game`, `OPENING_SQUARES`, `fork_mask` 등). `naps_common._SUFFIX`는 `FILE_SUFFIX` |
+| 대국 풀이 `naps_trainer`에서 가져다 쓰던 게임 함수 (`prod.X`) | `shared/naps_games.py` (`naps_games.X`) |
 | 실행 폴더마다 한 벌씩 있던 코드 | `shared/` 한 벌 + 실행 폴더의 `run_config.py` |
 
 코드 주석에 붙어 있던 날짜와 `(user)` 표시는 지우고 설명만 남겼다. 원래 주석은 [code_history.md](code_history.md)에 파일·함수별로 옮겨 두었다.

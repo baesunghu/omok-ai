@@ -57,16 +57,16 @@ PROD_DIR = HERE
 if PROD_DIR not in sys.path:
     sys.path.insert(0, PROD_DIR)
 
-PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "naps_trainer")
+GAMES_MODULE = "naps_games"   # the game functions the workers run (naps_games.py)
 
 from fast_board import BOARD_SIZE  # noqa: E402
 from run_config import CPP_SELFPLAY  # noqa: E402
 from selfplay_pool_tasks import (  # noqa: E402
-    TAG_BEST, TAG_GEN, TAG_LEAGUE, TAG_TRAIN, _aggregate_league,
-    _aggregate_selfplay, _aggregate_vsdet, _run_task,
+    TAG_BEST, TAG_GEN, TAG_LEAGUE, TAG_TRAIN, aggregate_league,
+    aggregate_selfplay, aggregate_vsdet, run_task,
 )
 from selfplay_pool_evaluator import (  # noqa: E402
-    DEFAULT_MAX_WAIT, DEFAULT_TARGET_BATCH, TaggedPipePooledEvaluator, _TaggedPipeEvalProxy,
+    DEFAULT_MAX_WAIT, DEFAULT_TARGET_BATCH, TaggedPipePooledEvaluator, TaggedPipeEvalProxy,
 )
 
 DEFAULT_STALL_TIMEOUT = 180.0
@@ -98,9 +98,9 @@ def _worker_main(worker_id, task_queue, result_queue, eval_conn, ready_queue, er
     leaf evaluation goes through a tagged pipe proxy, so the model/device
     arguments of the production functions are never read (None)."""
     try:
-        prod = __import__(PROD_MODULE)
+        naps_games = __import__(GAMES_MODULE)
     except Exception as e:  # noqa: BLE001
-        error_queue.put(f"worker {worker_id} failed to import {PROD_MODULE}: {e!r}")
+        error_queue.put(f"worker {worker_id} failed to import {GAMES_MODULE}: {e!r}")
         ready_queue.put(worker_id)
         return
 
@@ -110,7 +110,7 @@ def _worker_main(worker_id, task_queue, result_queue, eval_conn, ready_queue, er
     def proxy(tag):
         p = proxies.get(tag)
         if p is None:
-            p = proxies[tag] = _TaggedPipeEvalProxy(eval_conn, tag)
+            p = proxies[tag] = TaggedPipeEvalProxy(eval_conn, tag)
         return p
 
     def cache(tag):
@@ -134,7 +134,7 @@ def _worker_main(worker_id, task_queue, result_queue, eval_conn, ready_queue, er
                 caches.clear()
                 local_call_id = call_id
             try:
-                payload = _run_task(prod, kind, spec, cfg, proxy, cache)
+                payload = run_task(naps_games, kind, spec, cfg, proxy, cache)
                 result_queue.put((call_id, task_id, payload, None))
             except Exception as e:  # noqa: BLE001
                 result_queue.put((call_id, task_id, None, repr(e)))
@@ -394,7 +394,7 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
 
     t0 = time.monotonic()
     try:
-        prod = __import__(PROD_MODULE)
+        naps_games = __import__(GAMES_MODULE)
         from board_encoding import augment_sample
 
         workers = _resolve_workers(max_workers)
@@ -426,25 +426,25 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
         if play_league:
             for i in range(num_league_games):
                 tid = f"league{i}"
-                opening = prod._OPENING_SQUARES[(i + epoch) % len(prod._OPENING_SQUARES)]
+                opening = naps_games.OPENING_SQUARES[(i + epoch) % len(naps_games.OPENING_SQUARES)]
                 tasks.append((tid, "league", (i % 2 == 0, opening, league_tags[i % len(league_tags)]), vsdet_cfg))
                 league_ids.append(tid)
         vsdet_depths = []
         if play_vsdet:
-            vsdet_depths = [prod._sample_vs_det_max_depth(epoch) for _ in range(num_vs_det_games)]
+            vsdet_depths = [naps_games.sample_vs_det_max_depth(epoch) for _ in range(num_vs_det_games)]
             for i in range(num_vs_det_games):
                 tid = f"vsdet{i}"
-                opening = prod._OPENING_SQUARES[(i + epoch) % len(prod._OPENING_SQUARES)]
+                opening = naps_games.OPENING_SQUARES[(i + epoch) % len(naps_games.OPENING_SQUARES)]
                 tasks.append((tid, "vsdet", (i % 2 == 0, opening, vsdet_depths[i]), vsdet_cfg))
                 vsdet_ids.append(tid)
         for i in range(num_self_play_games):
             start_board, start_player = None, None
             if i < num_curriculum_games:
-                sampled = prod._sample_tactical_start()
+                sampled = naps_games.sample_tactical_start()
                 if sampled is not None:
                     start_board, start_player = sampled
             elif i < num_curriculum_games + num_opening_games:
-                start_board, start_player = prod._sample_forced_opening_start()
+                start_board, start_player = naps_games.sample_forced_opening_start()
             tid = f"self{i}"
             tasks.append((tid, "self", (start_board, start_player), selfplay_cfg))
             self_ids.append(tid)
@@ -462,7 +462,7 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
             try:
                 import selfplay_cpp
                 if selfplay_cpp.enabled():
-                    results = selfplay_cpp.run_tasks(tasks, models, device, prod, TAG_GEN)
+                    results = selfplay_cpp.run_tasks(tasks, models, device, naps_games, TAG_GEN)
                     print(f"  [C++ self-play] {len(tasks)} games: {selfplay_cpp.LAST_STATS}", flush=True)
             except Exception as e:  # noqa: BLE001
                 print(f"  [C++ self-play] FAILED ({e!r}) -- playing this epoch in the worker pool", flush=True)
@@ -470,16 +470,16 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
         if results is None:
             results = pool.run_tasks(tasks, stall_timeout=stall_timeout)
 
-        mix = prod.mixed_value_target
-        sp_samples, sp_counts, opening_rows = _aggregate_selfplay([results[t] for t in self_ids], augment_sample,
+        mix = naps_games.mixed_value_target
+        sp_samples, sp_counts, opening_rows = aggregate_selfplay([results[t] for t in self_ids], augment_sample,
                                                                   mix, value_q_weight)
         vd_samples, vd_counts = (None, None)
         if play_vsdet:
-            vd_samples, vd_counts = _aggregate_vsdet([results[t] for t in vsdet_ids], vsdet_depths, augment_sample,
+            vd_samples, vd_counts = aggregate_vsdet([results[t] for t in vsdet_ids], vsdet_depths, augment_sample,
                                                      mix, value_q_weight)
         lg_samples, lg_counts = (None, None)
         if play_league:
-            lg_samples, lg_counts = _aggregate_league([results[t] for t in league_ids], augment_sample,
+            lg_samples, lg_counts = aggregate_league([results[t] for t in league_ids], augment_sample,
                                                       mix, value_q_weight)
 
         elapsed = time.monotonic() - t0
@@ -490,7 +490,7 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
         if play_vsdet:
             print(f"Generated {len(vd_samples)} augmented vs-Deterministic training samples [unified]. "
                   f"Outcomes: MCTS {vd_counts['mcts_win']} / Det {vd_counts['det_win']} / "
-                  f"Draw {vd_counts['draw']} | {prod.format_by_depth(vd_counts['by_depth'])}", flush=True)
+                  f"Draw {vd_counts['draw']} | {naps_games.format_by_depth(vd_counts['by_depth'])}", flush=True)
         if play_league:
             print(f"Generated {len(lg_samples)} augmented vs-League training samples [unified]. "
                   f"Outcomes: MCTS {lg_counts['mcts_win']} / League {lg_counts['league_win']} / "
@@ -574,7 +574,7 @@ class UnifiedTaskRunner:
         Returns (games, flagged): games = [(plies, outcome)] in that order;
         flagged = the concatenated per-game hard-example lists, deduped
         keeping first occurrence -- identical to running
-        _classify_hard_examples once over all games in that order."""
+        classify_hard_examples once over all games in that order."""
         was_training = model.training
         model.eval()
         models = {TAG_TRAIN: model}
@@ -606,7 +606,7 @@ class UnifiedTaskRunner:
 
     def relabel(self, model, device, items, sims):
         """Relabels `items` (already selected/ordered by
-        _order_relabel_candidates) in parallel; returns results in the same
+        order_relabel_candidates) in parallel; returns results in the same
         order, dropping items whose search found no children."""
         if not items:
             return []

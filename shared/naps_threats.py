@@ -6,7 +6,7 @@ from mcts_cpp import BOARD_SIZE, fast_check_win
 from fast_board import WIN_LENGTH
 
 
-def _threat_gaps(board, color, windows):
+def threat_gaps(board, color, windows):
     """Every (r, c) where `color` already has 4-of-5 filled and exactly one
     empty cell in some tactical window -- the same test
     refresh_mined_tactical_pool's own pattern scan uses, factored out so the
@@ -20,8 +20,8 @@ def _threat_gaps(board, color, windows):
     return gaps
 
 
-def _fork_hits(board, color, forks):
-    """Every fork center (see _fork_geometries) where `color` already holds
+def fork_hits(board, color, forks):
+    """Every fork center (see fork_geometries) where `color` already holds
     all 4 stone cells with both open ends still empty and the center itself
     still empty -- i.e. a live, not-yet-taken/denied fork."""
     hits = []
@@ -35,7 +35,7 @@ def _fork_hits(board, color, forks):
     return hits
 
 
-def _opponent_can_fork_next(board, opponent):
+def opponent_can_fork_next(board, opponent):
     """True if `opponent` has SOME reply (placed right now) that either wins
     outright or creates 2+ simultaneous immediate-winning cells for
     `opponent` -- i.e. the position already contains a next-move fork
@@ -49,7 +49,7 @@ def _opponent_can_fork_next(board, opponent):
     mined game plies at refresh_mined_tactical_pool's cadence, not in the
     self-play hot loop."""
     # 15x15, now every run: same answer, window-based. The brute force was O(N^6) fast_check_win
-    # calls per _fork_safe_cells and stalled the relabel step for 30+ minutes on 15x15.
+    # calls per fork_safe_cells and stalled the relabel step for 30+ minutes on 15x15.
     if _immediate_win_cells(board, opponent):
         return True
     # With no win cell on the board, a reply can only create one inside a window that already holds
@@ -70,10 +70,10 @@ def _opponent_can_fork_next(board, opponent):
 
 def _immediate_win_cells(board, color):
     """Every empty cell where placing `color` right now completes 5-in-a-row.
-    Template-free (unlike _fork_hits/_fork_geometries, which only match the
+    Template-free (unlike fork_hits/fork_geometries, which only match the
     clean symmetric double-open-three shape) -- brute-forces every empty
     cell through fast_check_win, so it also catches irregular, real-game
-    multi-threat shapes _fork_geometries structurally can't represent.
+    multi-threat shapes fork_geometries structurally can't represent.
     len(...) >= 2 means an UNSTOPPABLE fork for whoever must move next (no
     single move blocks two simultaneous winning replies).
 
@@ -101,12 +101,12 @@ _WIN_WINDOWS = [[(r + k * dr, c + k * dc) for k in range(WIN_LENGTH)]
                 if 0 <= r + (WIN_LENGTH - 1) * dr < BOARD_SIZE and 0 <= c + (WIN_LENGTH - 1) * dc < BOARD_SIZE]
 
 
-def _fork_safe_cells(board, player, other):
+def fork_safe_cells(board, player, other):
     """Every empty cell where `player` moving there does NOT hand `other` an
     unstoppable next-move fork (winning outright always counts as safe too)
-    -- the Hard-7 analogue of _threat_gaps' g_p/g_o: a verified, brute-force
+    -- the Hard-7 analogue of threat_gaps' g_p/g_o: a verified, brute-force
     ground truth for "which replies are actually correct here", not just
-    "is a fork possible". Used by _relabel_hard_examples to force the
+    "is a fork possible". Used by relabel_hard_examples to force the
     Hard-7 policy target onto a real safe cell when the re-searched MCTS
     visit distribution doesn't already favor one -- mirrors how hard_class
     1/2 force their policy onto g_p/g_o. Without this, Hard-7's policy
@@ -115,9 +115,9 @@ def _fork_safe_cells(board, player, other):
     (2026-09-24 session) showed can itself fail to concentrate visits on
     the best-Q move -- i.e. the relabel step could silently inherit and
     reinforce the same policy-prior blind spot it's meant to correct.
-    O(BOARD_SIZE^2) candidate moves x _opponent_can_fork_next's own
+    O(BOARD_SIZE^2) candidate moves x opponent_can_fork_next's own
     O(BOARD_SIZE^2)-worst-case scan; only run inside
-    _relabel_hard_examples's already-capped (RELABEL_CAP) pass, not the
+    relabel_hard_examples's already-capped (RELABEL_CAP) pass, not the
     self-play hot loop."""
     safe = []
     for r in range(BOARD_SIZE):
@@ -127,7 +127,7 @@ def _fork_safe_cells(board, player, other):
             board[r][c] = player
             if fast_check_win(board, player):
                 safe.append((r, c))
-            elif not _opponent_can_fork_next(board, other):
+            elif not opponent_can_fork_next(board, other):
                 safe.append((r, c))
             board[r][c] = ' '
     return safe

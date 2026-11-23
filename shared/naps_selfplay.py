@@ -1,5 +1,5 @@
-"""One self-play game with the C++ MCTS (_play_one_mcts_game) and a batch of them (generate_mcts_self_play_data).
-The multiprocess pools (selfplay_pool_fallback.py, selfplay_pool.py) call _play_one_mcts_game directly.
+"""One self-play game with the C++ MCTS (play_one_mcts_game) and a batch of them (generate_mcts_self_play_data).
+The multiprocess pools (selfplay_pool_fallback.py, selfplay_pool.py) call play_one_mcts_game directly.
 """
 import numpy as np
 import os
@@ -11,10 +11,10 @@ from run_config import EVAL_BATCH
 from nets import SURVIVAL_CAP
 from board_encoding import augment_sample, board_to_input_array
 from naps_common import mixed_value_target, sims_for_state
-from naps_openings import _sample_forced_opening_start, _sample_tactical_start
+from naps_openings import sample_forced_opening_start, sample_tactical_start
 
 
-def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost_threshold=0,
+def play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost_threshold=0,
                          temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25, c_puct=1.414,
                          eval_cache=None, boost_when_narrow=False, start_board=None, start_player=None,
                          pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
@@ -38,7 +38,7 @@ def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost
     for the whole generation phase.
 
     start_board/start_player (both or neither): start from this board
-    instead of empty -- see _sample_tactical_start, used to occasionally
+    instead of empty -- see sample_tactical_start, used to occasionally
     start self-play from a reachable "hard" tactical position instead of
     always from scratch, so self-play encounters that family of positions
     (and must resolve it with its own search) more often than it would
@@ -183,12 +183,12 @@ def generate_mcts_self_play_data(model, device, num_games=10, num_simulations=40
         for i in range(num_games):
             start_board, start_player = None, None
             if i < num_curriculum_games:
-                sampled = _sample_tactical_start()
+                sampled = sample_tactical_start()
                 if sampled is not None:
                     start_board, start_player = sampled
             elif i < num_curriculum_games + num_opening_games:
-                start_board, start_player = _sample_forced_opening_start()
-            futures.append(pool.submit(_play_one_mcts_game, model, device, num_simulations, boosted_sims,
+                start_board, start_player = sample_forced_opening_start()
+            futures.append(pool.submit(play_one_mcts_game, model, device, num_simulations, boosted_sims,
                                         boost_threshold, temperature_moves, dirichlet_alpha, noise_weight, c_puct,
                                         eval_cache, boost_when_narrow, start_board, start_player, pooled_evaluator,
                                         full_search_prob, fast_sims, True, max_plies))

@@ -45,6 +45,7 @@ OMOK_RUN=11x11_v2 python shared/ladder_ci.py
 | `naps_threats.py` | 판 위협 검사: 4목의 빈칸, 포크 자리, 바로 이기는 자리, 상대가 다음 수에 포크를 만들 수 있는지 |
 | `naps_tactical_refresh.py` | 전술 보강 학습: 합성·채굴 전술 국면으로 몇 에폭 지도학습, 에폭마다 열린 3 국면 주입 |
 | `mcts_cpp.py` | MCTS: 신경망 평가를 C++ 엔진에 연결 (v2 엔진이면 VCF·MEGA 인자도 넘김) |
+| `naps_games.py` | 대국 풀의 작업자가 부르는 게임 함수 목록 (자가대국·미니맥스·리그·게이트 한 판, 채굴, 재라벨). 학습기의 함수를 그대로 가져온다 |
 | `selfplay_pool.py` | 대국 풀 (주 경로): 한 에폭의 자가대국·미니맥스·리그 대국과 보강·게이트 작업을 프로세스 10개가 한 대기열에서 나눠 둔다 (v2는 C++ 스레드 자가대국 `11x11_v2/selfplay_cpp.py`) |
 | `selfplay_pool_tasks.py` | 대국 풀의 작업자가 작업 하나를 처리하는 법, 끝난 대국을 학습 표본으로 바꾸는 법 (출처별 가중치) |
 | `selfplay_pool_evaluator.py` | 대국 풀의 GPU 평가: 작업자들의 평가 요청을 모델별로 모아 한 번에 계산 |

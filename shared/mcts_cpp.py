@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import os
 
-from board_encoding import (board_to_input_tensor, board_to_input_array, boards_to_input_tensor, board_to_input_array_from_numeric, _fork_mask)
+from board_encoding import (board_to_input_tensor, board_to_input_array, boards_to_input_tensor, board_to_input_array_from_numeric, fork_mask)
 # Gen12: V2 architecture (GroupNorm+SE), see nets.py
 from nets import GomokuNetV3 as GomokuNet
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, fast_check_draw
@@ -20,7 +20,7 @@ def _board_to_input_array_batch_from_numeric(boards_list, players_list):
     Verified byte-identical to the per-item version across 300 randomized
     trials (scratchpad/vectorize_eval/test_vectorized_conversion.py) --
     vectorizes only the curr/opp/empty plane comparisons across the whole
-    batch (3 big numpy calls instead of 3*N tiny ones); _fork_mask stays
+    batch (3 big numpy calls instead of 3*N tiny ones); fork_mask stays
     per-board since it already dispatches to a fast C++ extension and
     batching THAT would require changing the compiled engine, out of scope
     here. Measured ~1.2x on the plane-construction step alone at batch=24
@@ -35,8 +35,8 @@ def _board_to_input_array_batch_from_numeric(boards_list, players_list):
     empty_planes = (arr == 0).astype(np.float32)
     out = []
     for i in range(n):
-        fork_self = _fork_mask(curr_planes[i], empty_planes[i])
-        fork_opp = _fork_mask(opp_planes[i], empty_planes[i])
+        fork_self = fork_mask(curr_planes[i], empty_planes[i])
+        fork_opp = fork_mask(opp_planes[i], empty_planes[i])
         out.append(np.stack([curr_planes[i], opp_planes[i], empty_planes[i], fork_self, fork_opp]))
     return out
 
