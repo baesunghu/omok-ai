@@ -55,24 +55,14 @@ def generate_tactical_examples():
 # ------------------------------------------------------------
 # Closed-three and double-three-fork curricula
 # ------------------------------------------------------------
-# Two more tactical blind spots, diagnosed separately (see
-# scratch/multiproc_investigation/closed_three_diagnostic_newrun.py and
-# double_three_fork_diagnostic.py) as weak even on the latest checkpoint,
-# and NOT covered by the 4-of-5-gap family above (that family is always 4
-# stones + 1 gap; both shapes here are one filled square short of it):
-#   - closed-three: 3-in-a-row blocked on one end, open (with room to
-#     extend) on the other. Offense = extend into the open end. Defense =
-#     block the open end first.
-#   - double-three-fork: a single point that completes an open-three in
-#     two directions at once (unstoppable -- the defender can only block
-#     one line). Offense = play the shared point to create the fork.
-#     Defense = play it first to deny the opponent's fork.
-# Unlike the 4-of-5-gap family, NEITHER pattern's correct move is ever a
-# provable win on its own (extending/blocking a closed-three, or
-# creating/denying a fork, doesn't complete a 5-in-a-row) -- so both
-# offense and defense are policy-only here, mover_completes always False.
-# This keeps the two new curricula symmetric by construction, unlike the
-# existing family's offense/defense value-supervision asymmetry.
+# Two blind spots that stayed weak on the latest checkpoints and that the 4-of-5-gap family (always 4 stones + 1
+# gap) does not cover -- both are one stone short of it:
+#   - closed three: three in a row, blocked at one end, room at the other. Offense extends into the open end;
+#     defense blocks it first.
+#   - double-three fork: one point completes an open three in two directions at once (the defender can block only
+#     one). Offense plays the shared point; defense takes it first.
+# Neither correct move is a provable win on its own, so offense and defense are both policy-only
+# (mover_completes always False).
 _FORK_DIRECTION_PAIRS = [(TACTICAL_DIRECTIONS[i], TACTICAL_DIRECTIONS[j])
                          for i in range(len(TACTICAL_DIRECTIONS))
                          for j in range(i + 1, len(TACTICAL_DIRECTIONS))]
@@ -231,22 +221,11 @@ def _double_four_geometries():
 
 def generate_double_four_examples():
     """
-    OFFENSE: the mover ('X') owns all 6 stones (3 per direction); playing
-    the shared center cell completes a four in both directions at once --
-    each threatens a win next move via its own open end, and the defender
-    can only block one, a strictly more decisive threat than the open-three
-    fork (generate_fork_examples) even though, like that fork, it is one
-    move short of an outright win itself. DEFENSE: 'O' owns all 6 stones
-    (would create the double-four if 'O' got to move next); the mover ('X')
-    must occupy the shared center FIRST to deny it -- same target cell
-    either way. mover_completes is always False for the same reason
-    generate_fork_examples' is: completing/denying this shape isn't itself
-    a provable 5-in-a-row.
-
-    Each geometry gets a clean variant plus a couple of clutter variants
-    (reusing tactical_clutter, same pattern as generate_fork_examples),
-    excluding both the stone cells and the required-open end cells so
-    clutter can't collide with either.
+    Double four. OFFENSE: X owns the 6 stones (3 per direction); playing the shared centre makes a four in both
+    directions, each threatening to win through its open end, and the defender can block only one. DEFENSE: O owns
+    them; X must take the centre first. Same target cell either way. mover_completes is always False (the move is
+    not itself five in a row). Each geometry gets a clean variant and a few cluttered ones (tactical_clutter), with
+    clutter kept off the stones and the required open ends.
     """
     examples = []
     for center, stone_cells, open_cells in _double_four_geometries():
@@ -271,41 +250,22 @@ def generate_double_four_examples():
 # ------------------------------------------------------------
 # Open-three curriculum
 # ------------------------------------------------------------
-# (added after re-diagnosing the HLT-loss value/MCTS blind spot --
-# see scratch/multiproc_investigation/rediag_value_blindspot.py, run against
-# the live epoch443 checkpoint): a genuine OPEN three (3-in-a-row with BOTH
-# immediately-flanking cells empty) is a shape this curriculum never actually
-# covered. generate_tactical_examples' "4-of-5-gap" family is always one move
-# from a proven outcome (mover_completes or a single forced block);
-# generate_closed_three_examples' shape has only ONE open end. An open three
-# has TWO equally-correct response cells (either flank creates/denies an open
-# four), and re-testing 6 real/synthetic open-three positions against the
-# live checkpoint found the model still gets roughly half of them wrong --
-# MCTS converging on an unrelated move despite the raw policy prior usually
-# still ranking at least one true response cell near the top -- the same
-# "good-ish prior, MCTS/value diverges" pattern diagnosed earlier, just never
-# targeted by a dedicated curriculum shape until now.
+# A genuine OPEN three (three in a row with both flanking cells empty) has TWO equally correct replies -- either
+# flank makes or denies an open four. The 4-of-5-gap family is always one move from a proven outcome and the
+# closed-three family has one open end, so this shape was never covered; on 6 real and synthetic open-three
+# positions the ep443 checkpoint got about half wrong, the search settling on an unrelated move although the policy
+# prior usually ranked a correct cell near the top.
 def generate_open_three_examples():
     """
-    Reuses _closed_three_spans()'s exact 5-cell (k=-1..3) windows, but
-    treats BOTH end cells (index 0 and index 4) as empty and equally
-    correct, instead of one being an occupied blocker and the other the
-    sole target -- so each variant yields TWO rows for the SAME board (one
-    per valid end), which _multi_label_targets_from_rows groups back into a
-    single 50/50 target over both cells, exactly like the two symmetric
-    block cells in generate_tactical_examples' gap family.
-
-    OFFENSE: mover ('X') owns the three-stone line; either end extends it
-    into an open four. DEFENSE: 'O' owns the three-stone line; the mover
-    ('X') must occupy either end to prevent the open four. Neither is a
-    provable 5-in-a-row on its own, so mover_completes is always False --
-    same policy-only convention as generate_closed_three_examples/
-    generate_fork_examples/generate_double_four_examples.
+    Open three, on _closed_three_spans' 5-cell windows with BOTH ends empty and equally correct: each variant gives
+    two rows for the same board, which _multi_label_targets_from_rows merges into one 50/50 target. OFFENSE: X owns
+    the three and either end makes an open four. DEFENSE: O owns it and X must take an end. mover_completes is
+    always False (policy-only, like the closed-three, fork and double-four families).
     """
     examples = []
     for cells in _closed_three_spans():
         end1, three_cells, end2 = cells[0], cells[1:4], cells[4]
-        # edge/corner oversampling (added earlier today, REMOVED
+        # edge/corner oversampling (tried, then REMOVED
         # here) -- the organic self-play open-three test
         # (open3_organic_test.py) found the model missing threats located
         # centrally while repeatedly playing near row 0 instead, matching
@@ -319,24 +279,10 @@ def generate_open_three_examples():
         n_variants = 14
         for offense in (True, False):
             three_color = 'X' if offense else 'O'
-            # 3->8 variants (1 clean + more clutter diversity) --
-            # open-three defense is the pattern the passive open3 tracker
-            # has shown persistently flat/noisy (0.2-0.7 miss rate) despite
-            # training, so this deliberately over-represents it relative to
-            # the other four tactical families in the combined curriculum.
-            # 8->14 -- tactical_refresh() (the periodic burst
-            # supervised re-injection this curriculum used to feed) was
-            # removed the same day: isolated testing
-            # (scratch/.../tactical_refresh_destroy_test.py) measured ONE
-            # refresh call immediately dropping vs-Det win rate 65%->25%,
-            # and a separate retention check
-            # (scratch/.../tactical_retention_check.py) found that gain
-            # decayed from ~100% back to ~70% tactical accuracy within just
-            # 2 epochs anyway -- net negative. Replaced by continuous
-            # per-epoch injection into the ordinary replay buffer (see
-            # get_open_three_injection_samples), so this pool now needs
-            # more inherent variant diversity since it's no longer refreshed
-            # by a dedicated fine-tuning pass, just sampled from directly.
+            # 14 variants (1 clean + clutter): open-three defense stayed flat and noisy in the open-three tracker
+            # (0.2-0.7 miss rate), so it is over-represented on purpose. These positions now reach training only
+            # through the per-epoch injection (get_open_three_injection_samples; the periodic tactical_refresh burst
+            # cost more than it gained), so the pool itself needs the variety.
             for variant in range(n_variants):  # was: flat range(14); now edge/corner-weighted
                 board = [[' '] * BOARD_SIZE for _ in range(BOARD_SIZE)]
                 for (r, c) in three_cells:
@@ -355,25 +301,13 @@ def generate_open_three_examples():
 # ------------------------------------------------------------
 # Diagnosed-position hard-mining
 # ------------------------------------------------------------
-# Position A (epoch291 HLT loss) is a real open-three-defense
-# instance whose raw POLICY prior (not just the value head/MCTS search) has
-# drifted onto the historically-wrong move after repeated self-play/HLT
-# reinforcement -- confirmed by direct re-check against the live checkpoint
-# (rank 1/121, 12.6% prior on the wrong cell, vs the two correct blocks at
-# 3-5% each). A diffuse generic curriculum (generate_open_three_examples
-# above) teaches the general shape but has no special weight on this EXACT,
-# already-entrenched association -- unlearning it needs direct, repeated
-# counter-supervision on the specific pattern, not just broader coverage.
-# Position B (live test game, Claude vs the epoch462-promoted
-# checkpoint) -- a DIAGONAL open-three missed in a denser, real-game-like
-# position (5 X + 4 O stones already on the board, unlike Position A's
-# emptier board) despite the model correctly blocking a near-identical
-# horizontal open-three earlier in the SAME game. Confirms the open-three
-# fix from generate_open_three_examples works on the shape in isolation but
-# does not yet fully generalize to busier boards -- clutter density was
-# widened 3-36 (was 3-6, see tactical_clutter calls throughout this file)
-# specifically to close this gap generically, and this exact position is
-# also hard-mined directly, same rationale as Position A.
+# Positions taken from real losses, supervised directly because a general curriculum did not undo them:
+# A (ep291 loss to a human): open-three defence where the raw POLICY prior itself had settled on the wrong move
+#   (rank 1/121, 12.6%, against 3-5% for each correct block) -- an entrenched association needs repeated
+#   counter-examples on this exact pattern, not just broader coverage.
+# B (test game against the ep462 checkpoint): a DIAGONAL open three missed on a busier board (5 X + 4 O), although
+#   the same game had blocked a near-identical horizontal one -- the open-three fix had not generalized to crowded
+#   boards. Clutter density was widened from 3-6 to 3-36 stones for that, and this position is added as well.
 _DIAGNOSED_POSITIONS = [
     # (moves, current_player, correct_response_cells)
     (
@@ -444,8 +378,7 @@ _DIAGNOSED_POSITIONS = [
     # Position F: HLT (human) loss for Gen13/NAPS, epoch129,
     # cumulative_epoch 129 checkpoint. Root value swung to +0.977 (AI very
     # confident of winning) at move 24, then collapsed to -0.921 by move 36
-    # as the human found the refutation -- see the session's HLT-analysis
-    # discussion. Root cause traced by replaying row 8's stone history:
+    # as the human found the refutation. Root cause traced by replaying row 8's stone history:
     # after X's move at (8,3) (ply 35), row 8 reads "...X.XXXOX." -- X at
     # cols 3,5,6,7 with a SINGLE empty gap at col 4 and O blocking col 8.
     # This is a plain 4-of-5-gap shape (the OLDEST tactical curriculum

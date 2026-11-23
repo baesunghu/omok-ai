@@ -69,21 +69,11 @@ def opponent_can_fork_next(board, opponent):
 
 
 def _immediate_win_cells(board, color):
-    """Every empty cell where placing `color` right now completes 5-in-a-row.
-    Template-free (unlike fork_hits/fork_geometries, which only match the
-    clean symmetric double-open-three shape) -- brute-forces every empty
-    cell through fast_check_win, so it also catches irregular, real-game
-    multi-threat shapes fork_geometries structurally can't represent.
-    len(...) >= 2 means an UNSTOPPABLE fork for whoever must move next (no
-    single move blocks two simultaneous winning replies).
-
-    2026-09-23: added after 4 straight HLT (human) losses this session, all
-    ending in this exact kind of fork, NONE of which were caught by the
-    existing (narrow, template-based) Hard-3 detector below -- see the
-    session's find_fork_points.py/test_fork_prevention.py scratch analysis.
-    O(BOARD_SIZE^2) fast_check_win calls per invocation; only run on
-    already-mined game plies (a few hundred per refresh cycle), not inside
-    the hot self-play loop itself.
+    """Every empty cell where placing `color` now completes five in a row, found by trying every empty cell with
+    fast_check_win -- unlike fork_hits / fork_geometries, which only match the clean double-open-three template, it
+    also sees the irregular multi-threat shapes of real games. Two or more cells mean an unstoppable fork for the
+    side to move next. Added after four straight losses to human players, all ending in such forks and none caught
+    by the template-based Hard-3. O(BOARD_SIZE^2) fast_check_win calls; used on mined plies only, not in self-play.
     """
     # 15x15, now every run: window scan instead of one fast_check_win per empty cell. A cell completes
     # 5+ in a row iff some 5-cell window through it holds 4 `color` stones and that one empty cell.
@@ -102,23 +92,12 @@ _WIN_WINDOWS = [[(r + k * dr, c + k * dc) for k in range(WIN_LENGTH)]
 
 
 def fork_safe_cells(board, player, other):
-    """Every empty cell where `player` moving there does NOT hand `other` an
-    unstoppable next-move fork (winning outright always counts as safe too)
-    -- the Hard-7 analogue of threat_gaps' g_p/g_o: a verified, brute-force
-    ground truth for "which replies are actually correct here", not just
-    "is a fork possible". Used by relabel_hard_examples to force the
-    Hard-7 policy target onto a real safe cell when the re-searched MCTS
-    visit distribution doesn't already favor one -- mirrors how hard_class
-    1/2 force their policy onto g_p/g_o. Without this, Hard-7's policy
-    target was just whatever a RELABEL_SIMS-budget search happened to
-    converge to, which an artificial verified-answer puzzle test
-    (2026-09-24 session) showed can itself fail to concentrate visits on
-    the best-Q move -- i.e. the relabel step could silently inherit and
-    reinforce the same policy-prior blind spot it's meant to correct.
-    O(BOARD_SIZE^2) candidate moves x opponent_can_fork_next's own
-    O(BOARD_SIZE^2)-worst-case scan; only run inside
-    relabel_hard_examples's already-capped (RELABEL_CAP) pass, not the
-    self-play hot loop."""
+    """Every empty cell where `player` moving there does NOT give `other` an unstoppable fork on the next move
+    (winning outright counts as safe) -- a brute-force answer to "which replies are correct here". relabel uses it to
+    move the Hard-7 policy target onto a safe cell when the re-search does not already favour one: a puzzle test
+    showed a RELABEL_SIMS search can itself fail to concentrate on the best move, so the relabel could reinforce the
+    very blind spot it is meant to fix. O(BOARD_SIZE^2) x opponent_can_fork_next per call; used only in the capped
+    relabel pass, not in self-play."""
     safe = []
     for r in range(BOARD_SIZE):
         for c in range(BOARD_SIZE):

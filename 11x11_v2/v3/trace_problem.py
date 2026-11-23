@@ -1,4 +1,4 @@
-"""Print the moves and our root values of one graded trial (2026-10-24: why did ep400 lose the corner-diagonal problem?).
+"""Print the moves and our root values of one graded trial (why did ep400 lose the corner-diagonal problem?).
 Usage (from 11x11_v2): python v3/trace_problem.py CKPT PROBLEM_ID SIMS"""
 import os as _os, sys as _sys
 _sys.path.append(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # repository root

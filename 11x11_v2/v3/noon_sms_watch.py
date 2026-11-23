@@ -1,6 +1,6 @@
-"""Text the user "epXXX 정오 달성!" when a v3 checkpoint meets the NOON bar (2026-10-24, user request).
+"""Text a phone when a v3 checkpoint meets the NOON (정오) bar.
 
-NOON (user, 10/23-24; all-or-nothing, no "quasi"):
+NOON (all-or-nothing, no "quasi"):
   every tier-1 problem passed (all 5, incl. the observation one) + every tier-2 problem (5/5) + tier 3 >= 15/18.
 Watches model/tactical_problem_log.jsonl every 60 s; one SMS per checkpoint, only for full official runs.
 SMS goes through shared/promotion_sms.py send() (Twilio credentials in %USERPROFILE%\\.naps_twilio.json).

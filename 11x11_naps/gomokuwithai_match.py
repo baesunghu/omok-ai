@@ -116,7 +116,7 @@ def mate_info(board):
 
 
 def vcf_line(board, side):
-    """2026-10-26 (user): the whole VCF line, rebuilt from the engine's first move: the attacker plays it, the
+    """The whole VCF line, rebuilt from the engine's first move: the attacker plays it, the
     defender blocks the one cell that would make five, and the engine is asked again -- until five is made.
     -> [[row, col, 'X'/'O'], ...] alternating attacker / defender."""
     b = [row[:] for row in board]

@@ -1,4 +1,4 @@
-"""How often does black win when Rapfi plays Rapfi on 11x11? (2026-10-25, user: is the 53:47 black:white value weight realistic?)
+"""How often does black win when Rapfi plays Rapfi on 11x11? (is the 53:47 black:white value weight realistic?)
 Same openings as the ladder (one X stone, then O to move; RAPFI_MORE_OPENINGS set = 25 cells within 2 of the centre),
 both sides Rapfi with the same node limit, game to five in a row or a full board (draw).
 Usage (from 11x11_v2): python v3/rapfi_colour_balance.py [nodes,...]

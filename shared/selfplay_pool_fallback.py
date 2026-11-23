@@ -1,148 +1,29 @@
-"""
-generate_mcts_self_play_data_mp
-===============================
-Multi-PROCESS drop-in replacement for
-``naps_trainer.generate_mcts_self_play_data`` (the
-ThreadPoolExecutor-based self-play game generator).
+"""Self-play in worker processes: the path the trainer falls back to when the main pool (selfplay_pool.py) is
+switched off or has failed. generate_mcts_self_play_data_mp stands in for naps_selfplay.generate_mcts_self_play_data
+(threads) and returns the same data.
 
-Derived from the "pipe_batch_local" candidate, which was selected over the
-"queue_pool" and "shared_memory" candidates. See WINNER_deploy_notes.md for
-the full selection rationale and -- importantly -- for the honest status of
-the PERFORMANCE claim, which is summarized here too because nobody should
-deploy this without reading it:
+Why processes: the Python glue around each leaf evaluation (board encoding, the evaluator round trip) holds the GIL,
+so ten self-play threads almost never had two requests pending at once (live log: 13,500 flushes, average batch 5 of
+a target 24, none reached). In processes the GPU batches fill (GPU use 10-40% -> 55-76%). A wall-clock speed-up was
+never shown: measured on the busy training laptop it landed at 0.78x and 1.21x, inside the noise.
 
-    NONE of the three candidates demonstrated a reproducible speedup.
-    Every benchmark was taken on a machine whose GPU and all 8 logical
-    cores were simultaneously saturated by the live production training
-    run, and the run-to-run noise (+-40%) was larger than any effect.
-    Independent re-measurements of this candidate landed at 0.78x and
-    1.21x -- i.e. indistinguishable from parity. This file is therefore a
-    DELIBERATE EXPERIMENT, not a proven optimization. It is built to be
-    safe to try in the live loop and trivial to back out, and it
-    instruments itself so the A/B answer can finally be measured under
-    real single-tenant conditions instead of under benchmark contention.
+How it works:
+- Workers are CPU-only processes started once per training run. They run the trainer's own play_one_mcts_game
+  (through naps_games), so the game logic cannot drift from the threaded version; only the evaluator differs.
+- A worker's evaluator (_PipeEvalProxy) sends one batch of leaves (up to 16 boards, already grouped by the C++
+  engine's search_batched) down its own Pipe and waits for the answer.
+- One thread in the training process (PipePooledEvaluator) owns the GPU and the model, so workers hold no weights
+  and are never stale. Its batching rule is the one in mcts_cpp.PooledEvaluator._run.
+- Finished games come back over a Queue, once per game.
 
-============================================================
-WHY THIS ARCHITECTURE (and why it beat the other two)
-============================================================
-The diagnosed problem: the "glue" work around each leaf evaluation (numpy
-board encoding + the evaluator submit/wait round trip) does NOT release the
-GIL, while both the GPU forward pass and the C++ MCTS tree walk do. With
-max_workers=10 self-play THREADS in one process, CPython serializes that
-glue across all of them.
+Safety (a 20,000-epoch run must not die): any failure tears the pool down and the epoch is re-run on the threaded
+function; after MAX_MP_STRIKES failures this path turns itself off for the process; MP_SELFPLAY_DISABLE=1 or the
+MP_SELFPLAY_OFF file turns it off; a stall is detected by lack of progress (about 3 minutes); a dying coordinator
+wakes every waiting worker with an error; workers are daemons and are shut down at exit.
 
-Corroborating evidence that is NOT wall-clock (and therefore not corrupted
-by benchmark contention) -- straight out of the live training log:
-
-    [PooledEvaluator stats] 13500 flushes, avg batch 5.0, max 20,
-    target_batch=24, 0/13500 (0%) hit target vs timed out short
-
-Every single flush times out short, at an average batch of 5 against a
-target of 24. Ten concurrent self-play threads essentially never have more
-than one eval request pending at the same instant. That is the GIL
-serialization, visible in production, right now. The shared_memory
-candidate independently measured GPU utilization rising from 10-40%
-(threaded) to 55-76% (multi-process), confirming the architecture does fix
-the batching. What remains unproven is whether fixing it actually buys
-wall-clock, since the real bottleneck may simply be the CPU-bound C++ tree
-walk on 8 already-oversubscribed cores.
-
-This candidate's structure:
-
-1. Worker processes (persistent pool, spawned ONCE per training run, never
-   respawned per epoch). Each is a plain CPU-only OS process with NO CUDA
-   context. It plays games by calling the production
-   ``play_one_mcts_game`` COMPLETELY UNMODIFIED, imported read-only from
-   the live tree. This is the decisive advantage over the other two
-   candidates, both of which hand-ported the game loop, the board encoding
-   and/or the augmentation logic into their own files -- creating a second
-   copy of production logic that would silently drift the moment anyone
-   edits the real one. Here, the only thing that differs from production is
-   the *evaluator object* plugged into MCTS; every rule, every curriculum
-   branch, every sampling decision is literally the same bytes.
-
-2. The evaluator plugged into each worker's ``MCTS(pooled_evaluator=...)``
-   is ``_PipeEvalProxy``, a duck-type of ``PooledEvaluator.submit()``. It
-   sends ONE numpy array per already-batched leaf group down a dedicated
-   ``multiprocessing.Pipe`` and blocks for the paired result.
-
-   The "batch_local" part comes free: the C++ engine's ``search_batched()``
-   already groups eval_batch_size=16 simulations' leaves per round via
-   virtual loss BEFORE calling back into Python. So one pipe message
-   already carries up to 16 boards -- roughly ceil(sims/16) round trips per
-   ply, not one per simulation.
-
-   A dedicated Pipe per worker (rather than one shared Queue) means writers
-   never contend on a shared lock; the coordinator reads all of them with a
-   single multiplexed ``multiprocessing.connection.wait()``.
-
-3. Exactly ONE thing owns the GPU: ``PipePooledEvaluator``, a background
-   THREAD in the MAIN process -- the same process that already holds
-   ``model`` on ``device``. No second CUDA context, no checkpoint
-   save/reload handshake, no weight-shipping, and therefore ZERO weight
-   staleness: workers never hold weights at all. (This is the other reason
-   this beat "shared_memory", which needed a separate GPU-owning process
-   and a per-call torch.save/torch.load round trip -- extra VRAM on a 4GB
-   GTX 1050 and real per-call latency.)
-
-   Its accumulate-until-target_batch-or-silence-gap logic is a direct port
-   of ``PooledEvaluator._run``, including that implementation's
-   silence-gap-not-deadline quirk, so the two are apples-to-apples at the
-   same target_batch/max_wait operating point.
-
-4. Finished games come back over an ordinary Queue -- once per game, not
-   once per simulation, so pickling cost there is amortized to nothing.
-
-============================================================
-SAFETY DESIGN (what makes this safe to gamble on in a live run)
-============================================================
-This is going into a 20000-epoch run that must not die. Every known
-failure mode degrades to "the original threaded implementation runs this
-epoch instead", never to a crash or a hang:
-
-* ANY exception from the MP path (worker death, GPU OOM in the coordinator,
-  IPC breakage, timeout) is caught, the pool is torn down, and the epoch is
-  transparently re-run on the ORIGINAL production threaded function. The
-  epoch still produces correct data; it just doesn't get the experiment.
-* After ``MAX_MP_STRIKES`` such failures the MP path disables itself for
-  the rest of the process. A recurring problem degrades to "we're just
-  running the old code", quietly and permanently.
-* Kill switch without editing any code: set ``MP_SELFPLAY_DISABLE=1`` in
-  the environment and this becomes a pure pass-through to the original.
-* Stall detection is PROGRESS-based, not a fixed deadline: as long as the
-  coordinator keeps flushing eval batches or games keep finishing, the call
-  is considered healthy. A genuinely wedged pool is caught in ~3 minutes
-  and falls back, instead of hanging for the 24 minutes a naive
-  games x per-game deadline would have allowed.
-* If the coordinator thread ever dies mid-flush, every worker blocked on
-  ``recv()`` is explicitly woken with an error sentinel so it fails fast,
-  rather than blocking forever on a pipe nobody will ever write to again.
-* Workers are daemon processes AND are shut down via atexit, so they cannot
-  outlive the trainer.
-
-============================================================
-KNOWN, DELIBERATE DEVIATIONS FROM THE ORIGINAL
-============================================================
-* ``eval_cache`` is accepted but IGNORED. There is no way to share the
-  caller's in-process dict with separate processes. Each worker keeps its
-  own process-local cache, reset when it sees a new call_id (== a new
-  epoch's frozen weights), so cache VALIDITY is identical -- a cached entry
-  is still a pure function of frozen weights. What is reduced is the DEGREE
-  of cross-game de-dup: in the production shape (num_games=8 spread over 10
-  workers) most workers see exactly one game, so they get little cross-game
-  reuse, whereas the original's single shared dict saw every game's boards
-  AND was additionally shared with the vs-Det / vs-League phases that still
-  run threaded. Cost: some extra GPU forward passes. Never a wrong value.
-  This is a real, unquantified handicap against the threaded baseline and
-  it is included in every measured number.
-* ``pooled_evaluator`` is accepted but IGNORED: the MP path must use its
-  own cross-process evaluator. The caller's PooledEvaluator is untouched
-  and continues serving the still-threaded vs-Det / vs-League phases.
-* Per-game randomness comes from each worker's own unseeded RNG stream
-  rather than one shared in-process stream. Self-play was never
-  reproducible run-to-run either way.
-* Only ``generate_mcts_self_play_data`` is replaced. vs-Deterministic and
-  vs-League generation stay on the threaded path.
+Deliberate differences from the threaded version: eval_cache and pooled_evaluator are ignored (each worker keeps its
+own cache for the epoch -- same values, fewer hits), each worker has its own RNG stream, and only self-play runs here
+(vs-Det and vs-League games stay threaded).
 """
 import atexit
 import multiprocessing as mp
@@ -805,25 +686,13 @@ def generate_mcts_self_play_data_mp(model, device, num_games=10, num_simulations
                                     pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
                                     target_batch=DEFAULT_TARGET_BATCH, max_wait=DEFAULT_MAX_WAIT,
                                     value_q_weight=0.0, max_plies=None):
-    """Multi-process drop-in for
-    ``naps_trainer.generate_mcts_self_play_data``.
+    """Multi-process stand-in for naps_selfplay.generate_mcts_self_play_data: same arguments (plus target_batch /
+    max_wait) and the same return value -- (raw_samples, outcome_counts), raw_samples being 8x-augmented
+    (board_3d, policy, value, sample_weight) rows and outcome_counts {'x_win', 'o_win', 'draw'}.
 
-    Identical call signature (plus target_batch/max_wait, which the original
-    hard-codes at its PooledEvaluator construction site rather than exposing)
-    and identical ``(raw_samples, outcome_counts)`` return contract:
-    raw_samples is a list of ``(aug_board_3d, aug_policy_flat, final_val,
-    sample_weight)`` rows, 8x dihedral-augmented, and outcome_counts is
-    ``{'x_win', 'o_win', 'draw'}`` summing to num_games.
-
-    ``eval_cache`` and ``pooled_evaluator`` are accepted for signature
-    compatibility but ignored on the MP path -- see the module docstring.
-    They ARE forwarded intact to the threaded implementation whenever this
-    falls back, so fallback behavior is byte-for-byte the original.
-
-    On ANY multi-process failure this transparently re-runs the epoch on the
-    original threaded implementation, so a bug here can cost time but can
-    never cost the training run.
-    """
+    eval_cache and pooled_evaluator are ignored here (see the module docstring) but passed unchanged to the threaded
+    function when this falls back. On any multi-process failure the epoch is re-run on the threaded function, so a
+    bug here costs time, never the run."""
     global _MP_STRIKES, _MP_PERMANENTLY_DISABLED
 
     # Exact original kwargs, kept so the fallback path is a perfect

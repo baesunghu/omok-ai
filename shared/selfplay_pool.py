@@ -1,46 +1,22 @@
-"""
-selfplay_pool (2026-09-26)
-================================
-One persistent multi-process pool that plays ALL of an epoch's training
-games at once -- self-play (including curriculum/opening starts),
-vs-Deterministic and vs-League -- instead of three back-to-back phases.
+"""The main self-play pool: one persistent set of worker processes plays ALL of an epoch's training games --
+self-play (including curriculum and opening starts), vs-Det and vs-League -- plus the refresh and gate tasks.
 
-Built from selfplay_pool_fallback.py (kept unchanged as the fallback path). Why:
+Why one pool: the older sequence (self-play in processes, then vs-Det and vs-League in threads) waited for the slowest
+game of each phase, so most workers sat idle at every phase's end; the two-game vs-League phase left 8 of 10 workers
+and most of the GPU idle (evaluator average batch 30 -> 22, "hit target" 57%). Here every game goes onto one queue
+(longest first) that 10 workers drain, and the GPU coordinator keeps getting full batches.
 
-* The old sequence ran self-play (multi-process), then vs-Det (threaded),
-  then vs-League (threaded). Each phase ends only when its slowest game
-  does, so the tail of every phase left most workers idle, and the
-  2-game vs-League phase kept 8 of 10 workers and most of the GPU idle
-  for its whole duration (live log: evaluator avg batch 30 -> 22 during
-  it, "hit target" falling to 57%).
-* Here every game of the epoch goes onto ONE task queue that 10 worker
-  processes pull from (longest games first), so workers stay busy until
-  the queue drains and the GPU coordinator keeps getting full batches.
+How it differs from selfplay_pool_fallback.py:
+- Workers take several task kinds and run the trainer's own game functions (naps_games) for each -- no ported game
+  logic, so nothing can drift.
+- Evaluation requests carry a model tag ('gen', 'league', 'train', 'best'); the coordinator batches per tag and runs
+  one forward pass per model. Workers still hold no weights.
+- Each worker keeps one cache per tag, reset every call (every epoch), so cached values stay valid.
+- Samples are built exactly as the trainer builds them, in the same order (selfplay_pool_tasks).
 
-What changed relative to selfplay_pool_fallback.py
----------------------------------------
-* Workers accept three task kinds ('self', 'vsdet', 'league') and call the
-  UNMODIFIED production game functions for each (same principle as before:
-  no hand-ported game logic, so nothing can silently drift).
-* Eval requests carry a model TAG ('gen' or 'league'). The coordinator
-  groups a flush by tag and runs one forward pass per model, so a league
-  game's opponent side is evaluated by the league checkpoint while
-  everything else uses the generation model. Workers still hold no
-  weights; the league model is handed to the coordinator per call.
-* Each worker keeps two process-local eval caches (gen / league), both
-  reset per call (= per epoch), so cache validity is unchanged.
-* Samples are aggregated exactly like the production functions
-  (value = outcome from the mover's side, weights 1.15 mover-won /
-  1.5 vs-Det / 1.25 vs-League, survival label for self-play only) and in
-  the same order (self-play, then vs-Det, then vs-League).
-
-Safety (same model as selfplay_pool_fallback.py)
--------------------------------------
-Any failure (worker death, coordinator/GPU error, IPC error, stall) tears
-the pool down and the epoch is re-run through `fallback()` -- the caller's
-original three-phase sequence -- so a bug here costs time, never the run.
-After MAX_STRIKES failures this path disables itself for the process.
-Kill switch mid-run: create PROD_DIR\\MP_UNIFIED_OFF (checked each epoch).
+Safety: any failure (a worker dying, a GPU or pipe error, a stall) tears the pool down and the epoch is re-run through
+fallback(), the caller's three-phase sequence -- a bug here costs time, never the run. After MAX_STRIKES failures this
+path turns itself off for the process. Turn it off mid-run by creating MP_UNIFIED_OFF in the run folder.
 """
 import atexit
 import multiprocessing as mp

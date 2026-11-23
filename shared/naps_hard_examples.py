@@ -145,34 +145,24 @@ def mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
 # ============================================================
 # Outcome-based hard-example mining
 # ============================================================
-# Adds a second, outcome/disagreement-based mining criterion on top of the
-# pattern-only scan below (threat_gaps mirrors that scan's own "4-of-5+gap"
-# test exactly, factored out so both share one implementation). Approved
-# design (see this session's diagnosis workflow, agent "diag:hard-mining-spec"):
+# A second mining criterion, based on outcome and disagreement, next to the pattern scan (threat_gaps is that
+# scan's "4-of-5 + gap" test). A position is flagged when:
 #   Hard-1: a winning move was available (own threat_gaps) and not played.
-#   Hard-2: opponent had an immediate winning threat and it was not blocked.
-#   Hard-3: a fork (fork_geometries) was available/threatened and not taken/denied.
-#   Hard-5: position within the last HARD5_LOOKBACK of the mover's own plies
-#           in a game that mover actually lost.
-#   Hard-6 (an addition, not in the original spec): the search's own
-#           visit distribution came out suspicion-of-degenerate flat for its
-#           candidate count -- see entropy_complexity_probe.py's finding that
-#           ~19% of the live buffer is EXACTLY uniform over its candidate set,
-#           a PUCT round-robin degeneracy when prior+value are both flat.
-# Relabeling deliberately does NOT imitate the opponent's move (that review
-# rejected minimax-as-teacher: a shallow, fixed depth-2 opponent is most
-# likely to be WRONG exactly where the model's own search disagrees with it
-# most). Instead every flagged position is re-searched with the model's OWN
-# MCTS at a boosted sim count and the resulting visit distribution becomes
-# the policy target -- purely a bigger dose of the exact fix already applied
-# this morning (more search), targeted at the positions where today's smaller
-# production budget still isn't enough.
+#   Hard-2: the opponent had an immediate winning threat and it was not blocked.
+#   Hard-3: a fork (fork_geometries) was available or threatened and not taken or denied.
+#   Hard-5: it is within the mover's last HARD5_LOOKBACK plies of a game the mover lost.
+#   Hard-6: the search's visit distribution is suspiciously flat for its candidate count (~19% of the buffer was
+#           exactly uniform over its candidates -- PUCT round-robin when prior and value are both flat).
+# Relabelling does NOT copy the opponent's move (a fixed depth-2 minimax is most likely wrong exactly where the
+# model's search disagrees with it). Each flagged position is searched again with the model's own MCTS at a boosted
+# sim count, and that visit distribution becomes the policy target -- more search, aimed where the normal budget
+# is not enough.
 HARD_EXAMPLE_POOL_PATH = f"model/hard_mined_examples{FILE_SUFFIX}.pkl"
 RELABEL_CAP = 256
 # 800 -> 1800: production's own sim budget auto-ramped past this
 # (currently 1100 base) since RELABEL_SIMS was first set, so the "bigger dose
 # of search" this relabeling is supposed to provide had quietly fallen BELOW
-# production depth. Direct measurement today (live_model_tactical_check.py)
+# production depth. A direct measurement (live_model_tactical_check.py)
 # found BLOCK-class positions (must defend a threat) still regress relative
 # to the raw prior at production's own 1100 sims (85%->80%), while H2 (missed
 # block) is the single largest hard-mining category by volume (~20-35/cycle)
@@ -325,35 +315,15 @@ def relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, e
             policy[forced[0] * BOARD_SIZE + forced[1]] = 1.0
 
     if hard_class == 1:
-        # 1.0 -> 0.95 (label smoothing). value_overfit_check.py
-        # found the live value head badly overconfident on FRESH,
-        # never-trained-on self-play games (held-out MSE 1.36 --
-        # worse than a constant-0 predictor; 61% of predictions
-        # saturated past |0.9|; the model's own "very confident"
-        # bucket only actually won ~67% of the time, not ~100%).
-        # Confident artificial labels (this class and Hard-7) are
-        # the most likely amplifier -- softening them off the
-        # tanh's saturated tail should reduce that overconfidence
-        # without giving up the corrective signal's direction.
+        # 0.95, not 1.0 (label smoothing): the value head was badly overconfident on fresh games (held-out MSE 1.36,
+        # worse than predicting 0; 61% of predictions past |0.9|; its "very confident" bucket won only ~67%), and
+        # confident artificial labels like this one are the likeliest amplifier.
         value = 0.95
     elif hard_class == 7:
-        # Unlike Hard-1/5, this is a confident NEGATIVE
-        # label, not a policy-only class -- letting `other` reach an
-        # unstoppable fork is a near-certain loss for `player`
-        # regardless of what happens afterward (session evidence:
-        # test_fork_prevention.py found 0/3 real HLT forks
-        # preventable even with a fresh 10000-sim search, so this
-        # needs a direct value correction, not just more search at
-        # relabel time). -1.0 -> -0.95: same label-smoothing
-        # rationale as Hard-1 above.
-        # REMOVED -- policy-only now (value=None). The
-        # board stored here is the position BEFORE the defender
-        # moves, where fork-safe replies exist, so "near-certain
-        # loss" was the value of the position AFTER a bad reply, not
-        # this one. pessimism_probe (14 Hard-7 positions, safe reply
-        # then best-vs-best playouts) measured raw value -0.78 vs an
-        # empirical outcome of -0.04: this label was teaching the
-        # value head that any fork threat means the game is lost.
+        # Policy-only (value=None). A value of -0.95 was used before, but the stored board is the position BEFORE the
+        # defender moves, where fork-safe replies exist; "near-certain loss" was the value after a bad reply. Measured on 14
+        # Hard-7 positions: raw value -0.78 against an actual outcome of -0.04 -- the label taught the value head that any
+        # fork threat loses.
         value = None
     elif hard_class == 5:
         value = float(outcome_for_player)
@@ -406,21 +376,11 @@ def get_hard_example_samples(device, n_positions=46, sample_weight=1.5):
 
 
 def get_fork_mistake_samples(n_positions=60, sample_weight=3.0):
-    """Per-epoch DEDICATED draw from the Hard-7 (general, template-free
-    fork) slice of the hard-mined pool, separate from
-    get_hard_example_samples' whole-pool draw.
-
-    2026-09-23: Hard-7 is currently a small fraction of the shared 8000-cap
-    pool (261/8000 the first time it was measured), so
-    get_hard_example_samples' n_positions=46 draw only pulls ~1-2 Hard-7
-    examples per epoch by chance -- measured directly
-    (hard7_adaptation_test.py): the live model still walked into 18/20
-    freshly-mined Hard-7 positions one epoch after mining, essentially no
-    real training exposure yet. This dedicated draw guarantees Hard-7 gets
-    real per-epoch volume regardless of how large the rest of the pool
-    (mostly Hard-5, outcome-based) grows around it. sample_weight=2.0
-    (higher than the shared draw's 1.5) since Hard-7 carries a confident
-    value=-1.0 label (see relabel_hard_examples), not a policy-only one.
+    """Per-epoch draw from the Hard-7 (general fork) part of the hard-example pool, separate from
+    get_hard_example_samples' draw over the whole pool. Hard-7 was a small share of the 8,000-position pool (261 when
+    first measured), so the shared draw of 46 picked ~1-2 per epoch, and one epoch after mining the model still
+    walked into 18 of 20 fresh Hard-7 positions. This draw gives Hard-7 a fixed volume however the rest of the pool
+    grows, with a higher sample_weight than the shared draw.
     """
     pool = load_hard_example_pool()
     h7 = [item for item in pool if item[4] == 7]

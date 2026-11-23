@@ -100,7 +100,7 @@ for _ep, _note in ((880, "축제 1순위 후보, 졸업 3/3"), (890, "Rapfi 최�
         MODELS[f"ep{_ep}"] = {"net": _load_net(_p),
                               "info": {"key": f"ep{_ep}", "name": f"NAPS-{_ep} ({_note})", "checkpoint": f"ep{_ep}.pth",
                                        "promoted_epoch": _ep, "saved": "2026-10-10"}}
-# NOON model v3 ep530 (정오 충족 10/25 14:14:29), the festival pick
+# NOON (정오) model: v3 ep530, met the bar 10/25 14:14:29; the festival pick
 _V3_530 = os.path.join(V3_DIR, "model", "v3_ep530.pth")
 if os.path.exists(_V3_530):
     MODELS["v3_ep530"] = {"net": _load_net(_V3_530),
@@ -347,7 +347,7 @@ def ai_think(g, gen):
 
 
 def mate_info(g):
-    """2026-10-26 (user): chess-style 'M n' for the board -- each side's VCF (win by continuous fours) from the
+    """Chess-style 'M n' for the board -- each side's VCF (win by continuous fours) from the
     engine, n = the attacker's moves. Cached per position; VCF only, so a slower forced win (threes) shows nothing."""
     key = len(g["moves"])
     if g.get("_mate", (None,))[0] != key:

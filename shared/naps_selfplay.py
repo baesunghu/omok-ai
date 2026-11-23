@@ -54,50 +54,22 @@ def play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost_
                          pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
                          return_ply_info=False, max_plies=None):
     """
-    Plays a single MCTS self-play game to completion and returns
-    (history, outcome), where history is a list of
-    (board_3d, player_turn, target_policy_map) tuples, pre-augmentation.
-    With return_ply_info=True it returns (history, outcome, ply_indices,
-    total_plies) instead: ply_indices[k] is the ply number (0-based, counted
-    from this game's start position) at which history[k] was recorded, and
-    total_plies is how many plies the game actually lasted. Needed for the
-    V3 survival target once Playout Cap Randomization skips recording
-    fast-search plies -- len(history) - k then undercounts the true
-    plies-to-end.
+    One self-play game. Returns (history, outcome): history holds (board_3d, player, target_policy_map, root value)
+    per recorded move, before augmentation. With return_ply_info=True it returns (history, outcome, ply_indices,
+    total_plies): the ply at which each history entry was recorded and the game's length, which the survival target
+    needs because skipped fast-search plies make len(history) undercount the plies left.
 
-    Builds its own MCTS() instance, but eval_cache (when passed) is shared
-    across every game and move in the calling epoch -- safe to call
-    concurrently from multiple worker threads because it's read-mostly
-    (dict get/set is GIL-atomic) and a pure function of the frozen weights
-    for the whole generation phase.
+    eval_cache, when given, is shared by every game of the epoch; that is safe across threads (dict get/set is atomic
+    under the GIL) and correct because the weights are frozen for the whole generation phase.
 
-    start_board/start_player (both or neither): start from this board
-    instead of empty -- see sample_tactical_start, used to occasionally
-    start self-play from a reachable "hard" tactical position instead of
-    always from scratch, so self-play encounters that family of positions
-    (and must resolve it with its own search) more often than it would
-    arise naturally from full-game rollouts.
+    start_board / start_player (both or neither): start from that position instead of an empty board (see
+    sample_tactical_start), so self-play meets hard tactical positions more often than full games would produce.
 
-    full_search_prob/fast_sims: Playout Cap Randomization (KataGo). At each
-    move, with probability full_search_prob run the normal (possibly
-    boosted) search and record it as a training target; otherwise run a
-    cheap fast_sims-simulation search just to pick a move and advance the
-    game, without recording it (a low-sim search's visit distribution is
-    too noisy to be a good policy target). Same total game count spends
-    less average compute per move, so the freed budget can go to more
-    games/more full searches elsewhere. full_search_prob=1.0 (default)
-    disables this -- every move is a full search and recorded, matching
-    prior behavior exactly.
-
-    2026-09-26 PCR fixes (no effect at full_search_prob=1.0):
-      * temperature sampling is keyed on the number of plies actually played
-        (`ply`), not len(history) -- with PCR, len(history) only counts the
-        recorded (full-search) plies, which would have stretched the
-        temperature_moves exploratory window over ~1/full_search_prob times
-        as many real moves.
-      * fast searches run without Dirichlet noise (KataGo: fast searches
-        exist to play strong moves cheaply, not to explore -- they are never
-        recorded as training targets).
+    full_search_prob / fast_sims: playout-cap randomization (KataGo). Each move is a full search (recorded as a
+    training target) with probability full_search_prob, else a cheap fast_sims search that only picks the move -- its
+    visit counts are too noisy to train on. full_search_prob=1.0 (default) records every move. Temperature counts plies
+    actually played, not recorded entries, and fast searches get no Dirichlet noise (they exist to play well cheaply,
+    not to explore).
     """
     mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     if start_board is not None:

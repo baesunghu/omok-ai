@@ -54,41 +54,18 @@ def _load_league_model(path, device):
 
 def pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch=0,
                            deep_history_prob=0.10, deep_history_min_epoch=100):
-    """Picks a frozen league opponent for this epoch's vs-League games.
+    """Picks the frozen opponent for this epoch's vs-League games. Returns (league_model, path), or None when
+    loading the best checkpoint failed or fewer than 2 snapshots exist (too early for league play to add anything).
 
-    With probability best_checkpoint_prob (checked first), loads the
-    tracked BEST_CHECKPOINT_PATH -- the strongest validated checkpoint,
-    always kept up to date by run_gating_check's promotion logic -- instead
-    of sampling from the snapshot pool at all. This guarantees a real,
-    strong sparring partner shows up in league play regardless of how the
-    plain recency-weighted draw below happens to fall.
-
-    Otherwise (or if that file doesn't exist), with probability
-    deep_history_prob (once epoch >= deep_history_min_epoch) samples
-    UNIFORMLY from the FULL snapshot history instead of just the most
-    recent pool_size -- the recency-weighted pool below permanently
-    excludes a snapshot once pool_size*10 epochs have passed it, so without
-    this the model would only ever face styles from its own recent past,
-    never its much-earlier (structurally weaker/more exploratory) self.
-    Kept low-probability and floored at deep_history_min_epoch so it stays
-    a small, occasional addition, not a replacement for the recency-weighted
-    pool that already does most of the work.
-
-    Otherwise, falls back to the existing snapshot pool: a random past
-    checkpoint snapshot from the most recent pool_size snapshots BY EPOCH
-    NUMBER, not filesystem mtime -- mtime can get scrambled by anything
-    that touches the files without touching training progress, e.g. a
-    backup pass or several snapshots written in quick succession right
-    around a restart. Sampling within that pool is recency-weighted
-    (linearly favoring the newest snapshot), not uniform, since the newest
-    snapshots are the most representative of the model's current style --
-    the whole point of league play is testing against strategies close to
-    what self-play might otherwise overfit to.
-
-    Returns (league_model, path), or None if the best-checkpoint load
-    failed, or if fewer than 2 snapshots exist yet -- too early in training
-    for league play to add anything over the fixed deterministic opponent
-    already in use."""
+    In this order:
+      * with probability best_checkpoint_prob, the tracked best checkpoint (BEST_CHECKPOINT_PATH) -- a strong
+        sparring partner whatever the draw below does;
+      * from epoch deep_history_min_epoch on, with probability deep_history_prob, a snapshot drawn uniformly from the
+        whole history -- the recent pool below never revisits old snapshots, so without this the model would only
+        meet its recent selves;
+      * otherwise one of the newest pool_size snapshots by epoch number (not file time, which backups and restarts
+        scramble), weighted toward the newest, since those play most like the current model.
+    """
     # Deterministic rotation over epochs --
     # epoch % 3 == 0 -> first anchor (Dawn ep625), == 1 -> second anchor (ep645),
     # == 2 -> the normal draw below (best / deep history / recency pool).
@@ -150,7 +127,7 @@ LEAGUE_NUM_OPPONENTS = 12  # Many opponents per epoch instead of one
 
 
 def pick_league_opponents_multi(device, k, pool_size=40, epoch=0):
-    """2026-10-08 (user, option A): k distinct league opponents for ONE epoch --
+    """k distinct league opponents for ONE epoch --
     the fixed anchors (Dawn ep625, ep645), the current best, one uniform pick from
     the whole snapshot history, and the rest recency-weighted from the newest
     pool_size snapshots without replacement. Returns [(model, path), ...]."""
@@ -194,29 +171,16 @@ def play_one_mcts_vs_league_game(model, league_model, device, num_simulations, m
                                    opening=None, league_pooled_evaluator=None, league_eval_cache=None,
                                    max_plies=None):
     """
-    Like play_one_mcts_vs_deterministic_game, but the opponent is a frozen
-    past checkpoint of this same model instead of deterministic_play. Both
-    sides' moves are recorded (the league opponent runs a real, always-full
-    search -- see league_sims below -- so its visit distribution is just as
-    valid a policy target as the live model's own): the live model was
-    previously only ever training on its own moves against the league pool,
-    never on the moves of the checkpoints that actually beat it, which
-    starved league-derived data of the one thing it could uniquely teach.
+    Like play_one_mcts_vs_deterministic_game, but the opponent is a frozen past checkpoint of the same model,
+    searching without noise. The league side's moves are recorded only when RECORD_LEAGUE_SIDE is on (off now: the
+    opponents are older and weaker, so their visit counts taught weaker moves).
 
-    opening (see play_one_mcts_vs_deterministic_game): pre-places X's first
-    move there before normal play resumes. The league side's own moves use
-    add_noise=False (greedy), so when it moves first, every game with the
-    same side assignment would otherwise replay the identical opening move.
+    opening: X's first stone is placed there first (the greedy league side would otherwise open identically in
+    every game with the same sides). league_pooled_evaluator / league_eval_cache route the league side's evaluations
+    separately -- a pool worker holds no weights, so its proxy must point at the league model; None (default) calls
+    league_model directly.
 
-    league_pooled_evaluator/league_eval_cache (2026-09-26, unified MP
-    game pool): route the LEAGUE side's leaf evaluations through a separate
-    evaluator/cache -- a worker process holds no weights, so it needs a
-    proxy that the GPU coordinator maps to the league model. Both default
-    to None, which keeps the original behavior (league side calls
-    league_model directly with a private per-search cache).
-
-    Returns (history, outcome, mcts_result): mcts_result is
-    'mcts'/'league'/'draw' from the live model's perspective.
+    Returns (history, outcome, result): result is 'mcts' / 'league' / 'draw' from the live model's side.
     """
     mcts_player = 'X' if mcts_plays_x else 'O'
     mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)

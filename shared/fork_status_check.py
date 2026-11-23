@@ -2,8 +2,7 @@
 One-shot combined status check: general training status (status_check.py)
 + Hard-7 (double-four fork) adaptation rate + open-three organic-miss
 trend (from track_open3_progress.py's own log) + the open-3-3 (T-shape)
-fork probe -- all in a single run, so it can be launched standalone
-without a live Claude session.
+fork probe -- all in a single run.
 
 Usage (from a PowerShell prompt):
 

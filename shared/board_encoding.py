@@ -34,8 +34,7 @@ INPUT_SIZE = NUM_CELLS * NUM_INPUT_CHANNELS
 # (mcts_core, deterministic_play_core) rather than adding a new numba
 # runtime dependency to this hot path. Verified byte-for-byte identical to
 # the pure-Python version below on 374 random/edge-case boards (including a
-# duplicate-threat-pair dedup stress case) both by the workflow agent and
-# independently re-verified in this session. Falls back to the pure-Python
+# duplicate-threat-pair dedup stress case), checked twice independently. Falls back to the pure-Python
 # implementation if the compiled extension isn't present (e.g. a different
 # machine/Python ABI) -- same try/except ImportError pattern as
 # mcts_cpp.py's _mcts_core.
@@ -92,50 +91,15 @@ def fork_mask(curr_plane, empty_plane):
 
 
 def _fork_mask_python(curr_plane, empty_plane):
-    """Returns a (BOARD_SIZE, BOARD_SIZE) float32 array with 1.0 at every
-    empty cell where placing a curr_plane-owner stone there would create 2
-    or more distinct empty cells that would each independently complete a
-    WIN_LENGTH-in-a-row on the following move (a "double threat" / fork).
+    """1.0 at every empty cell where a stone of curr_plane's owner would make a fork: two or more distinct empty cells
+    that would each complete WIN_LENGTH in a row on the next move. Returns a (BOARD_SIZE, BOARD_SIZE) float32 array.
 
-    O(num_lines) instead of the naive O(num_empty_cells * num_lines)
-    (simulate-every-candidate-then-rescan-everything) approach -- the naive
-    version was the dominant cost of MCTS search on the 10x10/11x11 boards
-    (measured: fork detection alone was ~60% of total simulation time).
-    Numerically verified identical to the naive simulate-per-candidate
-    version on 600+ random boards plus hand-built edge cases (including a
-    board with pre-existing separate threats before any hypothetical
-    placement, which the naive version's ">=2 total lit cells" definition
-    also counts).
-
-    Key fact this relies on: if a line already has exactly one empty cell
-    and candidate cell A (currently empty) belongs to that line, A MUST BE
-    that one empty cell -- so any line through A that is already an
-    immediate-win line has A itself as its target. That means placing at A
-    only removes A from the pre-existing lit set (if A itself was already
-    a winning move) and otherwise leaves every other pre-existing threat
-    untouched; the only NEW threats placing at A can create come from
-    lines that currently have exactly WIN_LENGTH-2 of curr's stones and
-    exactly 2 empty cells (one of which is A) -- filling A then completes
-    that line to WIN_LENGTH-1 with the OTHER empty cell as the new target.
-
-    2026-09-16: the per-candidate combination used to be a Python loop over
-    every empty cell (up to ~120 on a sparse board) that rebuilt a new set
-    via `(baseline_lit - {a}) | threats.get(a, set())` on EVERY iteration --
-    profiled as the single largest cost in the whole dataset-generation
-    pipeline (~74s of a 158s run, ~47%; board_to_input_array as a whole was
-    77%), because set construction/union has real per-call overhead even
-    when the sets involved are tiny. Rewritten to be fully vectorized: the
-    identity len((baseline_lit - {a}) | T) = baseline_count - [a in
-    baseline_lit] + len(T) - len(T & baseline_lit) (valid because `a` is
-    never a member of its own threat set T, by construction) is computed as
-    plain numpy array arithmetic over all cells at once -- the only
-    remaining Python loop is over `threats.items()`, bounded by ~2x the
-    count of "two-empty-cell" lines, not by empty-cell count. Verified
-    numerically identical to the original on 966+ boards (random densities
-    0-120 stones + hand-built edge cases including multiple simultaneous
-    baseline threats); measured ~1.25x faster in isolation, and this
-    function's overall dominance in board encoding means that carries
-    through to end-to-end dataset generation and self-play.
+    Works per line instead of simulating every candidate (that was ~60% of search time). The key fact: a line that
+    already has exactly one empty cell can only contain a candidate A if A is that cell, so placing at A can only
+    remove A from the existing winning cells; the only NEW threats come from lines with WIN_LENGTH-2 own stones and
+    exactly two empty cells, one of them A. The per-candidate count is plain numpy arithmetic over all cells
+    (|(lit - {a}) | T| = lit - [a in lit] + |T| - |T & lit|, since a is never in its own T). Checked identical to the
+    simulate-every-candidate version on 966+ boards, including boards with several existing threats.
     """
     L = WIN_LENGTH
     n_cells = BOARD_SIZE * BOARD_SIZE

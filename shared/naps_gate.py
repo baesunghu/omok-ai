@@ -18,29 +18,19 @@ from naps_openings import OPENING_SQUARES
 # ============================================================
 # Promotion Gate (AlphaGo Zero style)
 # ============================================================
-# A self-play policy trained by continuous gradient descent isn't guaranteed
-# to improve monotonically -- this project directly measured non-transitive
-# strength between checkpoints (beats one from 500 epochs ago, loses to one
-# from 100 epochs ago). AlphaGo Zero's fix was to never let raw, unvalidated
-# weights become the new baseline: a candidate must actually beat the current
-# best in fair (no-noise, full-search) play before it's promoted. This is the
-# lightweight version -- training itself is untouched (self-play/vs-Det/
-# vs-League still all use the continuously-updated `model` exactly as
-# before); only a separate BEST_CHECKPOINT_PATH is tracked and periodically
-# updated, giving a "most robustly-validated so far" checkpoint for
-# monitoring/deployment (e.g. play_vs_ai.py) independent of whatever the
-# latest raw weights happen to be doing.
+# A policy trained by gradient descent does not improve monotonically (checkpoints here were non-transitive: one beat
+# a checkpoint 500 epochs older and lost to one 100 epochs older). As in AlphaGo Zero, raw weights never become the
+# baseline: a candidate must beat the current best in fair play (no noise, full search). Training is untouched --
+# data generation keeps using the continuously updated model; only BEST_CHECKPOINT_PATH is tracked.
 BEST_CHECKPOINT_PATH = f"model/best_mcts{FILE_SUFFIX}.pth"
-GATE_PROMOTION_THRESHOLD = 0.35  # 0.55 (AlphaGo Zero, draws 0.5) -> 0.50 -> 0.25 -> 0.35 (6-8-6, an even result, scored 0.275 and promoted ep1005)
-# "a model that does not lose" -- a loss now costs points:
-# score = (wins + 0.5*draws - GATE_LOSS_PENALTY*losses) / n, promoted only if score > 0.50 (strictly).
-# With 0.75 that is exactly "wins > 2.5 x losses"; draws alone can never promote (all draws = 0.50).
-# Per-run settings (run_config.py): gate loss penalty (11x11 0.75, 15x15 0.4), gate opening radius, LR band,
-# MCTS eval batch and pooled-evaluator batch.
-# two-stage promotion. The gate (vs the current best only) can pick a model that is
-# weaker by the Rapfi ladder (ep1050 beat ep960 12-5-3 but measured 2,404 vs 4,432). A gate pass now only
-# makes a CANDIDATE: its weights go to model/gate_candidates/ and model/gate_candidate.json; the ladder
-# watcher measures it and promotes it (model/ladder_promote.json) only if it is not weaker than the best.
+# score = (wins + 0.5 draws - GATE_LOSS_PENALTY x losses) / games must exceed this ("a model that does not lose").
+# History: 0.55 (AlphaGo Zero, draws 0.5) -> 0.50 -> 0.25 -> 0.35 (an even 6-8-6 scored 0.275 and promoted ep1005).
+# The loss penalty is per run (run_config.py: 11x11 0.75, 15x15 0.4), as are the gate opening radius and batch sizes.
+GATE_PROMOTION_THRESHOLD = 0.35
+# Two-stage promotion: the gate (against the current best only) can prefer a model the Rapfi ladder rates weaker
+# (ep1050 beat ep960 12-5-3 but measured 2,404 vs 4,432 nodes). So a pass only makes a CANDIDATE (weights in
+# model/gate_candidates/, model/gate_candidate.json); the ladder watcher measures it and promotes it
+# (model/ladder_promote.json) only if it is not weaker than the best.
 GATE_CANDIDATE_MODE = True
 RECORD_LEAGUE_SIDE = False   # See play_one_mcts_vs_league_game
 LAST_GATE_CANDIDATE = {"path": None}
@@ -123,29 +113,15 @@ GATE_OPENING_SQUARES = GATE_OPENING_SQUARES[:10]
 def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=None, boost_threshold=0,
                       boost_when_narrow=False, c_puct=1.414, max_workers=None, runner=None):
     """
-    Plays the currently-training `model` against the tracked best checkpoint
-    across all board-symmetry openings x both sides (fair games). If model's
-    score (win=1, draw=0.5) reaches GATE_PROMOTION_THRESHOLD, model's weights
-    become the new best. Bootstraps on first call (no best yet). `gen_model`
-    (the frozen model self-play/vs-Det/vs-League data generation actually
-    uses) is synced to the tracked best's weights on every promotion,
-    including the bootstrap case, so generation always reflects the latest
-    validated checkpoint.
+    The gate: `model` plays the tracked best checkpoint from every symmetry-distinct opening, both sides.
+    score = (wins + 0.5 draws - GATE_LOSS_PENALTY x losses) / games; a score above GATE_PROMOTION_THRESHOLD passes.
+    With GATE_CANDIDATE_MODE (on) a passing model is only saved as a candidate (_save_gate_candidate) for the ladder
+    to judge; otherwise it becomes the new best and gen_model -- the model data generation uses -- takes its weights.
+    With no best checkpoint yet, model becomes the best.
 
-    Games run concurrently across a ThreadPoolExecutor (same pattern as
-    evaluate_vs_deterministic / the three generate_mcts_*_data functions).
-    Two frozen models are in play here (`model`, `best_model`), unlike the
-    single-model generation functions, so each gets its OWN PooledEvaluator
-    and its OWN shared eval_cache -- a cache entry or pooled batch is only
-    ever valid for the exact weights that produced it, so model's and
-    best_model's calls are never pooled or cached together. Behavior-
-    preserving for game OUTCOMES (see evaluate_vs_deterministic docstring
-    for why); only wall-clock time changes.
-    runner (2026-09-27): optional selfplay_pool task runner -- plays
-    the 20 gate games in the persistent multi-process pool (the two models
-    under separate eval tags/caches, same isolation as the two
-    PooledEvaluators below); any failure falls back to the threaded path.
-    Returns (win_rate, draw_rate, loss_rate, promoted).
+    The games run in the selfplay_pool task runner when one is given (the two models under separate tags), else in
+    threads, each model with its own PooledEvaluator and cache (a cached value is only valid for the weights that
+    produced it). Either way only speed differs. Returns (win_rate, draw_rate, loss_rate, promoted).
     """
     if not os.path.exists(BEST_CHECKPOINT_PATH):
         torch.save(model.state_dict(), BEST_CHECKPOINT_PATH)

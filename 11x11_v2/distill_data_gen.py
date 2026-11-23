@@ -1,4 +1,4 @@
-"""Distillation data for small-net training (11x11_v2, 2026-10-21, user: "more and better data").
+"""Distillation data for small-net training (11x11_v2).
 
 Plays many games at once with the teacher's raw policy (no search) and records every position with the
 teacher's outputs as labels. Diversity: 0-4 random opening stones near the centre, policy sampling at

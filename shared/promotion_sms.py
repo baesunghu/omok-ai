@@ -1,4 +1,4 @@
-"""Text the user's phone when a gate PROMOTES a new best (2026-10-11, user request).
+"""Text the user's phone when a gate PROMOTES a new best.
 
 Watches model/training_report<suffix>.txt of the run folder every 60 s. When a new "-> PROMOTED" gate line appears, it sends ONE SMS
 through Twilio's REST API (no extra packages). Only promotions are sent -- nothing else.

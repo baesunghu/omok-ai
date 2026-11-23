@@ -102,25 +102,16 @@ def _relevant_moves(board):
 
 class PooledEvaluator:
     """
-    Combines eval_batch_fn calls from multiple concurrent self-play worker
-    threads into fewer, larger GPU forward passes. Measured on this machine
-    (GTX 1050): 6 threads each issuing independent batch=8 calls only hit
-    2.17x aggregate throughput (concurrent GPU access partly serializes,
-    unlike CPU cores) -- pooling those into shared batch~48 calls amortizes
-    per-call overhead (kernel launch, .cpu() sync) across more samples.
+    Merges eval_batch_fn calls from concurrent self-play threads into fewer, larger GPU forward passes. On the
+    GTX 1050, 6 threads each sending batch=8 reached only 2.17x throughput (concurrent GPU calls partly serialize);
+    pooling them into batches of ~48 spreads the per-call overhead (kernel launch, .cpu() sync).
 
-    One dedicated background thread owns every model() call, so there is no
-    lock contention or race on who runs a batch. Worker threads call
-    submit() and block on a per-request threading.Event; the background
-    thread accumulates requests from the queue until either target_batch
-    samples are pending or max_wait seconds pass since the last flush, then
-    runs one batched forward pass and wakes every waiting thread with its
-    slice of the result.
+    One background thread makes every model() call. Callers submit() and wait on their own Event; the thread
+    collects requests until target_batch samples are pending or max_wait seconds have passed since the last flush,
+    runs one forward pass and hands each caller its slice.
 
-    Safe to construct once per training run (not per-epoch): it holds a
-    reference to the model object, not a snapshot of its weights, so it
-    keeps seeing the current weights across epochs as optimizer.step()
-    mutates the same nn.Module in place. Call stop() only at process exit.
+    Build it once per training run: it holds the model object, not a copy of its weights, so it always sees the
+    current weights. Call stop() only at exit.
     """
     def __init__(self, model, device, target_batch=48, max_wait=0.004):
         self.model = model
@@ -253,28 +244,14 @@ class MCTS:
     """
     def __init__(self, c_puct=1.414, eval_batch_size=1, shared_cache=None, pooled_evaluator=None):
         """
-        eval_batch_size=1 (default) runs the original one-leaf-per-simulation
-        search, unchanged. eval_batch_size>1 groups that many simulations'
-        selection phases together (via standard virtual loss) and sends their
-        leaves through the model in one batched forward call -- measured
-        ~1.5-2x faster self-play throughput at batch_size=4-8. This trades a
-        small amount of search-order fidelity for speed (a simulation's path
-        selection can see virtual-loss-inflated visit counts from other
-        in-flight simulations in the same group), so it is only wired into
-        the training self-play/vs-Det generation paths, not the formal
-        evaluate_vs_deterministic metric or the human-play API, which stay on
-        the exact eval_batch_size=1 sequential path.
+        eval_batch_size=1 (default): one leaf per simulation, the exact sequential search. eval_batch_size>1 groups
+        that many simulations' selections (virtual loss) and evaluates their leaves in one forward pass -- ~1.5-2x
+        faster self-play at 4-8, at a small cost in search-order fidelity, so it is used for training games only,
+        not for the formal evaluation.
 
-        shared_cache=None (default) keeps the original behavior: a private
-        cache cleared at the start of every search() call. Pass a dict to
-        share it across many search() calls instead (e.g. one dict per
-        training epoch, reused across every game and every move generated in
-        that epoch) -- valid because (board, player) -> (probs, value) is a
-        pure function of the model's weights, which are frozen for the whole
-        self-play/vs-Det generation phase each epoch. The caller is
-        responsible for building a fresh dict every epoch, since
-        optimizer.step() changes the weights and would otherwise make the
-        cache stale.
+        shared_cache=None (default): a private cache cleared at every search(). A dict shares it across searches
+        (e.g. one per epoch for every game and move), which is valid because (board, player) -> (probs, value) is a
+        pure function of weights frozen for the generation phase. The caller makes a fresh dict every epoch.
         """
         self.c_puct = c_puct
         self.eval_batch_size = max(1, eval_batch_size)
@@ -300,22 +277,10 @@ class MCTS:
         return -child_node.value() + pb_c * child_node.prior_prob
 
     def _cpp_eval_fn(self, model, device):
-        """Single-board eval callback for _mcts_core.mcts_search. Routes
-        through self._eval_cache first so eval_batch_size==1 callers keep the
-        exact same per-call-cleared-cache semantics as the pure-Python path
-        (no eval_batch_size==1 call site ever passes a shared_cache, so this
-        cache is always freshly cleared for this search() call anyway).
-
-        mcts_core.pyd (currently built from cpp_mcts\\mcts_core_tree_reuse.cpp
-        -- a stateful MCTSEngine with persistent-tree reuse, itself stacked
-        on cpp_mcts\\mcts_core_pruned_deploy.cpp) hands the leaf board to
-        Python as a (BOARD_SIZE, BOARD_SIZE) numpy int8 array (0=empty, 1=X, 2=O)
-        instead of a nested list of "X"/"O"/" " strings, so this routes
-        through board_to_input_array_from_numeric (integer comparisons)
-        instead of board_to_input_tensor (numpy string-equality), and the
-        cache key is board_arr.tobytes() instead of a tuple-of-tuples of
-        Python strings -- much cheaper to build/hash for this hot per-leaf
-        path (measured ~2.8x faster leaf-conversion in isolation)."""
+        """Single-board evaluation callback for _mcts_core.mcts_search, through self._eval_cache (cleared per search
+        for eval_batch_size=1 callers). The C++ engine hands the leaf as a (BOARD_SIZE, BOARD_SIZE) int8 array
+        (0 empty, 1 X, 2 O), so encoding uses board_to_input_array_from_numeric and the cache key is
+        board_arr.tobytes() -- ~2.8x faster per leaf than strings."""
         def eval_fn(board_arr, player):
             key = (board_arr.tobytes(), player)
             cached = self._eval_cache.get(key)
@@ -393,19 +358,10 @@ class MCTS:
 
     def _search_cpp(self, root_board, current_player, model, device, num_simulations,
                      add_noise, dirichlet_alpha, noise_weight):
-        """Delegates the whole search to the persistent C++ engine
-        (self._cpp_engine, one MCTSEngine per MCTS object -- see __init__),
-        then reconstructs a plain MCTSNode tree (root + direct children only
-        -- the only depth every call site actually reads) so every caller
-        of MCTS.search() keeps working unchanged.
-
-        Calling search()/search_batched() on the SAME self._cpp_engine every
-        ply (rather than a stateless module-level function) is what makes
-        tree reuse work: the engine itself decides, from a board diff
-        against what it last saw, whether to promote an already-explored
-        subtree or start fresh -- transparent to this method and to every
-        caller. See MCTSEngine's class docstring in
-        cpp_mcts/mcts_core_tree_reuse.cpp for the full design."""
+        """Runs the whole search in this object's C++ engine (one MCTSEngine per MCTS object) and rebuilds the root
+        and its direct children as MCTSNode objects -- the only depth callers read. Using the same engine every ply
+        is what enables tree reuse: the engine compares the board with what it last saw and either keeps the
+        explored subtree or starts fresh."""
         if self.eval_batch_size > 1:
             eval_batch_fn = self._cpp_eval_batch_fn(model, device)
             # KataGo forced playouts + policy target pruning on

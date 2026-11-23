@@ -20,7 +20,7 @@ from omok_paths import run_dir  # noqa: E402
 # other logon/unlock event) and spawned a SECOND, independent trainer in
 # Session 0 that ran for ~18 hours alongside the real one, both writing to
 # the same shared checkpoint/buffer/report files -- the same failure mode
-# as the earlier multi-hour duplicate-process incident this session. The
+# as an earlier multi-hour duplicate-process incident. The
 # scheduled task itself can't be disabled from here (runs as SYSTEM;
 # Set-ScheduledTask/Disable-ScheduledTask/schtasks all fail with "Access is
 # denied" without an elevated session) -- so instead of relying on that

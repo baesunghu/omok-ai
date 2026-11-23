@@ -138,35 +138,14 @@ def fast_check_draw(board):
 # Search budget per move (here, not in naps_common, so torch-free worker processes such as mp_eval's can use it)
 def sims_for_state(num_empty, base_sims, boosted_sims=None, boost_threshold=0, boost_when_narrow=False):
     """
-    A sim-budget diagnostic on this project's 5x5 board (see training
-    conversation) found a fixed budget badly under-converged on wide-open
-    boards but already converged on narrower ones: at 25 empty cells, the
-    top move's visit share was still climbing at 1600 sims (49% -> 79% from
-    100 -> 1600); at 14 empty cells, it was flat from 100 all the way to
-    1600 sims (~38%, unchanged). So only spend extra search while the board
-    is still wide open -- past boost_threshold empty cells, more search
-    doesn't change the answer, it just costs time.
+    Simulations for one move. Extra search pays only where it changes the answer: on 5x5 a fixed budget had
+    not converged on a wide-open board (top move's visit share 49% -> 79% from 100 to 1,600 sims at 25 empty cells)
+    but had on narrower ones (flat ~38% at 14 empty). So boosted_sims applies while num_empty > boost_threshold.
 
-    boost_when_narrow=False (default) keeps that exact behavior. On 3x3,
-    a diagnosed critical defensive move stayed stuck at ~1/100 visits all
-    session, in the mid/late game (few empty cells) -- the opposite end
-    from what the 5x5 finding above boosts, since 3x3's branching factor
-    (<=9) is already narrower than 5x5's "already converged" 14-empty case
-    everywhere. boost_when_narrow=True inverts the comparison so extra sims
-    go to low-num_empty states instead, targeting that specific bug.
-
-    That inversion is all-or-nothing (narrow XOR open), so once 5x5 started
-    passing boost_when_narrow=True (for its own late-game precision), it
-    silently lost the original wide-open boost above -- confirmed still
-    needed by a live diagnostic: at 23 empty cells a 100-sim search picked a
-    move MCTS itself ranks far worse than the alternative it converges to
-    given 600+ sims (visit share 24% -> 92% for the better move as sims
-    100->2400, its q swinging from -0.37 to -0.90 in the eventual mover's
-    own favor), and that misjudged move was directly upstream of a loss.
-    So independently of the boost_when_narrow branch above, also always
-    boost the wide-open end (num_empty > NUM_CELLS - 10, i.e. before the
-    10th stone is placed) to boosted_sims -- covers both ends at once
-    instead of forcing a choice between them.
+    boost_when_narrow=True inverts that, boosting the late game instead: on 3x3 a critical defensive move stayed at
+    ~1/100 visits in the mid/late game. Because that switch dropped the wide-open boost, the opening is boosted in
+    any case (num_empty > NUM_CELLS - 10, before the 10th stone): at 23 empty cells a 100-sim search picked a move the
+    search itself rejects with 600+ sims (24% -> 92% visit share), and that move led to a loss.
     """
     if not boosted_sims:
         return base_sims

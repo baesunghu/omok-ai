@@ -1,48 +1,20 @@
-"""
-Multiprocessing-based formal evaluation (evaluate_vs_deterministic) for the
-11x11 hybrid MCTS pipeline.
+"""evaluate_vs_deterministic in worker processes. naps_vsdet.evaluate_vs_deterministic tries this first and falls
+back to its threaded version if anything here raises.
 
-Why this exists: evaluate_vs_deterministic's existing ThreadPoolExecutor +
-PooledEvaluator implementation caps effective CPU usage at roughly 1 of 8
-logical cores in production, because deterministic_play (the pure-Python
-minimax opponent every game plays against) holds the GIL for the entirety of
-its own call and therefore fully serializes across worker threads -- the C++
-MCTS engine itself already releases the GIL correctly during its own tree
-search (verified directly against the deployed mcts_core.pyd source), so that
-part was never the bottleneck. Giving each concurrent game a real OS process
-instead of a thread routes around the GIL entirely for the part that was
-actually serializing. Measured on this hardware (GTX 1050, 8 logical cores):
-~2.5x wall-clock speedup on a realistic vs-Deterministic game-generation
-workload at the live sim budget, with bit-for-bit-identical search outputs
-(deterministic/no-noise/greedy mode is a pure function of model weights +
-opening + settings, so crossing a process boundary changes no numeric value).
+Why: with threads, the minimax opponent (then pure Python) held the GIL for its whole move, so the evaluation used
+about one of eight cores; the C++ search already released it. One process per concurrent game measured ~2.5x faster
+on the training laptop, with identical results (the evaluation plays without noise, so a game is a pure function of
+weights, opening and settings).
 
-Architecture: a worker-pool of up to os.cpu_count() processes each running
-worker_loop, pulling (game_idx, mcts_plays_x, opening) jobs from a shared
-queue until exhausted -- this avoids spawning more OS processes than there
-are cores when num_games (e.g. eval_games=20) exceeds the core count. Every
-worker's own C++ tree search (mcts_core.mcts_search_batched) and
-board-to-plane conversion happen locally (CPU-bound, parallel across
-processes, no CUDA). NN evaluation is routed to ONE centralized GPU-owning
-evaluator process over a persistent shared-memory channel per worker
-(see WorkerChannel/ChannelHandle), mirroring PooledEvaluator's own
-accumulate-until-target_batch-or-max_wait batching loop but across a process
-boundary instead of a thread boundary.
+How: up to os.cpu_count() worker processes run worker_loop, taking (game, side, opening) jobs from one queue. Each
+does its own C++ search and board encoding; network evaluations go to one GPU-owning evaluator process over a
+shared-memory channel per worker (WorkerChannel / ChannelHandle), batched like PooledEvaluator.
 
-Safety: evaluate_vs_deterministic_mp raises on ANY setup failure or a worker
-dying without completing its assigned games (rather than hanging or silently
-returning wrong stats), so its caller (evaluate_vs_deterministic in
-naps_vsdet.py) can fall back to the existing, long-proven threaded
-implementation. On an unattended 20000-epoch job, a periodic eval call
-failing over to the slower-but-solid path is fine; a hang is not.
+Safety: any setup failure, or a worker dying before finishing its games, raises instead of hanging or returning wrong
+numbers, so the caller can fall back.
 
-Not yet ported: generate_mcts_self_play_data, generate_mcts_vs_deterministic_data,
-generate_mcts_vs_league_data, and run_gating_check still use the threaded
-implementation -- their game-generation loops need per-move policy targets
-(training data) or a model-vs-model matchup (no GIL-heavy minimax opponent in
-the loop, so the same speedup would not obviously apply), which this module
-does not attempt. See the investigation report this was built from for the
-full reasoning on why those were left out of this pass.
+Only the evaluation is here. The training-game generators need per-move policy targets or play model against model
+(no GIL-bound opponent), so they were not ported.
 """
 import multiprocessing as mp
 import os

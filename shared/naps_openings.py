@@ -55,7 +55,7 @@ random.Random(1109).shuffle(ALL_CELLS)
 # ============================================================
 # Tactical Curriculum (periodic refresh)
 # ============================================================
-# Diagnosis from tonight's session: pure self-play plateaus at 0% win rate
+# Diagnosis: pure self-play plateaued at 0% win rate
 # against the deterministic opponent because it keeps missing obvious
 # "3-filled-of-4 + 1 empty" line threats (open-3s and internal gaps alike).
 # A supervised sanity check showed the network CAN learn this pattern
@@ -120,26 +120,15 @@ def tactical_clutter(board, exclude_cells, n_stones=3, cluster_radius=3):
 
 def sample_tactical_start(max_attempts=10):
     """
-    Builds one REACHABLE board matching a random tactical curriculum pattern
-    (same "3-in-a-row + 1 gap" shapes as generate_tactical_examples), for
-    self-play to occasionally start a game from instead of always from an
-    empty board -- so self-play actually encounters this tactical family
-    (and must resolve it with its own search) more often than it arises
-    naturally from full-game rollouts. Unlike tactical_clutter, clutter
-    here is piece-count constrained: exactly 2 stones of the color NOT used
-    to fill the window, so count(X) == count(O) after placement -- the
-    parity a real alternating game reaching this position (with 'X' to
-    move next) requires. Mirrors _get_tactical_tensors' own convention
-    (board_to_input_tensor(board, 'X', ...)): 'X' is always the mover,
-    whether about to block an 'O' open line or complete its own.
+    A reachable board with a random tactical pattern ("3 in a row + 1 gap", as in generate_tactical_examples) for
+    self-play to start from now and then, so self-play has to resolve this family of positions with its own search
+    more often than full games produce it. The clutter is exactly 2 stones of the other colour, so X and O have equal
+    counts with X to move -- the parity of a real game. X is always the mover (as in _get_tactical_tensors), whether
+    it must block O's line or complete its own.
 
-    This changes what positions self-play explores FROM, not what move is
-    labeled correct -- the move actually played is still whatever this
-    epoch's MCTS search (with its own noise/exploration) decides, same as
-    any other self-play game.
+    Only the starting position changes; the move played is still whatever this epoch's search decides.
 
-    Returns (board, 'X'), or None if no valid placement is found within
-    max_attempts (caller should fall back to a normal empty-board start).
+    Returns (board, 'X'), or None if no placement is found within max_attempts (then start from an empty board).
     """
     windows = tactical_windows()
     for _ in range(max_attempts):

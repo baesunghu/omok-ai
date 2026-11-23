@@ -106,23 +106,15 @@ def train_mcts_alpha_zero(
     use_prioritized_replay=False,
 ):
     self_play_device, train_device = get_devices()
-    # lr-fix restart: base_lr 0.001->0.0001 and T_0 450->150.
-    # Weight-drift measurement (see conversation/workflow findings) showed
-    # lr=0.001 drifts the post-supervised-pretrain checkpoint 1.86x farther
-    # (matched-epoch comparison) than lr=0.0001, and drift never reverses
-    # even during low-instantaneous-LR windows of the T_0=450 schedule --
-    # consistent with the gate-check having stayed stuck at ~0% for 564+
-    # epochs after the Gen10 supervised-pretrain restart. The prior Gen7->
-    # Gen8 supervised-pretrain restart broke through gate-check right around
-    # the point its T_0=150 schedule decayed to ~1.2e-4 -- this restart
-    # starts there directly instead of spending hundreds of epochs decaying
-    # down to it.
-    # Gate stuck 15 checks (650-720) while losses kept falling ->
-    # halve the LR band (1e-4..5e-5 -> 5e-5..1e-5) to consolidate instead of drifting.
-    # ep937 cooldown ended -> LR jumped 1e-5 -> 4.4e-5 and ep940 fell to ~1,092 Rapfi nodes.
-    # Cosine peak 5e-5 -> 2e-5 (band 2e-5..1e-5) to polish rather than shake before the festival.
-    # LR band per run (run_config.py): 11x11 NAPS 2e-5..1e-5, 11x11_v2 5e-5..1e-5, 15x15 1e-4..2e-5
-    # (the 2e-5 polish band of the mature 11x11 net kept the young 15x15 net flat).
+    # Learning rate, in the order it changed:
+    # - 1e-3 -> 1e-4 and T_0 450 -> 150 (the "lr-fix" restart): at 1e-3 the weights drifted 1.86x farther from the
+    #   supervised start than at 1e-4 and never came back, matching a gate stuck at ~0% for 564+ epochs; the earlier
+    #   Gen7 -> Gen8 restart broke through when its schedule had decayed to ~1.2e-4, so this one starts there.
+    # - Gate stuck for 15 checks (ep650-720) while losses kept falling -> band 1e-4..5e-5 halved to 5e-5..1e-5.
+    # - After the ep937 cooldown the LR jumped 1e-5 -> 4.4e-5 and ep940 fell to ~1,092 Rapfi nodes -> peak 2e-5
+    #   (band 2e-5..1e-5) to polish rather than shake.
+    # The band is per run (run_config.py): 11x11 NAPS 2e-5..1e-5, 11x11_v2 5e-5..1e-5, 15x15 1e-4..2e-5 (the mature
+    # 11x11 net's polish band kept the young 15x15 net flat).
     optimizer = optim.Adam(model.parameters(), lr=LR_PEAK, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150, T_mult=1, eta_min=LR_MIN)
     start_epoch = load_start_epoch()
@@ -200,26 +192,13 @@ def train_mcts_alpha_zero(
     gen_model.to(self_play_device, memory_format=preferred_memory_format(self_play_device))
     gen_model.eval()
 
-    # Pools eval_batch_fn calls from concurrent self-play worker threads into
-    # fewer, larger GPU forward passes -- see PooledEvaluator docstring.
-    # Constructed once (not per-epoch): holds a reference to `gen_model`, not
-    # a weight snapshot, so it keeps working correctly as run_gating_check's
-    # promotions mutate those same weights in place across epochs.
-    # target_batch=24, max_wait=0.05 (was 48/0.005): live stats
-    # logging showed this PooledEvaluator hitting its target batch 0% of the
-    # time across 300K+ flushes (avg batch ~4, timing out every single time)
-    # -- PooledEvaluator._run's `timeout = self.max_wait if pending else None`
-    # re-arms a fresh wait window on every arrival (a silence-gap debounce,
-    # not a deadline from the first pending item), and with 10 CPU-bound
-    # self-play worker threads the gap between arrivals almost never stays
-    # under the old 5ms window. Benchmarked on this exact self-play path
-    # (scratch/multiproc_investigation/bench_pooled_evaluator.py, 3-run
-    # average): target_batch=24/max_wait=0.015 grows the achieved batch
-    # ~3.8->5.0 (+32%) and self-play games/sec +19% over the old operating
-    # point; CPU-bound MCTS tree search, not GPU eval, still dominates epoch
-    # wall-clock, so this is a real but modest gain, not a step-change. Kept
-    # consistent with evaluate_vs_deterministic / run_gating_check's own
-    # scoped PooledEvaluators below, which use the same values.
+    # Merges the self-play threads' evaluation calls into larger GPU batches (see PooledEvaluator). Built once: it
+    # holds gen_model itself, so it follows the weights as promotions change them.
+    # max_wait=0.05 (was 0.005, with target 48): the wait restarts at every arrival (a silence gap, not a deadline),
+    # and with 10 CPU-bound threads arrivals were almost never 5 ms apart -- 0% of 300K+ flushes reached the target,
+    # average batch ~4. In a benchmark, target 24 / 15 ms raised the average batch 3.8 -> 5.0 and self-play
+    # games/sec +19%; tree search on the CPU, not evaluation, still dominates an epoch. The target batch is now
+    # run_config.POOLED_TARGET_BATCH.
     pooled_evaluator = PooledEvaluator(gen_model, self_play_device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) \
         if self_play_device.type == "cuda" else None
 
@@ -263,7 +242,7 @@ def train_mcts_alpha_zero(
                 cur_q_weight = 0.0
         print(f"  [value target] epoch {epoch}: q weight {cur_q_weight:.4f} (z weight {1 - cur_q_weight:.4f})", flush=True)
         # Second promotion path -- Rapfi ladder. The gate (vs the current best only)
-        # can be blocked by a matchup ("상성"); if the ladder watcher finds a measured checkpoint stronger
+        # can be blocked by a matchup; if the ladder watcher finds a measured checkpoint stronger
         # than the best with P >= 80% (bootstrap), it writes model/ladder_promote.json and the checkpoint
         # becomes the best AND the self-play generation model here, at the start of the next epoch.
         try:
@@ -562,24 +541,12 @@ def train_mcts_alpha_zero(
             p_loss_unweighted = p_loss_per_sample.mean()
             v_loss_unweighted = v_loss_per_sample.sum() / v_mask.sum().clamp_min(1)
 
-            # Prioritized replay (Schaul et al. 2015), adapted to this
-            # project's full-buffer-pass-per-epoch training loop instead
-            # of a sampled minibatch replay: reweight each batch's loss
-            # by its own current policy/value-prediction "surprise"
-            # (computed fresh from this same forward pass, no stored/stale
-            # priority table needed) so samples the model is most surprised
-            # by contribute more gradient. b_weight is each sample's static,
-            # source-based weight (self-play's mover-won bonus, fixed
-            # vs-Det/vs-League weights -- see the raw_samples.append call
-            # sites) and is always applied; the surprise term on top of it
-            # only kicks in when use_prioritized_replay is True. NOTE: when
-            # prioritized, weights correlate with p_loss_per_sample/
-            # v_loss_per_sample by construction (weight = f(loss)), so the
-            # weighted mean is *not* comparable to the plain mean -- it's
-            # mechanically inflated (Cov(weight, loss) > 0). That's
-            # expected/intended (harder samples deliberately dominate the
-            # gradient), not a regression -- hence tracking the unweighted
-            # loss above separately for logging.
+            # Prioritized replay (Schaul et al. 2015), adapted to a full pass over the buffer each epoch: each
+            # sample's loss is reweighted by how surprised the model is by it (computed from this same forward
+            # pass, so no stale priority table). b_weight, the fixed per-source weight (self-play mover-won
+            # bonus, vs-Det / vs-League weights), always applies; the surprise term only with
+            # use_prioritized_replay. The weighted mean is then inflated by construction (weight grows with
+            # loss), so the unweighted loss above is what gets logged.
             policy_surprise = p_loss_per_sample.detach()
             value_surprise = v_loss_per_sample.detach().sqrt()
             if use_prioritized_replay:
@@ -738,8 +705,8 @@ def train_mcts_alpha_zero(
         # had already STARTED. A manual stop anytime between epoch N's report
         # line printing and epoch N+1 beginning left the state file at N-1,
         # so a restart silently redid the whole already-completed epoch N
-        # (confirmed live: two differently-valued "Epoch 240" report lines
-        # from today's stop/restart, status_check's reset-heuristic then
+        # (seen live: two differently-valued "Epoch 240" report lines after a
+        # stop/restart, status_check's reset-heuristic then
         # misread the non-monotonic epoch number as a full history reset).
         # Saving epoch+1 here, right after this epoch's own checkpoint write,
         # closes that window: a kill after this line correctly resumes at

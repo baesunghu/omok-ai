@@ -1,4 +1,4 @@
-"""Is a defence problem fair? Play it Rapfi vs Rapfi (2026-10-23, user: p18 is really "survive 40 plies vs 1M-node Rapfi").
+"""Is a defence problem fair? Play it Rapfi vs Rapfi (p18 is "survive 40 plies vs 1M-node Rapfi").
 The defender is also Rapfi; if even Rapfi loses as the defender, the position is lost and the problem cannot be passed.
 Usage: python v3/rapfi_selfcheck.py PROBLEM_ID [defender_nodes,...]   (run from 11x11_v2)
 """

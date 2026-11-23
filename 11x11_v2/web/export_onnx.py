@@ -1,4 +1,4 @@
-"""Export a v3 checkpoint to ONNX for the in-browser demo (2026-11-01, user: free hosting, model runs in the browser).
+"""Export a v3 checkpoint to ONNX for the in-browser demo (free hosting: the model runs in the browser).
 Input: (B, 5, 11, 11) float32 planes [curr, opp, empty, fork_self, fork_opp] (board_encoding.board_to_input_array_from_numeric).
 Outputs: policy (B, 121) log-probabilities, value (B, 1) in [-1, 1] for the side to move.
 Checks onnxruntime against PyTorch on random real-looking boards.

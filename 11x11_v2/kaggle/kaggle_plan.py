@@ -1,4 +1,4 @@
-"""Kaggle session runner for a list of steps (2026-11-01, user: use as much Kaggle quota as possible, as fast as possible).
+"""Kaggle session runner for a list of steps (to use as much Kaggle quota as possible, as fast as possible).
 One-line notebook cell (GPU T4 x2 + Internet on; attach earlier sessions' outputs as inputs):
 
     import urllib.request as u; PLAN='p2'; exec(u.urlopen('https://raw.githubusercontent.com/baesunghu/omok-ai/<commit>/11x11_v2/kaggle/kaggle_plan.py').read())

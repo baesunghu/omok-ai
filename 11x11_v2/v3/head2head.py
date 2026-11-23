@@ -1,4 +1,4 @@
-"""Head-to-head between two v3 checkpoints (2026-10-23, user: did ep120 drift by over-fitting the catfish?).
+"""Head-to-head between two v3 checkpoints (did ep120 drift by over-fitting the catfish?).
 
 Each opening (first two stones fixed) is played twice with colours swapped, so 10 openings = 20 games.
 Same noiseless PUCT search for both sides (1,100 sims, VCF on), like the Rapfi ladder.
@@ -52,7 +52,7 @@ def load(p):
 
 
 
-LIVE = None   # 관전: sharded runs write the game in progress for ab_scratch/ab_live.py
+LIVE = None   # Spectating: sharded runs write the game in progress for ab_scratch/ab_live.py
 if os.environ.get("H2H_SHARD"):
     LIVE = os.path.join(V2, "v3", "ab_scratch", "live", f"shard{os.environ['H2H_SHARD'].split('/')[0]}.json")
     os.makedirs(os.path.dirname(LIVE), exist_ok=True)
