@@ -34,18 +34,18 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-HERE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "10x10")   # archived from 10x10/: still works on that run folder
+HERE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "11x11_naps")   # archived from 11x11_naps/: still works on that run folder
 sys.path.insert(0, HERE)
 os.chdir(HERE)
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3  # noqa: E402
+from nets import GomokuNetV3  # noqa: E402
 from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 
-BEST = r"model/_rapfi_latest_ep960.pth"   # 2026-10-12 trial: read-only base
-TRAIN_CKPT = r"model/value_reset_trial/ep960_vreset.pth"   # trial output; live checkpoints untouched
+BEST = os.path.join("model", f"best_mcts{FILE_SUFFIX}.pth")
+TRAIN_CKPT = os.path.join("model", f"alphazero_mcts{FILE_SUFFIX}.pth")
 BUFFER = os.path.join("model", f"mcts_replay_buffer{FILE_SUFFIX}.pkl")
-REPORT = r"model/value_reset_trial/ep960_vreset_report.json"
+REPORT = r"model\value_head_reset_20260927.json"
 HARD_POOL = os.path.join("model", f"hard_mined_examples{FILE_SUFFIX}.pkl")
 
 SEED = 20260927
@@ -94,13 +94,13 @@ def main():
     val_idx, tr_idx = perm[:n_val], perm[n_val:]
     print(f"buffer: {len(buf)} samples, {n} with a value target -> train {len(tr_idx)} / held-out {n_val}")
 
-    old = AlphaZeroTicTacToeV3()
+    old = GomokuNetV3()
     old.load_state_dict(torch.load(BEST, map_location=dev))
     old.to(dev)
     old_mse, old_sat, old_cal, _ = value_stats(old, x[val_idx], y[val_idx], dev)
     print(f"OLD head: held-out MSE {old_mse:.4f}, saturated(|v|>0.9) {old_sat:.1%}")
 
-    model = AlphaZeroTicTacToeV3()
+    model = GomokuNetV3()
     model.load_state_dict(torch.load(BEST, map_location=dev))
     model.to(dev)
     for mod in model.value_head.modules():
@@ -155,7 +155,7 @@ def main():
     print(f"policy max |diff| old vs new: {pol_diff:.2e}")
 
     # Hard-7 pessimism spot check (raw value, defender to move)
-    from alphago_lee import board_to_input_array
+    from board_encoding import board_to_input_array
     with open(HARD_POOL, "rb") as f:
         pool = pickle.load(f)
     h7 = [it for it in pool if it[4] == 7]
@@ -185,7 +185,7 @@ def main():
         prm.requires_grad = True
     sd = {k: v.cpu() for k, v in model.state_dict().items()}
     torch.save(sd, TRAIN_CKPT)
-    pass  # trial: never write the best checkpoint
+    torch.save(sd, BEST)
     print(f"ACCEPTED -- wrote new weights to {TRAIN_CKPT} and {BEST}")
 
 

@@ -22,8 +22,8 @@ HERE = enter_run()   # the run folder this works on: the current directory, or $
 LOG = os.path.join(HERE, "model", "rapfi_ladder_log.jsonl")
 REF = os.path.join(HERE, "model", "ladder_best_ref.json")
 FLAG = os.path.join(HERE, "model", "ladder_promote.json")
-P_MIN = 0.90   # 2026-10-12 (user): 80% -> 90% (fewer lucky promotions / inflated reference)
-P_CAND = 0.60  # 2026-10-13 (user): gate candidates also need P(stronger than best) >= 60% (an equal model
+P_MIN = 0.90   # 80% -> 90% (fewer lucky promotions / inflated reference)
+P_CAND = 0.60  # Gate candidates also need P(stronger than best) >= 60% (an equal model
                # passed "eq >= best" about half the time by measurement luck)
 N_BOOT = 4000
 
@@ -86,7 +86,7 @@ def p_stronger(a, b, seed=0):
     return wins / N_BOOT
 
 
-def check(ckpt_name, weights_path, dry_run=False, candidate=False):  # 2026-10-17: grad may be None (15x15 has no problem set yet)
+def check(ckpt_name, weights_path, dry_run=False, candidate=False):  # Grad may be None (15x15 has no problem set yet)
     """candidate=True (2026-10-13, gate-passed candidate): promote if its point estimate is not below the
     best's (no P threshold -- the gate already supplied evidence); graduation must not be worse."""
     ref = json.load(open(REF, encoding="utf-8"))
@@ -100,7 +100,7 @@ def check(ckpt_name, weights_path, dry_run=False, candidate=False):  # 2026-10-1
     g = grad_score(ckpt_name)
     gb = ref.get("grad")
     msg += f", graduation {g[0]}/{g[1]} vs best {gb if gb is not None else '?'}" if g else ", graduation: not graded yet"
-    if g is None and ref.get("grad") is not None:   # 2026-10-14 (15x15): no graduation problems yet
+    if g is None and ref.get("grad") is not None:   # 15x15: no graduation problems yet
         return msg + " -> no promotion (grade the graduation problems first)"
     if gb is not None and g is not None and g[0] < gb:
         return msg + " -> no promotion (graduation problems worse than the best)"

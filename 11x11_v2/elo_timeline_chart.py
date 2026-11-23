@@ -1,4 +1,4 @@
-# Equal points as Elo over wall-clock time: NAPS (ladder_ci.json), v2, v3 (2026-10-22, user).
+# Equal points as Elo over wall-clock time: NAPS (ladder_ci.json), v2, v3.
 # Elo vs Rapfi 100 nodes = K * log10(eq / 100), K = 304 Elo per 10x nodes (v3 ep100 fitted slope), same K for every run
 # so the Elo axis is a relabelled log axis; bars are the 68% bootstrap intervals.
 import json, datetime as dt, numpy as np, matplotlib, importlib.util, io, contextlib
@@ -7,12 +7,14 @@ import matplotlib.pyplot as plt, matplotlib.dates as md
 plt.rcParams["font.family"] = "Malgun Gothic"; plt.rcParams["axes.unicode_minus"] = False
 K = 304
 elo = lambda n: K * np.log10(max(n, 1) / 100)
-old = json.load(open(r"..\10x10\model\ladder_ci.json"))
+old = json.load(open(r"..\11x11_naps\model\ladder_ci.json"))
 with contextlib.redirect_stdout(io.StringIO()):
     spec = importlib.util.spec_from_file_location("c", "ladder_all_v3_chart.py"); c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
 T = lambda s: dt.datetime.strptime(s[:16], "%Y-%m-%d %H:%M")
 v2t = {"ep20": "2026-10-22 03:39", "ep30": "2026-10-22 08:00", "ep40": "2026-10-22 16:00"}
-v3t = {"ep40": "2026-10-22 17:47", "ep70": "2026-10-22 20:25", "ep100": "2026-10-22 23:36", "ep170": "2026-10-23 09:10", "ep200": "2026-10-23 14:09", "ep300": "2026-10-24 04:16", "ep400": "2026-10-24 17:35"}
+v3t = {"ep40": "2026-10-22 17:47", "ep70": "2026-10-22 20:25", "ep100": "2026-10-22 23:36",
+       "ep170": "2026-10-23 09:10", "ep200": "2026-10-23 14:09", "ep300": "2026-10-24 04:16",
+       "ep400": "2026-10-24 17:35"}
 INK, MUTED, SURF, NAPS, V2C, V3C = "#1d1d1b", "#8a8780", "#fcfcfb", "#2a78d6", "#2f9e6a", "#8e44ad"
 fig, (ax, az) = plt.subplots(1, 2, figsize=(15, 6.5), facecolor=SURF, sharey=True, gridspec_kw={"width_ratios": [3.2, 1]}); ax.set_facecolor(SURF); az.set_facecolor(SURF)
 def series(pts, col, lab, line=True):

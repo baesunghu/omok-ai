@@ -1,4 +1,4 @@
-# 11x11_v2 equal-point chart with bootstrap 68/95% bands (2026-10-22). Data: rapfi_ladder_watch.log / ladder_ep40_rest.log.
+# 11x11_v2 equal-point chart with bootstrap 68/95% bands. Data: rapfi_ladder_watch.log / ladder_ep40_rest.log.
 import numpy as np, matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

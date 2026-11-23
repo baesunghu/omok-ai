@@ -3,7 +3,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 plt.rcParams["font.family"] = "Malgun Gothic"; plt.rcParams["axes.unicode_minus"] = False
 import os
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (11x11_naps / 11x11_v2 / 15x15)
 SP = os.path.join(HERE, "model")  # ladder_hist.json / ladder_ci.json live here
 rows = [r for r in json.load(open(os.path.join(SP, "ladder_hist.json"))) if not r["dup"] and r["eq"]]
 INK, INK2, MUTED, GRID, SURF = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#fcfcfb"
@@ -36,7 +36,11 @@ for r in b:
 ax.scatter([r["ep"] for r in l], [r["eq"] for r in l], s=70, marker="D", color=SURF, edgecolor=LATEST, linewidth=2, zorder=3)
 LBL = {625: ("625 여명 (졸업, 5단계)", 0, -22), 645: ("645 (best 최고)", 22, 8), 740: ("740", 0, 10),
        795: ("795", 0, -22), 820: ("820", 0, -22), 840: ("840", 0, 10),
-       855: ("855", -14, 10), 860: ("860", 0, 10), 870: ("870", 10, -14), 890: ("890", -16, 12), 905: ("905 (현재 best)", 26, -34), 920: ("920", 0, 10), 940: ("940 (LR 충격)", 0, -18), 960: ("960 (4단계)", -10, 12), 1005: ("1005 (롤백 충격 중 승격)", 0, -18), 1020: ("1020", 0, 10), 1050: ("1050 (게이트 12-5-3)", 0, 10), 900: ("900", -2, 12), 880: ("880 (5단계)", 14, -14), 545: ("545", 0, -18), 760: ("760", 0, 10)}
+       855: ("855", -14, 10), 860: ("860", 0, 10), 870: ("870", 10, -14), 890: ("890", -16,
+             12), 905: ("905 (현재 best)", 26, -34), 920: ("920", 0, 10), 940: ("940 (LR 충격)", 0,
+             -18), 960: ("960 (4단계)", -10, 12), 1005: ("1005 (롤백 충격 중 승격)", 0, -18), 1020: ("1020", 0,
+             10), 1050: ("1050 (게이트 12-5-3)", 0, 10), 900: ("900", -2, 12), 880: ("880 (5단계)", 14, -14), 545: ("545",
+             0, -18), 760: ("760", 0, 10)}
 for r in rows:
     if r["ep"] in LBL:
         t, dx, dy = LBL[r["ep"]]

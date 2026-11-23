@@ -16,7 +16,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 V2 = os.path.dirname(HERE)
-EVERY = 25          # 10/25 (user): measure every 25 epochs
+EVERY = 25          # Measure every 25 epochs
 GAMES = 20          # per level
 SIMS = 1100         # same as the v2 ladder
 OUT = os.path.join(HERE, "ladder_v3.jsonl")
@@ -36,7 +36,7 @@ def done_epochs():
 
 def levels_from(eq):
     if not isinstance(eq, (int, float)):
-        return [30000, 10000, 3000, 1000]   # hardest first (2026-10-22 user: decide sooner); 2026-10-22: ep70 quick ladder already scored 50% at 3000
+        return [30000, 10000, 3000, 1000]   # hardest first (decide sooner: ep70's quick ladder already scored 50% at 3000)
     base = max(30, eq)
     return sorted({int(round(base * f, -1)) for f in (1 / 3, 1, 3, 9)}, reverse=True)   # hardest first
 
@@ -51,7 +51,7 @@ while not os.path.exists(os.path.join(HERE, "STOP_LADDER")):
         time.sleep(60)
         continue
     ep = todo[-1]                      # newest first; older unmeasured ones are skipped on purpose
-    # 10/25 (user, option 1): a flat ladder gives no usable crossing (ep500: ~0 nodes); keep that result as it is, but
+    # A flat ladder gives no usable crossing (ep500: ~0 nodes); keep that result as it is, but
     # choose the next levels from the last checkpoint whose equal point is a real number of nodes
     ok_eq = [done[e]["equal_nodes"] for e in sorted(done) if isinstance(done[e]["equal_nodes"], (int, float)) and done[e]["equal_nodes"] >= 1000]
     last = ok_eq[-1] if ok_eq else None
@@ -70,9 +70,9 @@ while not os.path.exists(os.path.join(HERE, "STOP_LADDER")):
         continue
     res = rows[-1]
     rec = dict(epoch=ep, time=res["time"], equal_nodes=res["equal_nodes"], levels=res["levels"])
-    # 2026-10-22 (user): graduation / tier problems right after each ladder
+    # Graduation / tier problems right after each ladder
     log(f"problems v3 ep{ep}")
-    # 2026-10-22 23:55 (user): stream to the log as it runs -- tier 1 prints first, so it can be read before the rest
+    # Stream to the log as it runs -- tier 1 prints first, so it can be read before the rest
     with open(os.path.join(HERE, f"grad_check_ep{ep}.log"), "w", encoding="utf-8") as f:
         subprocess.run([sys.executable, "-u", os.path.join(os.path.dirname(V2), "shared", "tactical_problem_check.py"), ck], cwd=V2,
                        env=dict(os.environ, PYTHONIOENCODING="utf-8"), stdout=f, stderr=subprocess.STDOUT)

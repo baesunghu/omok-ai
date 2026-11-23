@@ -3,7 +3,7 @@
 The repository root is the laptop's old `final/` folder, so the layout is the same everywhere:
 
     <ROOT>/shared/         code that is the same for every run (one copy)
-    <ROOT>/10x10/          11x11 NAPS run (the folder name is historical; the board is 11x11)
+    <ROOT>/11x11_naps/     11x11 NAPS run (until 2026-11 the folder was 10x10/, from the 10x10-board days)
     <ROOT>/11x11_v2/       v2 run (VCF + C++ self-play); v3 lives in 11x11_v2/v3/
     <ROOT>/15x15/          15x15 run
     <ROOT>/archive/        one-off scripts kept for the record
@@ -40,7 +40,7 @@ def _env_dir(name, default):
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 SHARED_DIR = os.path.join(ROOT, "shared")
-NAPS_DIR = os.path.join(ROOT, "10x10")          # 11x11 NAPS run
+NAPS_DIR = os.path.join(ROOT, "11x11_naps")          # 11x11 NAPS run
 V2_DIR = os.path.join(ROOT, "11x11_v2")
 V3_DIR = os.path.join(V2_DIR, "v3")
 CPP_MCTS_DIR = os.path.join(ROOT, "cpp_mcts")
@@ -50,7 +50,7 @@ RAPFI_EXE = os.path.join(RAPFI_DIR, os.environ.get("OMOK_RAPFI_EXE") or "pbrain-
 SCRATCH_DIR = _env_dir("OMOK_SCRATCH_DIR", os.path.join(ROOT, "scratch"))
 DOWNLOADS_DIR = _env_dir("OMOK_DOWNLOADS", os.path.join("~", "Downloads"))
 
-# Data with one copy in the repository, used by every 11x11 run (10x10, 11x11_v2, v3):
+# Data with one copy in the repository, used by every 11x11 run (11x11_naps, 11x11_v2, v3):
 PROBLEMS_FILE = os.path.join(NAPS_DIR, "tactical_problems", "web_game58_problems.json")   # 28 problems, 11x11 only
 WEB_GAMES_LOG = os.path.join(NAPS_DIR, "hlt", "web", "games.jsonl")   # visitors' games on the web board (not in the repo)
 
@@ -60,7 +60,7 @@ def _is_run(d):
 
 
 def run_dir():
-    """The run folder (10x10 / 11x11_v2 / 15x15) that shared code works on.
+    """The run folder (11x11_naps / 11x11_v2 / 15x15) that shared code works on.
 
     $OMOK_RUN if set, else the current directory if it is a run folder, else the run folder already on sys.path
     (shared code imported by a run-folder script). Exits with a message when there is none.
@@ -75,7 +75,7 @@ def run_dir():
     for p in sys.path:
         if p and _is_run(p):
             return os.path.abspath(p)
-    sys.exit("run this from a run folder (cd 10x10 / 11x11_v2 / 15x15) or set OMOK_RUN")
+    sys.exit("run this from a run folder (cd 11x11_naps / 11x11_v2 / 15x15) or set OMOK_RUN")
 
 
 def enter_run():

@@ -2,14 +2,14 @@
 Usage (from 11x11_v2): python v3/trace_problem.py CKPT PROBLEM_ID SIMS"""
 import os as _os, sys as _sys
 _sys.path.append(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # repository root
-from omok_paths import PROBLEMS_FILE  # noqa: E402  (10x10/tactical_problems: the 11x11 problem set, one copy)
+from omok_paths import PROBLEMS_FILE  # noqa: E402  (11x11_naps/tactical_problems: the 11x11 problem set, one copy)
 import json, os, sys
 import numpy as np, torch
 V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, V2); sys.path.insert(1, os.path.join(V2, "v3"))
 import mcts_core
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array_from_numeric
+from board_encoding import board_to_input_array_from_numeric
 from fast_board import fast_check_win
 from net_v3 import NetV3
 from rapfi_match import Rapfi

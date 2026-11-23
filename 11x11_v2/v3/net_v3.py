@@ -15,13 +15,13 @@ import torch.nn as nn
 
 sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 11x11_v2 modules
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
-from alphago_lee_v2_seblock import _group_norm
+from nets import GomokuNetV3
+from nets import _group_norm
 
 CHANNELS, BLOCKS = 128, 8
 
 
-class NetV3(AlphaZeroTicTacToeV3):
+class NetV3(GomokuNetV3):
     def __init__(self, num_channels=CHANNELS, num_res_blocks=BLOCKS, **kwargs):
         super().__init__(num_channels=num_channels, num_res_blocks=num_res_blocks,
                          value_hidden=max(64, num_channels), **kwargs)

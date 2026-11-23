@@ -19,7 +19,9 @@ HERE = enter_run()   # the run folder this works on: the current directory, or $
 from fast_board import BOARD_SIZE as N, fast_check_win
 from omok_paths import RAPFI_DIR, RAPFI_EXE  # noqa: E402
 REF_NODES = 100000
-LEVELS = [5, 10, 15, 20, 30, 100, 300, 1000]   # 2026-10-10 (user): low end. Rapfi plays identically at 1/3/5 nodes (no search: only forced blocks, else (1,1)), so 5 stands for all three; 15/20 added for resolution; 3000/10000 dropped
+# Low end. Rapfi plays identically at 1/3/5 nodes (no search: only forced blocks, else (1,1)), so 5 stands for all
+# three; 15/20 added for resolution; 3000/10000 dropped
+LEVELS = [5, 10, 15, 20, 30, 100, 300, 1000]
 K = 200.0                 # eval -> win probability scale (relative comparison, same metric on both sides)
 BLUNDER = 0.30            # a move that gives away >= 30% win probability
 CACHE = os.path.join("model", "human_rapfi_cache.json")
@@ -89,7 +91,7 @@ def main():
     max_games = int(sys.argv[1]) if len(sys.argv) > 1 else 10 ** 9
     games = [json.loads(l) for l in open(WEB_GAMES_LOG, encoding="utf-8")]
     games = [g for g in games if not g["time"].startswith(EXCLUDE_TIMES)][:max_games]
-    # 2026-10-23 (user): DATES=2026-10-17,2026-10-18 rates only those days (festival); TAG names the output json
+    # DATES=2026-10-17,2026-10-18 rates only those days (festival); TAG names the output json
     dates = [d for d in os.environ.get("DATES", "").split(",") if d]
     if dates:
         games = [g for g in games if g["time"][:10] in dates]

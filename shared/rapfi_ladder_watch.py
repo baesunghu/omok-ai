@@ -20,7 +20,7 @@ BEST = os.path.join(TENX, "model", f"best_mcts{FILE_SUFFIX}.pth")
 SNAP = os.path.join(TENX, "model", "_rapfi_ladder_snapshot.pth")
 EVERY = 20
 from run_config import LADDER_GAMES, LADDER_LEVELS  # noqa: E402
-GAMES = LADDER_GAMES  # per ladder level (2026-09-28: 10 -> 20; 11x11_v2 and 15x15: 40)
+GAMES = LADDER_GAMES  # games per ladder level (run_config.py)
 
 
 def epoch():
@@ -30,7 +30,7 @@ def epoch():
         return None
 
 
-# 2026-10-09: the ep820 run died after the problem check -- on Windows, a child output that the
+# The ep820 run died after the problem check -- on Windows, a child output that the
 # parent cannot decode with the locale codec leaves r.stdout as None. Force UTF-8 both ways.
 def run_kw():
     """Rapfi levels: run_config.LADDER_LEVELS, or with "adaptive" (11x11_v2, 2026-10-21) levels that follow the
@@ -66,11 +66,11 @@ def log(msg):
 def main():
     e = epoch() or 0
     next_at = (e // EVERY + 1) * EVERY
-    if len(sys.argv) > 1:   # 2026-10-14: resume a missed run, e.g. "python ../shared/rapfi_ladder_watch.py 20"
+    if len(sys.argv) > 1:   # Resume a missed run, e.g. "python ../shared/rapfi_ladder_watch.py 20"
         next_at = int(sys.argv[1])
     log(f"rapfi ladder watcher started at epoch {e}; next run at epoch {next_at}")
     while True:
-        # 2026-10-13 (user): gate-passed candidates are measured as soon as they appear
+        # gate-passed candidates are measured as soon as they appear
         try:
             cpath = os.path.join(TENX, "model", "gate_candidate.json")
             cand = json.load(open(cpath, encoding="utf-8")) if os.path.exists(cpath) else None
@@ -95,13 +95,13 @@ def main():
             json.dump(cand, open(cpath, "w", encoding="utf-8"), indent=1)
         e = epoch()
         if e is not None and e >= next_at:
-            # 2026-10-13: ladder + grading are deterministic (node-limited Rapfi, no search noise), so a best
+            # Ladder + grading are deterministic (node-limited Rapfi, no search noise), so a best
             # whose weights equal the last measured snapshot would replay identical games -- skip it.
             _best_unchanged = os.path.exists(SNAP) and same_weights(BEST, SNAP)
             shutil.copy2(BEST, SNAP)
             if _best_unchanged:
                 _ref, _ref_ckpt = {"name": "last best snapshot"}, SNAP
-            # 2026-10-12: skip re-measuring a best that the ladder reference already covers (same weights)
+            # Skip re-measuring a best that the ladder reference already covers (same weights)
             if not _best_unchanged:
                 try:
                     _ref = json.load(open(os.path.join(TENX, "model", "ladder_best_ref.json"), encoding="utf-8"))
@@ -119,7 +119,7 @@ def main():
                 r2 = subprocess.run([sys.executable, "-u", os.path.join(SHARED, "tactical_problem_check.py"), SNAP],
                                     cwd=TENX, capture_output=True, text=True, **run_kw())
                 log(chr(10).join(l for l in (r2.stdout or '').splitlines() if not l.startswith("MESSAGE")) or (r2.stderr or '').strip()[-500:])
-            # 2026-09-28: also measure the newest training checkpoint (not just the gated best),
+            # Also measure the newest training checkpoint (not just the gated best),
             # so progress is visible even while the gate keeps rejecting candidates
             latest = os.path.join(TENX, "model", f"model_MCTS_ep{next_at}{FILE_SUFFIX}.pth")
             for _ in range(30):
@@ -138,7 +138,7 @@ def main():
                 r2 = subprocess.run([sys.executable, "-u", os.path.join(SHARED, "tactical_problem_check.py"), snap2],
                                     cwd=TENX, capture_output=True, text=True, **run_kw())
                 log(chr(10).join(l for l in (r2.stdout or '').splitlines() if not l.startswith("MESSAGE")) or (r2.stderr or '').strip()[-500:])
-                # 2026-10-12 (user): Rapfi-ladder promotion path (P >= 80% stronger than the best)
+                # Rapfi-ladder promotion path (P >= 80% stronger than the best)
                 r3 = subprocess.run([sys.executable, "-u", os.path.join(SHARED, "ladder_promo.py"), os.path.basename(snap2),
                                      os.path.relpath(snap2, TENX)], cwd=TENX, capture_output=True, text=True, **run_kw())
                 log("ladder promotion check: " + ((r3.stdout or '').strip() or (r3.stderr or '').strip()[-300:]))

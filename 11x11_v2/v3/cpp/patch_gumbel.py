@@ -1,4 +1,4 @@
-# one-off patch: adds the Gumbel root to the v3 copy of mcts_core_solver.cpp (2026-10-22)
+# one-off patch: adds the Gumbel root to the v3 copy of mcts_core_solver.cpp
 p = "mcts_core_solver.cpp"
 s = open(p, encoding="utf-8").read()
 

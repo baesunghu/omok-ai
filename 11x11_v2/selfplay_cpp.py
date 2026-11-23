@@ -22,10 +22,10 @@ import numpy as np
 import torch
 
 import mcts_core
-import alphazero_mcts_lrfix as L
+import mcts_cpp as L
 import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array, preferred_memory_format
+from board_encoding import board_to_input_array, preferred_memory_format
 from fast_board import BOARD_SIZE, WIN_LENGTH
 
 HERE = os.path.dirname(os.path.abspath(__file__))

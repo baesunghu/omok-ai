@@ -6,7 +6,7 @@ seeing its search: a win-rate curve (left) and, on the board, the most
 visited candidate moves coloured by visit share with visits / Q shown.
 Standard library only (no Flask). One game at a time.
 
-Run:  python -u server.py   (from 10x10/hlt/web)
+Run:  python -u server.py   (from 11x11_naps/hlt/web)
 """
 import json
 import re
@@ -23,7 +23,7 @@ os.chdir(TENX)
 import numpy as np
 import torch
 
-# 2026-10-26 (user): festival board uses the 11x11_v2 engine with VCF on, same as the NOON grading and the Rapfi ladder
+# Festival board uses the 11x11_v2 engine with VCF on, same as the NOON grading and the Rapfi ladder
 # (was mcts_core_solver: vlfix + mate distance + solver, no VCF; same search_batched API)
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("mcts_core", find_extension(V2_DIR, "mcts_core"))
@@ -31,8 +31,8 @@ engine_mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(engine_mod)
 engine_mod.set_vcf(10, 3000)
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array_from_numeric
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
+from board_encoding import board_to_input_array_from_numeric
+from nets import GomokuNetV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -50,12 +50,12 @@ def _load_net(path):
     sd = torch.load(path, map_location=dev)
     if isinstance(sd, dict) and "model" in sd and isinstance(sd["model"], dict):   # v3_latest holds model+opt
         sd = sd["model"]
-    if any(k.startswith("opp_policy_head.") for k in sd):   # 2026-10-26: v3 NetV3 checkpoint (same loader as spectate.py)
+    if any(k.startswith("opp_policy_head.") for k in sd):   # v3 NetV3 checkpoint (same loader as spectate.py)
         sys.path.insert(1, V3_DIR)
         from net_v3 import NetV3
         net = NetV3()
     else:
-        net = AlphaZeroTicTacToeV3()
+        net = GomokuNetV3()
     net.load_state_dict(sd)
     return net.to(dev).eval()
 
@@ -65,7 +65,7 @@ def last_promoted_epoch():
     (the best checkpoint file itself does not record which epoch it is)."""
     import glob
     best = None
-    # 2026-10-11: the training report holds every gate line across restarts (stdout logs are per run)
+    # The training report holds every gate line across restarts (stdout logs are per run)
     for f in [os.path.join(TENX, "model", "training_report_11x11.txt")]:
         try:
             with open(f, encoding="utf-8", errors="ignore") as fh:
@@ -86,7 +86,7 @@ def _latest_info(mtime):
             "saved": __import__("time").strftime("%Y-%m-%d %H:%M", __import__("time").localtime(mtime)), "_mtime": mtime}
 
 
-# 2026-09-30 (user): visitors choose the model. "dawn" = graduated NAPS-625 (frozen),
+# Visitors choose the model. "dawn" = graduated NAPS-625 (frozen),
 # "latest" = the newest gate-promoted best checkpoint (reloaded when a game starts).
 MODELS = {
     "dawn": {"net": _load_net(DAWN_CKPT),
@@ -94,14 +94,14 @@ MODELS = {
                       "promoted_epoch": 625, "saved": "2026-09-29 14:22"}},
     "latest": {"net": _load_net(CKPT), "info": _latest_info(os.path.getmtime(CKPT))},
 }
-# 2026-10-11 (user): festival candidates frozen in model/festival_candidates/ can be chosen too
+# Festival candidates frozen in model/festival_candidates/ can be chosen too
 for _ep, _note in ((880, "축제 1순위 후보, 졸업 3/3"), (890, "Rapfi 최강 3,440"), (900, "13수 필패 3/3"), (905, "현재 best, 게이트 57.5%")):
     _p = os.path.join(TENX, "model", "festival_candidates", f"ep{_ep}.pth")
     if os.path.exists(_p):
         MODELS[f"ep{_ep}"] = {"net": _load_net(_p),
                               "info": {"key": f"ep{_ep}", "name": f"NAPS-{_ep} ({_note})", "checkpoint": f"ep{_ep}.pth",
                                        "promoted_epoch": _ep, "saved": "2026-10-10"}}
-# 2026-10-26 (user): NOON model v3 ep530 (정오 충족 10/25 14:14:29), the festival pick
+# NOON model v3 ep530 (정오 충족 10/25 14:14:29), the festival pick
 _V3_530 = os.path.join(V3_DIR, "model", "v3_ep530.pth")
 if os.path.exists(_V3_530):
     MODELS["v3_ep530"] = {"net": _load_net(_V3_530),
@@ -263,7 +263,7 @@ def place(g, r, c, player):
 
 GAME_LOG = os.path.join(HERE, "games.jsonl")
 
-# 2026-10-13 (user): in-progress games are written to disk after every move, so a server restart no longer
+# in-progress games are written to disk after every move, so a server restart no longer
 # loses them (a won game vs the best was lost to a restart). Restored on start; an AI turn resumes thinking.
 LIVE_PATH = os.path.join(HERE, "live_games.json")
 LIVE_KEYS = ("board", "turn", "human", "ai", "sims", "moves", "winrate", "over", "result", "model_key",
@@ -336,7 +336,7 @@ def ai_think(g, gen):
             break  # result proven: nothing left to learn
     best = max(cands, key=lambda c: c["visit_count"])["move"]
     if len(g["moves"]) < OPENING_SAMPLE_PLIES and not any(c.get("proven") for c in cands):
-        # opening variety (2026-09-28): pick among near-best candidates in proportion to visits,
+        # opening variety: pick among near-best candidates in proportion to visits,
         # so humans cannot win by replaying a memorised line against a deterministic AI
         top = max(c["visit_count"] for c in cands)
         pool = [c for c in cands if c["visit_count"] >= OPENING_SAMPLE_MIN_SHARE * top]
@@ -516,7 +516,7 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    # 2026-10-13 (user): "--lan" also serves other devices on the same network (festival QR code access)
+    # "--lan" also serves other devices on the same network (festival QR code access)
     host = "0.0.0.0" if "--lan" in sys.argv else "127.0.0.1"
     n_restored = restore_games()
     for _g in list(GAMES.values()):

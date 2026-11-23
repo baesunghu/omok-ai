@@ -1,5 +1,5 @@
 """Start (or resume) the 15x15 run's training: `python _restart_train15.py` in this folder (watchdog_.py does the same).
-Settings: run_config.py. Code: ../shared/train_run.py and ../shared/alphazero_mcts_make_lrfix.py.
+Settings: run_config.py. Code: ../shared/train_run.py and ../shared/naps_trainer.py.
 """
 import os
 import sys

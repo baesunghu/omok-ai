@@ -17,9 +17,9 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from fast_board import BOARD_SIZE as N  # noqa: E402  (15 in this folder)
-NODES = int(os.environ.get("SL_NODES", "100"))   # 2026-10-16 (user): 10 for a deliberately weak epoch 0
+NODES = int(os.environ.get("SL_NODES", "100"))   # 10 for a deliberately weak epoch 0
 EPS = 0.08
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (11x11_naps / 11x11_v2 / 15x15)
 sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
 from omok_paths import RAPFI_DIR, RAPFI_EXE  # noqa: E402
 EVAL_RE = re.compile(r"Eval (\S+)")

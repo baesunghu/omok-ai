@@ -1,7 +1,7 @@
 """One-off (2026-10-09): the watcher died after the ep820 run, so ep840 (promoted) was never
 measured. Same steps as rapfi_ladder_watch.py for one snapshot of the current best."""
 import os, shutil, subprocess, sys, time
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "10x10"))   # archived from 10x10/: its run folder first on sys.path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "11x11_naps"))   # archived from 11x11_naps/: its run folder first on sys.path
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
 import rapfi_ladder_watch as w
 shutil.copy2(w.BEST, w.SNAP)

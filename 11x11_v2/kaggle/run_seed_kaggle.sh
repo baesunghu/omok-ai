@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CATFISH A/B seed replicate on a Kaggle GPU T4 x2 session (2026-11-01, user: run experiments on Kaggle to finish sooner).
 # Layout after kaggle_seed.py sets up $W (= /kaggle/working/naps):
-#   $W/shared/{alphago_lee*.py, ...}, $W/omok_paths.py, $W/11x11_v2/{fast_board.py, ...},
+#   $W/shared/{nets.py, naps_trainer.py, ...}, $W/omok_paths.py, $W/11x11_v2/{run_config.py, ...},
 #   $W/11x11_v2/v3/{net_v3.py, cpp/mcts_core_solver.cpp},
 #   $W/11x11_v2/v3/ab_scratch/{A_nocatfish_sN,B_catfish_sN}/   one working folder per arm; the trainer is always
 #   $W/11x11_v2/v3/train_v3.py <arm>, with the arm's settings from v3/arms.py

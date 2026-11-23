@@ -20,7 +20,7 @@ from fast_board import BOARD_SIZE as N, fast_check_win
 OPP_NODES = 200000
 LEVELS = [100, 200, 500, 1000, 2000, 3000, 5000, 10000, 20000, 50000, 100000]
 OUT = os.path.join("model", "problem_difficulty.json")
-TRIAL_TIMEOUT = 300   # s; 2026-10-10: a Rapfi pipe once stalled for an hour (both engines idle)
+TRIAL_TIMEOUT = 300   # s; a Rapfi pipe once stalled for an hour (both engines idle)
 
 
 def trial(p, n, opp, reg=None):

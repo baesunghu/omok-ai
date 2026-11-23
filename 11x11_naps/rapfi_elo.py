@@ -9,7 +9,7 @@ Model (Davidson with a first-move term), one game of player p against Rapfi at n
     P(p wins) ~ e^(x/2),  P(Rapfi wins) ~ e^(-x/2),  P(draw) ~ e^nu
 R(n) is piecewise linear in log10(n) with one slope per decade (10, 100, ..., 1e6 nodes), each >= 0, R(100) = 0.
 Every player (checkpoint, per day: some file names were reused for different weights) gets its own Elo.
-Data: 11x11_v2/model/rapfi_match_log.jsonl (per game, with colour) and 10x10/model/rapfi_ladder_log.jsonl
+Data: 11x11_v2/model/rapfi_match_log.jsonl (per game, with colour) and 11x11_naps/model/rapfi_ladder_log.jsonl
 (per ladder run and level, colour unknown -> no first-move term; each run is its own player).
 
 Usage:  python rapfi_elo.py                fit, print the table, save model/rapfi_elo_curve.json

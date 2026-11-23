@@ -48,7 +48,7 @@ import copy
 import mcts_core
 from net_v3 import NetV3
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee_v3_survival import SURVIVAL_CAP
+from nets import SURVIVAL_CAP
 
 assert hasattr(mcts_core.SelfPlayRunner(), "gumbel_m_full"), "wrong mcts_core (needs the v3 Gumbel build)"
 
@@ -57,31 +57,31 @@ NC = N * N
 mcts_core.set_vcf(10, 3000)
 
 GAMES = SPEC.get("games", 192)   # games per epoch (self-play + catfish)
-# 2026-10-22 21:00 (user): CATFISH league -- crippled copies of the CURRENT net, rebuilt every epoch:
+# CATFISH league -- crippled copies of the CURRENT net, rebuilt every epoch:
 # value0 (last value Linear zeroed), value_half (x0.5), policy0 (uniform prior). The catfish side
 # searches with plain PUCT and its moves are not recorded; only the main net's full-search moves are.
-# 2026-10-23 02:10 (user): policy_half added (policy logits x0.5 = flatter prior) to poke policy blind spots;
+# policy_half added (policy logits x0.5 = flatter prior) to poke policy blind spots;
 # tier-3 failures at ep120 were policy blind spots, not value overconfidence.
-# Same time (user): policy0 dropped -- the main net beat it 95-97% (ep79-128), too weak to teach anything.
+# At the same time policy0 was dropped -- the main net beat it 95-97% (ep79-128), too weak to teach anything.
 # 3 x 16 = 48 league games, 144 self-play (same split as before).
 # {kind: scale}: "value*" scales the last value Linear, "policy*" the last policy Linear, 0 = switched off.
 CATFISH_SCALE = dict(SPEC["catfish"]) if ARM else {"value0": 0.0, "value_half": 0.5, "policy_half": 0.5}
 CATFISH = tuple(CATFISH_SCALE)
-# G arms (arms.py, 2026-11-02): after every epoch the main net's score vs each catfish (EMA) is pushed toward ~65%:
+# G arms (arms.py): after every epoch the main net's score vs each catfish (EMA) is pushed toward ~65%:
 # above HI the catfish gets stronger (scale + STEP), below LO weaker. Scales live in v3_latest.pth for a resume.
 ADAPTIVE = SPEC.get("adaptive", False)
 SCALE_MAX, SCALE_STEP = 0.95, 0.1
 TARGET, LO, HI, EMA = 0.65, 0.55, 0.75, 0.3   # catfish scores ~35% against the main net
 CATFISH_SCORE = {k: None for k in CATFISH}
-LEAGUE_GAMES = 8         # 2026-10-23 03:xx (user): 16 -> 8 per catfish (league 25% -> 12.5%); ep120 lost to ep100 40% (4/8/8), suspected catfish over-fit
+LEAGUE_GAMES = 8         # 16 -> 8 per catfish (league 25% -> 12.5%); ep120 lost to ep100 40% (4/8/8), suspected catfish over-fit
 SELF_GAMES = GAMES - LEAGUE_GAMES * len(CATFISH)
-SIMS_FULL = 400          # Gumbel full search (recorded). 2026-10-23 03h (user): 200 -> 400, stronger policy targets to win back the policy
+SIMS_FULL = 400          # Gumbel full search (recorded). 200 -> 400: stronger policy targets to win back the policy
 SIMS_FAST = 48           # fast search (not recorded)
 FULL_PROB = 0.25         # playout-cap randomization
-GUMBEL_M_FULL, GUMBEL_M_FAST = 32, 16   # 2026-10-23 (user): 16/8 -> 32/16, low-prior moves reach the candidate set more often
-# 2026-10-23 (user): exploration for self-play ("창발적 수"): random opening stones, early-move temperature
+GUMBEL_M_FULL, GUMBEL_M_FAST = 32, 16   # 16/8 -> 32/16, low-prior moves reach the candidate set more often
+# Exploration for self-play ("창발적 수"): random opening stones, early-move temperature
 # (sampled from the Gumbel improved policy), Dirichlet noise on the Gumbel candidate sampling.
-OPEN_FRAC = 0.25         # share of self-play games that start from a random opening (04:55 user: 0.5 -> 0.25, black-win drift)
+OPEN_FRAC = 0.25         # share of self-play games that start from a random opening (0.5 -> 0.25 against black-win drift)
 OPEN_STONES = (2, 4)     # random stones placed (alternating X, O) within OPEN_RADIUS of the centre
 OPEN_RADIUS = 3
 TEMP_MOVES = 4           # first moves of every self-play game sampled from the improved policy
@@ -91,7 +91,7 @@ N_THREADS, TARGET_ROWS, MAX_WAIT_MS = 64, 512, 4.0
 WINDOW = 300_000         # augmented rows kept
 BATCH = 256
 STEPS_PER_NEW = 2.0      # each new row is seen ~2x on average
-LR, WD = 3e-4, 1e-4    # 2026-10-23 07:55 (user): 1e-3 -> 3e-4; policy loss minus target entropy flat at ~0.71 for 20 epochs
+LR, WD = 3e-4, 1e-4    # 1e-3 -> 3e-4; policy loss minus target entropy flat at ~0.71 for 20 epochs
 Q_WEIGHT = 0.2           # value target = (1-Q_WEIGHT) z + Q_WEIGHT q
 W_OPP, W_OWN, W_SURV = 0.15, 0.15, 0.1
 SAVE_EVERY = 10
@@ -147,7 +147,7 @@ def selfplay(model):
     near = [(r, c) for r in range(c0 - OPEN_RADIUS, c0 + OPEN_RADIUS + 1) for c in range(c0 - OPEN_RADIUS, c0 + OPEN_RADIUS + 1)]
     for gi in range(SELF_GAMES):
         if random.random() < OPEN_FRAC:
-            k = random.choice((2, 4))   # 04:55 (user): even only, equal stones for both sides
+            k = random.choice((2, 4))   # Even only, equal stones for both sides
             cells = random.sample(near, k)
             board = [[" "] * N for _ in range(N)]
             st = {}
@@ -320,7 +320,7 @@ def main():
             adapt_catfish(st["tally"])
             ck.update(catfish_scale=dict(CATFISH_SCALE), catfish_score=dict(CATFISH_SCORE))
         torch.save(ck, "model/v3_latest.pth")
-        if epoch % SAVE_EVERY == 0 or epoch % 25 == 0:   # 10/25 (user): ladder every 25 epochs needs ep575 etc.
+        if epoch % SAVE_EVERY == 0 or epoch % 25 == 0:   # Ladder every 25 epochs needs ep575 etc.
             torch.save(model.state_dict(), f"model/v3_ep{epoch}.pth")
             buf.save("model/v3_buffer.npz")
     log(f"STOP file found: stopped after epoch {epoch}")

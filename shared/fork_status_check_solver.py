@@ -7,7 +7,7 @@ without a live Claude session.
 
 Usage (from a PowerShell prompt):
 
-    cd 10x10      (or 11x11_v2 / 15x15)
+    cd 11x11_naps      (or 11x11_v2 / 15x15)
     python ../shared/fork_status_check_solver.py
 
 Read-only everywhere: reads the live checkpoint, the hard-mined pool, and
@@ -48,15 +48,15 @@ print("\n" + "=" * 70)
 print("Loading live checkpoint (shared by the fork checks below)...")
 print("=" * 70)
 
-import mcts_core_solver as mcts_core_verbose  # 2026-09-27 solver-engine re-measure copy
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3 as AlphaZeroTicTacToe
-from alphago_lee import preferred_memory_format, board_to_input_array_from_numeric
+import mcts_core_solver as mcts_core_verbose  # solver-engine re-measure copy
+from nets import GomokuNetV3 as GomokuNet
+from board_encoding import preferred_memory_format, board_to_input_array_from_numeric
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
-import alphazero_mcts_make_lrfix as amk
+import naps_hard_examples as amk   # _opponent_can_fork_next (until 2026-11 in the trainer module)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CKPT = os.path.join(HERE, "model", f"best_mcts{FILE_SUFFIX}.pth")
-model = AlphaZeroTicTacToe()
+model = GomokuNet()
 model.load_state_dict(torch.load(CKPT, map_location=device))
 model.to(device, memory_format=preferred_memory_format(device))
 model.eval()

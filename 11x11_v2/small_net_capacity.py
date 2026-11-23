@@ -4,7 +4,7 @@ Distills the current big net (256 ch x 7 blocks, ~8.6M params) into smaller nets
 architecture (GroupNorm + SE res blocks, same heads) and measures, on held-out positions:
   * top-1 agreement with the teacher's policy, policy KL(teacher || student), value MSE and sign agreement,
   * forward throughput (rows/s) on this GPU.
-Positions: the last saved replay buffer of the festival run (10x10/model/mcts_replay_buffer_11x11.pkl);
+Positions: the last saved replay buffer of the festival run (11x11_naps/model/mcts_replay_buffer_11x11.pkl);
 the first 90% (in buffer order, so augmentations of one position stay together) train, the last 10% test.
 Targets are the teacher's raw outputs (no search), so this isolates network capacity.
 Measurement only: the live training run is not touched (it shares the GPU while this runs).
@@ -20,13 +20,13 @@ import torch
 import torch.nn.functional as F
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3 as Net
+from nets import GomokuNetV3 as Net
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 EPOCHS = int(sys.argv[1]) if len(sys.argv) > 1 else 15
 TEACHER = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, "model", f"best_mcts{FILE_SUFFIX}.pth")
-BUFFER = os.path.join(HERE, "..", "10x10", "model", "mcts_replay_buffer_11x11.pkl")
+BUFFER = os.path.join(HERE, "..", "11x11_naps", "model", "mcts_replay_buffer_11x11.pkl")
 SIZES = [(64, 6), (96, 6), (128, 6), (128, 10), (192, 7)]
 if os.environ.get("CAP_SIZES"):   # e.g. CAP_SIZES=64x16,96x14 (thin-and-deep variants)
     SIZES = [tuple(int(v) for v in t.split("x")) for t in os.environ["CAP_SIZES"].split(",")]

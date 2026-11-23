@@ -2,7 +2,7 @@
 generate_mcts_self_play_data_mp
 ===============================
 Multi-PROCESS drop-in replacement for
-``alphazero_mcts_make_lrfix.generate_mcts_self_play_data`` (the
+``naps_trainer.generate_mcts_self_play_data`` (the
 ThreadPoolExecutor-based self-play game generator).
 
 Derived from the "pipe_batch_local" candidate, which was selected over the
@@ -178,13 +178,13 @@ if PROD_DIR not in sys.path:
 # which one the threaded fallback calls. Defaults to the module the live
 # training run actually executes, so the MP path can NEVER diverge from the
 # game logic you are currently editing/training with. Override with
-# MP_SELFPLAY_PROD_MODULE=alphazero_mcts_make to point at the older module.
-PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "alphazero_mcts_make_lrfix")
+# MP_SELFPLAY_PROD_MODULE=legacy_trainer_mcts to point at the older module.
+PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "naps_trainer")
 
 import torch  # noqa: E402  (must follow the sys.path setup above)
-from alphago_lee import preferred_memory_format  # noqa: E402
-from alphago_lee_v3_survival import SURVIVAL_CAP  # noqa: E402
-from alphazero_mcts import BOARD_SIZE  # noqa: E402
+from board_encoding import preferred_memory_format  # noqa: E402
+from nets import SURVIVAL_CAP  # noqa: E402
+from mcts_python import BOARD_SIZE  # noqa: E402
 
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 
@@ -341,7 +341,7 @@ class _PipeEvalProxy:
 # Coordinator-side: background thread in the MAIN process, owns the GPU
 # ============================================================
 class PipePooledEvaluator:
-    """Cross-process analogue of ``alphazero_mcts.PooledEvaluator``: one
+    """Cross-process analogue of ``mcts_python.PooledEvaluator``: one
     background thread in the process that already holds ``model`` on
     ``device``, multiplexing every worker's dedicated Pipe with
     ``multiprocessing.connection.wait()`` instead of reading a Queue.
@@ -469,7 +469,7 @@ class PipePooledEvaluator:
         """One batched GPU forward pass for every currently-pending worker.
 
         Numerically identical to PooledEvaluator._flush /
-        alphago_lee.boards_to_input_tensor: np.stack the groups, one
+        board_encoding.boards_to_input_tensor: np.stack the groups, one
         host->device transfer, contiguous in the device's preferred memory
         format, inference_mode, exp(log-softmax logits) -> float64 probs,
         squeezed float64 values.
@@ -543,7 +543,7 @@ class MPGamePool:
         self.result_queue = self.ctx.Queue()
         self.ready_queue = self.ctx.Queue()
         self.error_queue = self.ctx.Queue()
-        # 2026-09-26: with more tasks than workers (now the case on the
+        # With more tasks than workers (now the case on the
         # fallback path), a failed call can leave this process's feeder
         # thread blocked on unread tasks, which multiprocessing would join
         # forever at exit. Never join these feeders; shutdown() also drains.
@@ -663,7 +663,7 @@ class MPGamePool:
         return results
 
     def shutdown(self):
-        # 2026-09-26: drop still-queued tasks first so workers reach their
+        # Drop still-queued tasks first so workers reach their
         # sentinel after their current game (see __init__ note).
         empty_polls = 0
         while empty_polls < 2:
@@ -818,7 +818,7 @@ def generate_mcts_self_play_data_mp(model, device, num_games=10, num_simulations
                                     target_batch=DEFAULT_TARGET_BATCH, max_wait=DEFAULT_MAX_WAIT,
                                     value_q_weight=0.0, max_plies=None):
     """Multi-process drop-in for
-    ``alphazero_mcts_make_lrfix.generate_mcts_self_play_data``.
+    ``naps_trainer.generate_mcts_self_play_data``.
 
     Identical call signature (plus target_batch/max_wait, which the original
     hard-codes at its PooledEvaluator construction site rather than exposing)
@@ -874,7 +874,7 @@ def generate_mcts_self_play_data_mp(model, device, num_games=10, num_simulations
         # module is cheap and (b) there is no circular-import problem when
         # the production module itself imports this one.
         prod = __import__(PROD_MODULE)
-        from alphago_lee_make import augment_sample
+        from legacy_trainer_basic import augment_sample
 
         workers = _resolve_workers(max_workers, num_games)
         boost_note = (f", boosted to {boosted_sims} while >{boost_threshold} cells empty"
@@ -931,9 +931,9 @@ def generate_mcts_self_play_data_mp(model, device, num_games=10, num_simulations
                 opening_rows.append(first_cell // BOARD_SIZE)
             # 5th element: survival target (remaining plies, capped and
             # normalized) for the V3 auxiliary head -- see
-            # alphago_lee_v3_survival.py. Self-play records both sides'
+            # nets.py. Self-play records both sides'
             # plies, so len(history) - index is the true plies-to-end.
-            # 2026-09-26: real ply indices (PCR skips recording fast-search
+            # Real ply indices (PCR skips recording fast-search
             # plies, so len(history) - k would undercount plies-to-end).
             for (board_3d, player_turn, target_policy_map, q), ply_idx in zip(history, ply_indices):
                 final_val = prod.mixed_value_target(float(outcome if player_turn == 'X' else -outcome), q,

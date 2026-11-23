@@ -16,7 +16,7 @@ sys.path.insert(0, V2)
 os.chdir(V2)
 import mcts_core
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array_from_numeric
+from board_encoding import board_to_input_array_from_numeric
 from fast_board import BOARD_SIZE as N, fast_check_win
 sys.path.insert(1, os.path.join(V2, "v3"))
 from net_v3 import NetV3
@@ -24,10 +24,10 @@ from net_v3 import NetV3
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 OPENINGS = [((5, 5), (4, 4)), ((5, 5), (4, 5)), ((5, 5), (6, 4)), ((5, 5), (3, 3)), ((5, 5), (5, 3)),
             ((4, 5), (5, 5)), ((5, 4), (4, 6)), ((4, 4), (6, 6)), ((5, 6), (4, 4)), ((6, 5), (5, 3))]
-if os.environ.get("H2H_MORE"):   # 2026-10-26 (user: evaluate ep400 more): 36 openings = 72 games, the 10 above first
+if os.environ.get("H2H_MORE"):   # Evaluate ep400 more: 36 openings = 72 games, the 10 above first
     OPENINGS = OPENINGS + [((r, c), (r + dr, c + dc)) for r in (4, 5, 6) for c in (4, 5, 6) for dr, dc in ((-1, -1), (-1, 1), (0, 2))
                            if ((r, c), (r + dr, c + dc)) not in OPENINGS][:26]
-if os.environ.get("H2H_ALL"):    # 2026-10-31 (user: catfish A/B at ep30/60): 100 distinct openings = 200 games, the 10 above first
+if os.environ.get("H2H_ALL"):    # Catfish A/B at ep30/60: 100 distinct openings = 200 games, the 10 above first
     OPENINGS = OPENINGS + [((r, c), (r + dr, c + dc)) for r in (4, 5, 6) for c in (4, 5, 6)
                            for dr in range(-2, 3) for dc in range(-2, 3) if (dr, dc) != (0, 0)
                            and ((r, c), (r + dr, c + dc)) not in OPENINGS][:90]
@@ -41,7 +41,7 @@ def load(p):
     sd = torch.load(p, map_location=DEV)
     if "model" in sd:                       # a *_latest.pth training checkpoint
         sd = sd["model"]
-    if "policy_head.out.weight" in sd:      # 2026-10-30 (user): 15x15 V4 net played on the 11x11 board
+    if "policy_head.out.weight" in sd:      # 15x15 V4 net played on the 11x11 board
         sys.path.insert(1, os.path.join(os.path.dirname(V2), "15x15_v3"))
         from net_v4 import NetV4, upgrade_adj_head
         m = NetV4(board_size=N); upgrade_adj_head(sd, m)
@@ -59,14 +59,14 @@ def make_ev(m):
     return ev
 
 
-LIVE = None   # 2026-10-31 (user: 관전): sharded runs write the game in progress for ab_scratch/ab_live.py
+LIVE = None   # 관전: sharded runs write the game in progress for ab_scratch/ab_live.py
 if os.environ.get("H2H_SHARD"):
     LIVE = os.path.join(V2, "v3", "ab_scratch", "live", f"shard{os.environ['H2H_SHARD'].split('/')[0]}.json")
     os.makedirs(os.path.dirname(LIVE), exist_ok=True)
 
 
 def live(info, moves):
-    if LIVE:   # best effort: a viewer reading the file can make os.replace fail on Windows (11-01: crashed 2 shards)
+    if LIVE:   # best effort: a viewer reading the file can make os.replace fail on Windows (it once crashed 2 shards)
         import json
         try:
             with open(LIVE + ".tmp", "w", encoding="utf-8") as f:

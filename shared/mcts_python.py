@@ -1,3 +1,4 @@
+# (until 2026-11 this file was alphazero_mcts.py)
 import math
 import queue
 import threading
@@ -5,8 +6,8 @@ import numpy as np
 import torch
 import os
 
-from alphago_lee import (AlphaZeroTicTacToe, board_to_input_tensor, board_to_input_array,
-                          boards_to_input_tensor, board_to_input_array_from_numeric)
+from nets import GomokuNetV1 as GomokuNet
+from board_encoding import (board_to_input_tensor, board_to_input_array, boards_to_input_tensor, board_to_input_array_from_numeric)
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, fast_check_draw
 
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
@@ -85,7 +86,7 @@ class PooledEvaluator:
         self._stop = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        # 2026-09-11 instrumentation: tracks real achieved batch sizes so a
+        # Instrumentation: tracks real achieved batch sizes so a
         # target_batch change (e.g. 48->128, see forward_pass_benchmark.py's
         # finding that bs=128 gives ~17% more throughput in a synthetic
         # single-shot benchmark) can be verified against ACTUAL concurrency
@@ -235,7 +236,7 @@ class MCTS:
         self._eval_cache = shared_cache if shared_cache is not None else {}
         self._owns_cache = shared_cache is None
         self._pooled_evaluator = pooled_evaluator
-        # Persistent C++ search-tree handle (2026-09-11, tree reuse): one
+        # Persistent C++ search-tree handle (tree reuse): one
         # MCTSEngine per MCTS Python object, matching this object's own
         # lifetime -- every game-playing call site already constructs a
         # fresh MCTS() per game (or per side), and calls .search() once per
@@ -618,7 +619,7 @@ def get_mcts_model(model_name="alphazero_mcts.pth"):
 
     if _current_mcts_model is None or _current_mcts_device is None:
         _current_mcts_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        _current_mcts_model = AlphaZeroTicTacToe()
+        _current_mcts_model = GomokuNet()
         _current_mcts_model.to(_current_mcts_device)
 
     model_path = os.path.join('model', model_name)

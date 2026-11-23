@@ -26,10 +26,10 @@ ARMS = {}
 for s in (2, 3, 4, 5):
     ARMS[f"A_nocatfish_s{s}"] = dict(catfish={}, games=192, seed=SEED[s])                  # control: self-play only
     ARMS[f"B_catfish_s{s}"] = dict(catfish=dict(V3_CATFISH), games=192, seed=SEED[s])     # v3 catfish setting
-# 11-01 why does catfish help/hurt? (seed 2, against A_nocatfish_s2)
+# Why does catfish help/hurt? (seed 2, against A_nocatfish_s2)
 ARMS["E_cf192_s2"] = dict(catfish=dict(V3_CATFISH), games=216, seed=SEED[2])   # data cost: self-play kept at 192 + 24 catfish
 ARMS["F_strongcat_s2"] = dict(catfish={"value_half": 0.75, "policy_half": 0.75}, games=192, seed=SEED[2])  # stronger catfish
-# 11-02 G arm (user: find the conditions where catfish works): B's catfish lost 21/24 to the main net (too weak),
+# G arm (goal: find the conditions where catfish works): B's catfish lost 21/24 to the main net (too weak),
 # so each catfish's scale adapts until the main net scores about 65% against it.
 for s in (2, 3):
     ARMS[f"G_adaptcat_s{s}"] = dict(catfish=dict(V3_CATFISH), games=192, seed=SEED[s], adaptive=True)

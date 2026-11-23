@@ -30,8 +30,8 @@ import numpy as np
 import torch
 
 import mcts_core
-from alphago_lee import board_to_input_array_from_numeric
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
+from board_encoding import board_to_input_array_from_numeric
+from nets import GomokuNetV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, FILE_SUFFIX
 
 N = BOARD_SIZE
@@ -145,7 +145,7 @@ def build(shape, k, owner):
 def main():
     ckpt = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "model", f"best_mcts{FILE_SUFFIX}.pth")
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = AlphaZeroTicTacToeV3()
+    model = GomokuNetV3()
     model.load_state_dict(torch.load(ckpt, map_location=dev))
     model.to(dev).eval()
 

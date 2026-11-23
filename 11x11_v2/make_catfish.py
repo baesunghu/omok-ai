@@ -24,7 +24,7 @@ sd = torch.load(SRC, map_location="cpu")
 v = {k: t.clone() for k, t in sd.items()}
 v["value_head.6.weight"].zero_(); v["value_head.6.bias"].zero_()
 torch.save(v, os.path.join(OUT, "catfish_value0.pth"))
-# 2026-10-21 (user): a "half" value catfish -- last value Linear x0.5, so tanh(0.5 z): the same judgement,
+# A "half" value catfish -- last value Linear x0.5, so tanh(0.5 z): the same judgement,
 # just less sure of it (a softened, not a dead, value head).
 h = {k: t.clone() for k, t in sd.items()}
 h["value_head.6.weight"].mul_(0.5); h["value_head.6.bias"].mul_(0.5)
@@ -33,9 +33,9 @@ p = {k: t.clone() for k, t in sd.items()}
 p["policy_head.4.weight"].zero_(); p["policy_head.4.bias"].zero_()
 torch.save(p, os.path.join(OUT, "catfish_policy0.pth"))
 print("catfish opponents written from", SRC)
-# 2026-10-22 (user): Dawn (ep625, graduated 9/29) as an intact league anchor -- the cleanest value head in the
+# Dawn (ep625, graduated 9/29) as an intact league anchor -- the cleanest value head in the
 # lineage (before the Hard-7 contamination) and it passed the graduation problems 3/3.
-DAWN = "../10x10/model/graduated_11x11/ep625_graduated_20260929.pth"
+DAWN = "../11x11_naps/model/graduated_11x11/ep625_graduated_20260929.pth"
 if os.path.exists(DAWN):
     torch.save(torch.load(DAWN, map_location="cpu"), os.path.join(OUT, "catfish_dawn.pth"))
     print("catfish_dawn written from", DAWN)

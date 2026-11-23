@@ -21,7 +21,7 @@ import os
 import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (11x11_naps / 11x11_v2 / 15x15)
 sys.path.insert(0, HERE)
 os.chdir(HERE)
 import numpy as np
@@ -30,20 +30,20 @@ from playwright.sync_api import sync_playwright
 
 import mcts_core_solver as engine_mod
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array_from_numeric
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
+from board_encoding import board_to_input_array_from_numeric
+from nets import GomokuNetV3
 from fast_board import fast_check_win
 
 N = 11
 URL = "https://youngin05.github.io/gomokuwithai/"
-# 2026-10-10: GWA_CKPT selects another checkpoint (default Dawn); its games go to a log named after it.
+# GWA_CKPT selects another checkpoint (default Dawn); its games go to a log named after it.
 CKPT = os.environ.get("GWA_CKPT", os.path.join("model", "graduated_11x11", "ep625_graduated_20260929.pth"))
 LOG = os.path.join("model", "gomokuwithai_match_log.jsonl") if "GWA_CKPT" not in os.environ else \
     os.path.join("model", "gomokuwithai_match_" + os.path.splitext(os.path.basename(CKPT))[0] + "_log.jsonl")
 GAMES = int(sys.argv[1]) if len(sys.argv) > 1 else 50
 SIMS = int(sys.argv[2]) if len(sys.argv) > 2 else 1100
 LEVEL = int(sys.argv[3]) if len(sys.argv) > 3 else 3  # 3 = Hard
-# 2026-09-30: time-matched mode (SIMS = 0): Dawn searches until it has used as much
+# time-matched mode (SIMS = 0): Dawn searches until it has used as much
 # wall time as the site AI's average move time so far in this match (min 1100 sims).
 TIME_MATCH = SIMS == 0
 if TIME_MATCH:
@@ -52,7 +52,7 @@ OPENING_SAMPLE, MIN_SHARE = 8, 0.3
 SITE_TIMEOUT = 180  # seconds per site move
 
 dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = AlphaZeroTicTacToeV3()
+model = GomokuNetV3()
 model.load_state_dict(torch.load(CKPT, map_location=dev))
 model.to(dev).eval()
 

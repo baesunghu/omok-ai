@@ -27,9 +27,9 @@ TARGET, MAX_WAIT = 48, 0.004
 def coordinator(ckpt, conns, ready, stats_q):
     sys.path.insert(0, HERE); os.chdir(HERE)
     import numpy as np, torch
-    from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
+    from nets import GomokuNetV3
     dev = torch.device("cuda")
-    m = AlphaZeroTicTacToeV3(); m.load_state_dict(torch.load(ckpt, map_location=dev)); m.to(dev).eval()
+    m = GomokuNetV3(); m.load_state_dict(torch.load(ckpt, map_location=dev)); m.to(dev).eval()
     ready.set()
     live = list(conns); flushes = boards = 0
     while live:
@@ -73,9 +73,9 @@ def worker(wid, nw, games, sims, nodes, ckpt_name, conn, log_path, out_q):
     import numpy as np
     import mcts_core
     from run_config import VCF
-    if VCF and os.environ.get("VCF", "1") != "0":  # 2026-10-23 (user): VCF on wherever the engine has it
+    if VCF and os.environ.get("VCF", "1") != "0":  # VCF on wherever the engine has it
         mcts_core.set_vcf(*VCF)
-    from alphago_lee import board_to_input_array_from_numeric
+    from board_encoding import board_to_input_array_from_numeric
     from fast_board import fast_check_win
     from rapfi_match import Rapfi, OPENINGS, N, WIN_LENGTH
 

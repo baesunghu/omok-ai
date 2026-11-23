@@ -4,7 +4,7 @@ Usage: python v3/rapfi_selfcheck.py PROBLEM_ID [defender_nodes,...]   (run from 
 """
 import os as _os, sys as _sys
 _sys.path.append(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # repository root
-from omok_paths import PROBLEMS_FILE  # noqa: E402  (10x10/tactical_problems: the 11x11 problem set, one copy)
+from omok_paths import PROBLEMS_FILE  # noqa: E402  (11x11_naps/tactical_problems: the 11x11 problem set, one copy)
 import json
 import os
 import sys
@@ -28,7 +28,7 @@ for dn in defs:
         board[r][c] = p
     turn, winner, first = ai, None, None
     for _ in range(MAX_PLIES):
-        if first is None and FIRST:          # 2026-10-24: force the defender's first move (snap-through check)
+        if first is None and FIRST:          # Force the defender's first move (snap-through check)
             r, c = FIRST
         else:
             r, c = (defender if turn == ai else attacker).move(list(moves), turn)

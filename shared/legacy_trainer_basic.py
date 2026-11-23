@@ -1,6 +1,7 @@
+# (until 2026-11 this file was alphago_lee_make.py)
 import os
 import sys
-if __name__ == "__main__":   # run directly from a run folder: work there, its fast_board.py first on sys.path
+if __name__ == "__main__":   # run directly from a run folder: work there, its run_config.py first on sys.path
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from omok_paths import enter_run
     enter_run()
@@ -14,12 +15,10 @@ import numpy as np
 import random
 import os
 
-import alphago_lee
-from alphago_lee import (
-    BOARD_SIZE, WIN_LENGTH, NUM_CELLS, INPUT_SIZE,
-    AlphaZeroTicTacToe, board_to_input_tensor, check_win, check_draw
-)
-import determinisic_play
+import board_encoding
+from board_encoding import BOARD_SIZE, WIN_LENGTH, NUM_CELLS, INPUT_SIZE, board_to_input_tensor, check_win, check_draw
+from nets import GomokuNetV1 as GomokuNet
+import deterministic_play
 
 # Keep 3x3 and other board sizes writing to separate checkpoint/log files so
 # concurrent runs (e.g. a 3x3 job still training while a 5x5 job starts)
@@ -45,7 +44,7 @@ def report_logger(msg):
 # ============================================================
 # Model / Device Setup
 # ============================================================
-# Same split as alphazero_mcts_make.py: self-play here does one single-sample
+# Same split as legacy_trainer_mcts.py: self-play here does one single-sample
 # (batch=1) forward pass per move (no tree search), and single-sample calls
 # are faster on CPU than on this machine's GPU due to CUDA kernel-launch
 # overhead outweighing the tiny model's compute. Training is batched
@@ -53,7 +52,7 @@ def report_logger(msg):
 # devices at each phase boundary instead of living on one.
 
 def get_model():
-    return AlphaZeroTicTacToe()
+    return GomokuNet()
 
 
 def get_devices():
@@ -152,17 +151,17 @@ def _play_one_lee_game(model, device, use_mcts_self_play):
             target_policy_map[r, c] = 1.0
         else:
             # Fast Deterministic Heuristic AI
-            r, c = determinisic_play.play(current_board, current_player)
+            r, c = deterministic_play.play(current_board, current_player)
             if r == -1:
                 break
             target_policy_map[r, c] = 1.0
 
         # Store current board state as network input planes via the shared
-        # canonical builder (alphago_lee.board_to_input_array) instead of
+        # canonical builder (board_encoding.board_to_input_array) instead of
         # building the planes inline here, so this file automatically
-        # tracks alphago_lee.py's input format (e.g. channel count) with no
+        # tracks board_encoding.py's input format (e.g. channel count) with no
         # separate edit needed if that builder changes.
-        board_3d = alphago_lee.board_to_input_array(board_snapshot, current_player)
+        board_3d = board_encoding.board_to_input_array(board_snapshot, current_player)
 
         history.append((board_3d, current_player, target_policy_map))
         current_board[r][c] = current_player
@@ -176,7 +175,7 @@ def generate_self_play_data(model, device, num_games=20, use_mcts_self_play=True
     Generates self-play training games. Games are played concurrently across
     a thread pool -- each neural-net forward pass releases the GIL inside
     PyTorch's C++ kernels, so multiple games really do make progress on
-    different CPU cores at once (same reasoning as alphazero_mcts_make.py).
+    different CPU cores at once (same reasoning as legacy_trainer_mcts.py).
     """
     max_workers = max_workers or max(1, min(num_games, (os.cpu_count() or 4) - 2))
     print(f"Generating {num_games} self-play games (workers: {max_workers})...")
@@ -241,7 +240,7 @@ def _play_vs_deterministic(model, device, lee_plays_x):
         if current_player == lee_player:
             r, c = _lee_pick_move(model, device, board, current_player)
         else:
-            r, c = determinisic_play.play(board, current_player)
+            r, c = deterministic_play.play(board, current_player)
         if r == -1:
             return 'draw'
 
@@ -251,7 +250,7 @@ def _play_vs_deterministic(model, device, lee_plays_x):
 
 def evaluate_vs_deterministic(model, device, num_games=20):
     """
-    Plays num_games against determinisic_play (minimax/alpha-beta), alternating
+    Plays num_games against deterministic_play (minimax/alpha-beta), alternating
     who moves first, and returns (win_rate, draw_rate, loss_rate) from the
     Lee policy net's perspective.
     """

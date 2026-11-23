@@ -30,7 +30,7 @@ PLANS = {
     # session 3: why does catfish help/hurt -- data cost (E) and catfish strength (F), both against seed-2 A
     "p3": [("train", ["E_cf192_s2", "F_strongcat_s2"]),
            ("h2h", [("A_nocatfish_s2", "E_cf192_s2", 60), ("A_nocatfish_s2", "F_strongcat_s2", 60)])],
-    # session 4 (11-02): adaptive catfish (G) on seeds 2 and 3, each against the same seed's A; attach session 1's output
+    # session 4: adaptive catfish (G) on seeds 2 and 3, each against the same seed's A; attach session 1's output
     "p4": [("train", ["G_adaptcat_s2", "G_adaptcat_s3"]),
            ("h2h", [("A_nocatfish_s2", "G_adaptcat_s2", 60), ("A_nocatfish_s3", "G_adaptcat_s3", 60)])],
 }
@@ -48,7 +48,7 @@ def sh(cmd, **kw):
 
 
 # 1) code: fresh clone (code always from GitHub), then merge earlier outputs (arm folders, results)
-if not os.path.exists(f"{W}/shared/alphago_lee.py"):   # shared/ + omok_paths.py sit next to 11x11_v2/, as in the repo
+if not os.path.exists(f"{W}/shared/board_encoding.py"):   # shared/ + omok_paths.py sit next to 11x11_v2/, as in the repo
     shutil.rmtree("/kaggle/tmp_repo", ignore_errors=True)
     sh("git clone -q --depth 1 https://github.com/baesunghu/omok-ai.git /kaggle/tmp_repo")
     shutil.copytree("/kaggle/tmp_repo/11x11_v2", V2, dirs_exist_ok=True)
