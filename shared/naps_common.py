@@ -45,6 +45,12 @@ def report_logger(msg):
     return line
 
 
+# plain line log next to the run (until 2026-11 in the old trainer, legacy_trainer_basic.py)
+def logger(message):
+    with open("training_log.txt", "a") as log_file:
+        log_file.write(message + "\n")
+
+
 def compute_policy_entropy(policies_np):
     """
     Mean Shannon entropy (nats) of the target policy distributions used for

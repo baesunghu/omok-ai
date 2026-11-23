@@ -9,8 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from mcts_cpp import BOARD_SIZE, MCTS, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH
 from nets import SURVIVAL_CAP
-from legacy_trainer_basic import augment_sample
-from board_encoding import board_to_input_array
+from board_encoding import augment_sample, board_to_input_array
 from naps_common import mixed_value_target, sims_for_state
 from naps_openings import _sample_forced_opening_start, _sample_tactical_start
 

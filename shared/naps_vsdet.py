@@ -8,8 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from mcts_cpp import BOARD_SIZE, MCTS, PooledEvaluator, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH, POOLED_TARGET_BATCH
-from legacy_trainer_basic import augment_sample
-from board_encoding import board_to_input_array
+from board_encoding import augment_sample, board_to_input_array
 from naps_common import mixed_value_target, sims_for_state
 from naps_openings import _ALL_CELLS, _OPENING_SQUARES
 

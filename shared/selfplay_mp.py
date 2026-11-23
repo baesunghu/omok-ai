@@ -177,14 +177,13 @@ if PROD_DIR not in sys.path:
 # Which production module the workers take _play_one_mcts_game from, and
 # which one the threaded fallback calls. Defaults to the module the live
 # training run actually executes, so the MP path can NEVER diverge from the
-# game logic you are currently editing/training with. Override with
-# MP_SELFPLAY_PROD_MODULE=legacy_trainer_mcts to point at the older module.
+# game logic you are currently editing/training with. MP_SELFPLAY_PROD_MODULE overrides it.
 PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "naps_trainer")
 
 import torch  # noqa: E402  (must follow the sys.path setup above)
 from board_encoding import preferred_memory_format  # noqa: E402
 from nets import SURVIVAL_CAP  # noqa: E402
-from mcts_python import BOARD_SIZE  # noqa: E402
+from fast_board import BOARD_SIZE  # noqa: E402
 
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 
@@ -341,7 +340,7 @@ class _PipeEvalProxy:
 # Coordinator-side: background thread in the MAIN process, owns the GPU
 # ============================================================
 class PipePooledEvaluator:
-    """Cross-process analogue of ``mcts_python.PooledEvaluator``: one
+    """Cross-process analogue of ``mcts_cpp.PooledEvaluator``: one
     background thread in the process that already holds ``model`` on
     ``device``, multiplexing every worker's dedicated Pipe with
     ``multiprocessing.connection.wait()`` instead of reading a Queue.
@@ -874,7 +873,7 @@ def generate_mcts_self_play_data_mp(model, device, num_games=10, num_simulations
         # module is cheap and (b) there is no circular-import problem when
         # the production module itself imports this one.
         prod = __import__(PROD_MODULE)
-        from legacy_trainer_basic import augment_sample
+        from board_encoding import augment_sample
 
         workers = _resolve_workers(max_workers, num_games)
         boost_note = (f", boosted to {boosted_sims} while >{boost_threshold} cells empty"

@@ -11,8 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from mcts_cpp import BOARD_SIZE, MCTS, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH
 from nets import GomokuNetV3 as GomokuNet
-from legacy_trainer_basic import augment_sample
-from board_encoding import board_to_input_array, preferred_memory_format
+from board_encoding import augment_sample, board_to_input_array, preferred_memory_format
 from naps_common import _SUFFIX, mixed_value_target, sims_for_state
 from naps_openings import _OPENING_SQUARES
 from naps_gate import BEST_CHECKPOINT_PATH, RECORD_LEAGUE_SIDE

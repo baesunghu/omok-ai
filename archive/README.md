@@ -14,3 +14,14 @@
 | `11x11_naps/alphazero_mcts_make_lrtest.py` | 9월 | 학습률 시험용 학습기 변형. 다른 코드가 쓰지 않는다 |
 | `15x15/_setup15_patch.py` | 10/14 | 10x10(지금 11x11_naps)에서 복사한 도구를 15x15 파일 이름으로 고친 1회 패치. 지금은 `run_config.py`의 판 크기와 `shared/fast_board.FILE_SUFFIX`가 대신한다 |
 | `11x11_v2/switch_to_ep960.py` | 10/21 | v2 런을 Gen12 대신 NAPS ep960에서 다시 시작한 1회 작업 |
+
+## `archive/shared/` — 더 쓰지 않는 공용 코드
+
+| 파일 | 무엇이었나 |
+|---|---|
+| `legacy_trainer_basic.py` (예전 `alphago_lee_make.py`) | 첫 학습기 (탐색 없이 정책만으로 자가대국). 쓰이던 `augment_sample`은 `shared/board_encoding.py`로, `logger`는 `shared/naps_common.py`로 옮겼다 |
+| `legacy_trainer_mcts.py` (예전 `alphazero_mcts_make.py`) | 파이썬 MCTS 시절의 학습기 (3,210줄). NAPS 학습기(`shared/naps_*.py`)의 출발점 |
+| `mcts_python.py` (예전 `alphazero_mcts.py`) | 파이썬 MCTS. 지금은 C++ 엔진을 쓰는 `shared/mcts_cpp.py`가 대신한다 |
+| `_vs_human_turn.py`, `eval_league_greedy.py` | 사람 대 AI 한 수씩 대국, 노이즈 없는 리그 재측정. 둘 다 V1 신경망 전용이라 Gen12 이후 체크포인트(V3)를 읽지 못한다 |
+
+이 파일들은 서로를 불러 쓰므로, 다시 돌리려면 `archive/shared/`를 `sys.path`에 넣어야 한다.

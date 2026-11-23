@@ -2,7 +2,7 @@
 
 2026-11 정리에서 코드 주석의 날짜와 `(user)` 표시를 지우고, 원래 주석을 여기에 그대로 옮겼다.
 코드에는 설명만 남아 있다. 줄 번호는 정리 직전 기준이라 지금 파일과 조금 어긋날 수 있다. 함수 이름으로 찾는 것이 정확하다.
-옛 학습기(`shared/legacy_trainer_*.py`)와 `archive/`의 주석은 원래대로 두었다.
+옛 학습기(`legacy_trainer_*.py`, 지금은 `archive/shared/`)와 `archive/`의 주석은 원래대로 두었다.
 
 ## `11x11_naps/gomokuwithai_match.py`
 

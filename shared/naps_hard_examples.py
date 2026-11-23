@@ -15,8 +15,7 @@ from collections import Counter
 from mcts_cpp import BOARD_SIZE, MCTS, NUM_CELLS, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH
 from fast_board import WIN_LENGTH
-from legacy_trainer_basic import augment_sample
-from board_encoding import board_to_input_array, board_to_input_tensor
+from board_encoding import augment_sample, board_to_input_array, board_to_input_tensor
 from naps_common import _SUFFIX
 from naps_openings import _tactical_windows
 from naps_vsdet import _sample_vs_det_max_depth

@@ -18,12 +18,11 @@ from nets import GomokuNetV3 as GomokuNet
 from mcts_cpp import PooledEvaluator
 from selfplay_mp_unified import generate_epoch_games_unified, get_task_runner
 from selfplay_mp import generate_mcts_self_play_data_mp
-from legacy_trainer_basic import logger
 from board_encoding import preferred_memory_format
 from naps_common import (
     BOOST_RAMP_CEILING, BOOST_RAMP_STEP, LR_COOLDOWN_EPOCHS, SIM_RAMP_CEILING, SIM_RAMP_STEP, STAGNATION_RAMP_LIMIT,
     SURVIVAL_LOSS_WEIGHT, TRAIN_SAMPLES_PER_EPOCH, TRAIN_STATE_PATH, _SUFFIX, annealed_value, compute_policy_entropy,
-    get_devices, load_replay_buffer, load_sim_budget, load_start_epoch, model, report_logger,
+    get_devices, load_replay_buffer, logger, load_sim_budget, load_start_epoch, model, report_logger,
     save_cumulative_epoch, save_replay_buffer, save_sim_budget,
 )
 from naps_openings import _ALL_CELLS

@@ -39,7 +39,7 @@ INPUT_SIZE = NUM_CELLS * NUM_INPUT_CHANNELS
 # independently re-verified in this session. Falls back to the pure-Python
 # implementation if the compiled extension isn't present (e.g. a different
 # machine/Python ABI) -- same try/except ImportError pattern as
-# mcts_python.py's _mcts_core.
+# mcts_cpp.py's _mcts_core.
 try:
     import fork_mask_cpp as _fork_mask_native
 except ImportError:
@@ -320,3 +320,30 @@ def check_draw(board):
             if board[r][c] == ' ':
                 return False
     return True
+
+
+# 8 symmetries of one training sample (until 2026-11 in the old trainer, legacy_trainer_basic.py)
+def augment_sample(board_tensor_3d, policy_2d):
+    """
+    Applies 8 symmetries (4 rotations x 2 flips) to a 3D board tensor
+    (channels, BOARD_SIZE, BOARD_SIZE) and 2D target policy map
+    (BOARD_SIZE, BOARD_SIZE). Channel-count-agnostic: rotation/flip only
+    ever touch axes 1 and 2 (the spatial dims), so this keeps working
+    unchanged regardless of how many planes board_tensor_3d has (e.g. if
+    board_to_input_array's channel count changes).
+    """
+    augmented = []
+    for k in range(4):
+        # Rotate 90 * k degrees
+        rot_b = np.rot90(board_tensor_3d, k, axes=(1, 2))
+        rot_p = np.rot90(policy_2d, k, axes=(0, 1))
+
+        # Original rotation
+        augmented.append((rot_b.copy(), rot_p.flatten().copy()))
+
+        # Horizontally flipped rotation
+        flip_b = np.flip(rot_b, axis=2)
+        flip_p = np.flip(rot_p, axis=1)
+        augmented.append((flip_b.copy(), flip_p.flatten().copy()))
+
+    return augmented

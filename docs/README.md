@@ -78,8 +78,8 @@ v3의 성과(대등점, 문제 통과, 정오)는 측정된 사실이다. 다만
 | `AlphaZeroTicTacToe`, `AlphaZeroTicTacToeV2`, `AlphaZeroTicTacToeV3` (신경망 클래스) | `GomokuNetV1`, `GomokuNetV2`, `GomokuNetV3` |
 | `alphazero_mcts_make_lrfix.py` (NAPS 학습 본체, 4,080행 한 파일) | `shared/naps_trainer.py` (학습 루프) + `shared/naps_*.py` 8개 (게이트, 리그, 어려운 국면 등) |
 | `alphazero_mcts_lrfix.py` (C++ 엔진을 쓰는 MCTS) | `shared/mcts_cpp.py` |
-| `alphazero_mcts.py` (파이썬 MCTS) | `shared/mcts_python.py` |
-| `alphago_lee_make.py`, `alphazero_mcts_make.py` (옛 학습기) | `shared/legacy_trainer_basic.py`, `shared/legacy_trainer_mcts.py` |
+| `alphazero_mcts.py` (파이썬 MCTS) | `archive/shared/mcts_python.py` (더 쓰지 않음) |
+| `alphago_lee_make.py`, `alphazero_mcts_make.py` (옛 학습기) | `archive/shared/legacy_trainer_basic.py`, `archive/shared/legacy_trainer_mcts.py` (더 쓰지 않음) |
 | `determinisic_play.py` | `shared/deterministic_play.py` |
 | `_restart_train.py`의 본문 | `shared/train_run.py` (실행 폴더의 `_restart_train.py`는 이것을 부른다) |
 | 실행 폴더마다 한 벌씩 있던 코드 | `shared/` 한 벌 + 실행 폴더의 `run_config.py` |

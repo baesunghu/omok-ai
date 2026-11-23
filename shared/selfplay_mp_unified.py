@@ -65,7 +65,7 @@ PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "naps_trainer")
 import torch  # noqa: E402
 from board_encoding import preferred_memory_format  # noqa: E402
 from nets import SURVIVAL_CAP  # noqa: E402
-from mcts_python import BOARD_SIZE  # noqa: E402
+from fast_board import BOARD_SIZE  # noqa: E402
 
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 
@@ -769,7 +769,7 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
     t0 = time.monotonic()
     try:
         prod = __import__(PROD_MODULE)
-        from legacy_trainer_basic import augment_sample
+        from board_encoding import augment_sample
 
         workers = _resolve_workers(max_workers)
         # league_model may be a LIST of opponents; league game i

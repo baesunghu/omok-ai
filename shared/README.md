@@ -46,11 +46,9 @@ OMOK_RUN=11x11_v2 python shared/ladder_ci.py
 | `selfplay_mp_unified.py` | 자가대국·리그·게이트를 한 풀에서 두는 멀티프로세스 풀 (v2는 C++ 스레드 자가대국 `11x11_v2/selfplay_cpp.py`) |
 | `selfplay_mp.py`, `mp_eval.py` | 예전 멀티프로세스 자가대국과 평가 (일부 함수를 학습 본체가 가져다 씀) |
 | `fast_board.py` | 판 크기(`run_config`에서), 승리 판정, 파일 이름 접미사 `FILE_SUFFIX` (`_11x11`) |
-| `board_encoding.py` | 판을 신경망 입력 평면 5장으로 바꾸기 (내 돌, 상대 돌, 빈칸, 내·상대 포크 칸) |
+| `board_encoding.py` | 판을 신경망 입력 평면 5장으로 바꾸기 (내 돌, 상대 돌, 빈칸, 내·상대 포크 칸), 학습 표본의 8가지 대칭 (`augment_sample`) |
 | `nets.py` | 신경망 `GomokuNetV1`, `GomokuNetV2` (SE 블록 + GroupNorm), `GomokuNetV3` (V2 + 생존 헤드, NAPS가 쓰는 구조). v3 실행의 `NetV3`도 이것을 바탕으로 한다 |
-| `mcts_python.py` | 파이썬 MCTS와 후보 수 가지치기 (C++ 엔진 이전) |
 | `deterministic_play.py` | 결정론적 미니맥스 상대 (C++ `deterministic_play_core`로 위임) |
-| `legacy_trainer_basic.py`, `legacy_trainer_mcts.py` | 옛 학습기. 데이터 증강·로거 등을 다른 모듈이 가져다 쓴다 |
 
 ## 측정과 감시
 
@@ -69,7 +67,10 @@ OMOK_RUN=11x11_v2 python shared/ladder_ci.py
 | `rapfi_progress.py`, `status_all.py`, `hourly_status.py` | 진행 상황 보기, 총괄 현황, 한 시간마다 상태 기록 |
 | `fork_status_check.py`, `fork_status_check_solver.py`, `attack_ladder.py` | 포크(쌍삼·쌍사) 공격·방어 단계 검사 |
 | `double_three_test.py` | 삼삼 측정 문제 |
-| `elo_defense.py`, `elo_roundrobin.py`, `elo_trend.py`, `eval_league_greedy.py` | 체크포인트끼리 Elo 비교 |
+| `elo_defense.py`, `elo_roundrobin.py`, `elo_trend.py` | 체크포인트끼리 Elo 비교 |
 | `draw_trend.py`, `loss_trend_annotated.py`, `matchup_chart.py` | 그래프 (`matchup_chart.py`는 NAPS 기록용, `11x11_naps`에서 실행) |
 | `human_rapfi_rating.py` | 웹 대국판 방문자의 수를 Rapfi 노드 단위로 평가 (`11x11_naps/hlt/web/games.jsonl`) |
-| `_vs_human_turn.py` | 채팅으로 사람 대 AI 대국을 한 수씩 진행 |
+
+옛 학습기(`legacy_trainer_basic.py`, `legacy_trainer_mcts.py`), 파이썬 MCTS(`mcts_python.py`), 그리고 이것들에 기대던 도구
+`_vs_human_turn.py`, `eval_league_greedy.py`는 `archive/shared/`로 옮겼다. 두 도구는 V1 신경망만 읽어서 Gen12 이후의 체크포인트(V3)를
+읽지 못한다. 사람 대 AI 대국은 웹 대국판(`11x11_naps/hlt/web/`)이 맡는다.

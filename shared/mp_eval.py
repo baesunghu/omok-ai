@@ -32,7 +32,7 @@ boundary instead of a thread boundary.
 Safety: evaluate_vs_deterministic_mp raises on ANY setup failure or a worker
 dying without completing its assigned games (rather than hanging or silently
 returning wrong stats), so its caller (evaluate_vs_deterministic in
-legacy_trainer_mcts.py) can fall back to the existing, long-proven threaded
+naps_vsdet.py) can fall back to the existing, long-proven threaded
 implementation. On an unattended 20000-epoch job, a periodic eval call
 failing over to the slower-but-solid path is fine; a hang is not.
 
@@ -226,7 +226,7 @@ def make_remote_eval_batch_fn(handle, request_queue, board_to_input_array_from_n
 
 # ============================================================
 # sims_for_state -- duplicated on purpose to keep worker processes torch-free.
-# MUST stay identical to legacy_trainer_mcts.sims_for_state; that function is
+# MUST stay identical to naps_common.sims_for_state; that function is
 # the source of truth if the two ever need to be reconciled.
 # ============================================================
 def sims_for_state(num_empty, base_sims, boosted_sims=None, boost_threshold=0, boost_when_narrow=False):
@@ -321,7 +321,7 @@ def evaluate_vs_deterministic_mp(model, device, num_games, num_simulations, boos
                                   det_max_depth=2, all_cells=None, max_workers=None,
                                   target_batch=48, max_wait=0.004, tmp_ckpt_dir="model"):
     """
-    Drop-in alternative to legacy_trainer_mcts.evaluate_vs_deterministic's
+    Drop-in alternative to naps_vsdet.evaluate_vs_deterministic's
     internals: same (win_rate, draw_rate, loss_rate) return, same opening
     assignment (game i -> all_cells[i % len(all_cells)], mcts_plays_x = i%2==0)
     so per-game outcomes are directly comparable to the threaded
