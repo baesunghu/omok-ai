@@ -1,7 +1,8 @@
 """Is 900's (3,7) a real answer to the 13-ply problem? Force the first move, then Rapfi defends at N nodes
 against Rapfi attacking at 200k nodes for 40 plies. Same for Rapfi's own answer (8,5) and the bad move (8,9)."""
 import json, os, sys
-sys.path.insert(0, r"C:\Users\My PC\Desktop\final\11x11_v2"); os.chdir(r"C:\Users\My PC\Desktop\final\11x11_v2")
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.insert(0, HERE); os.chdir(HERE)
 from rapfi_match import Rapfi
 from fast_board import fast_check_win
 N = 11

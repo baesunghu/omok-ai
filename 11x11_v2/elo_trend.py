@@ -28,7 +28,10 @@ Usage:
 import re
 import math
 
-REPORT_PATH = r"C:\Users\My PC\Desktop\final\11x11_v2\model\training_report_11x11.txt"
+import os
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
+REPORT_PATH = os.path.join(HERE, "model", f"training_report{FILE_SUFFIX}.txt")
 
 # Only look at the CURRENT run -- reusing status_check.py's own boundary
 # logic (any point where the epoch counter goes <= the previous line's
@@ -126,7 +129,7 @@ try:
     plt.ylabel("Elo (arbitrary baseline 1500)")
     plt.title("Promoted-lineage Elo trajectory (from gate-check history)")
     plt.grid(alpha=0.3)
-    out_path = r"C:\Users\My PC\Desktop\final\11x11_v2\model\elo_trend.png"
+    out_path = os.path.join(HERE, "model", "elo_trend.png")
     plt.savefig(out_path, dpi=120, bbox_inches="tight")
     print(f"\nPlot saved to: {out_path}")
 except ImportError:

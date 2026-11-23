@@ -9,9 +9,8 @@ import sys
 os.environ["RAPFI_MORE_OPENINGS"] = "1"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from rapfi_match import Rapfi, OPENINGS
-from fast_board import fast_check_win
+from fast_board import BOARD_SIZE as N, fast_check_win
 
-N = 11
 for nodes in [int(x) for x in (sys.argv[1] if len(sys.argv) > 1 else "10000,30000").split(",")]:
     bx = by = d = 0
     for op in OPENINGS:

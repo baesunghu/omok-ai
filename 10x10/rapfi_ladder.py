@@ -20,7 +20,9 @@ import subprocess
 import sys
 import time
 
-TENX = r"C:\Users\My PC\Desktop\final\10x10"
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+TENX = HERE
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 LEVELS = [int(x) for x in os.environ.get("RAPFI_LEVELS", "1000,2000,3000,5000,10000,20000").split(",")]  # 2026-10-10 night (user): 20000 added (the 정오 bar sits around 20k)  # 2026-10-10 evening (user, option B): 300 dropped (85%+, no information), 10000 added (890 scored 62% at 5000)  # 2026-10-10 (user): 5000 added -- 860/880 still scored ~42% at 3000, so the top end was unmeasurable  # Rapfi search nodes per move (around the current equal-strength point)
 LOG = os.path.join(TENX, "model", "rapfi_ladder_log.jsonl")
 MATCH_LOG = os.path.join(TENX, "model", "rapfi_match_log.jsonl")
@@ -35,7 +37,7 @@ def elo(score, n):
 def main():
     games = int(sys.argv[1]) if len(sys.argv) > 1 else 10
     sims = int(sys.argv[2]) if len(sys.argv) > 2 else 1100
-    ckpt = sys.argv[3] if len(sys.argv) > 3 else "model/best_mcts_11x11.pth"
+    ckpt = sys.argv[3] if len(sys.argv) > 3 else f"model/best_mcts{FILE_SUFFIX}.pth"
     results = []
     for nodes in LEVELS:
         start = sum(1 for _ in open(MATCH_LOG, encoding="utf-8")) if os.path.exists(MATCH_LOG) else 0

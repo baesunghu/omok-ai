@@ -20,25 +20,26 @@ import sys
 import time
 import json
 
-sys.path.insert(0, r"C:\Users\My PC\Desktop\final\15x15")
-os.chdir(r"C:\Users\My PC\Desktop\final\15x15")
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
+from omok_paths import RAPFI_DIR, RAPFI_EXE  # noqa: E402
+sys.path.insert(0, HERE)
+os.chdir(HERE)
 import numpy as np
 import torch
 
 import mcts_core
 from alphago_lee import board_to_input_array_from_numeric
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
-from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
+from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, FILE_SUFFIX
 
 N = BOARD_SIZE
-RAPFI_DIR = r"C:\Users\My PC\Desktop\final\engines\rapfi"
-RAPFI_EXE = os.path.join(RAPFI_DIR, "pbrain-rapfi-windows-avx2.exe")
 OPENINGS = [(7, 7), (6, 7), (7, 6), (6, 6), (8, 6), (5, 7), (7, 5), (6, 8)]  # 2026-10-13: 15x15 centre (11x11 list shifted by +2)
 # 2026-10-11: RAPFI_MORE_OPENINGS=1 -> all 25 cells within 2 of the centre (validation runs with >16 games,
 # so games do not repeat; the default 8 openings keep the ladder identical to its history)
 if os.environ.get("RAPFI_MORE_OPENINGS"):
     OPENINGS = OPENINGS + [(r, c) for r in range(5, 10) for c in range(5, 10) if (r, c) not in OPENINGS]
-LOG = os.environ.get("RAPFI_MATCH_LOG", r"C:\Users\My PC\Desktop\final\15x15\model\rapfi_match_log.jsonl")
+LOG = os.environ.get("RAPFI_MATCH_LOG", os.path.join(HERE, "model", "rapfi_match_log.jsonl"))
 # 2026-10-10: games are deterministic (Rapfi single-threaded + node limit, our side greedy without noise), so a
 # level can be split across RAPFI_PAR worker processes (game g -> worker g % PAR) with identical per-game results.
 PAR = int(os.environ.get("RAPFI_PAR", "3"))  # 3 workers: 20 games at 5000 nodes in ~12 min (2026-10-10 benchmark)
@@ -121,7 +122,7 @@ def main():
     lim = sys.argv[3] if len(sys.argv) > 3 else "2000"
     nodes = int(lim[1:]) if lim.startswith("n") else None
     ms = 30000 if nodes else int(lim)
-    ckpt = sys.argv[4] if len(sys.argv) > 4 else "model/best_mcts_11x11.pth"
+    ckpt = sys.argv[4] if len(sys.argv) > 4 else f"model/best_mcts{FILE_SUFFIX}.pth"
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = AlphaZeroTicTacToeV3()
     model.load_state_dict(torch.load(ckpt, map_location=dev))

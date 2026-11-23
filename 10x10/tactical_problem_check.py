@@ -22,15 +22,16 @@ import os
 import sys
 import time
 
-sys.path.insert(0, r"C:\Users\My PC\Desktop\final\10x10")
-os.chdir(r"C:\Users\My PC\Desktop\final\10x10")
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.insert(0, HERE)
+os.chdir(HERE)
 import numpy as np
 import torch
 
 import mcts_core
 from alphago_lee import board_to_input_array_from_numeric
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
-from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
+from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, FILE_SUFFIX
 from rapfi_match import Rapfi
 
 N = BOARD_SIZE
@@ -44,7 +45,7 @@ MAX_PLIES = 40
 
 
 def main():
-    ckpt = sys.argv[1] if len(sys.argv) > 1 else "model/best_mcts_11x11.pth"
+    ckpt = sys.argv[1] if len(sys.argv) > 1 else f"model/best_mcts{FILE_SUFFIX}.pth"
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = AlphaZeroTicTacToeV3()
     model.load_state_dict(torch.load(ckpt, map_location=dev))

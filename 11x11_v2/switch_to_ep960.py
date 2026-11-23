@@ -5,11 +5,14 @@ festival folder (10x10 stays untouched). Epochs restart at 0 (v2 ep N = NAPS lin
 import glob
 import os
 import shutil
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 M = os.path.join(HERE, "model")
 ARCH = os.path.join(M, "pre_ep960_switch_gen12_20261021")
-SRC960 = r"C:\Users\My PC\Desktop\final\10x10\model\model_MCTS_ep960_11x11.pth"
+sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
+from omok_paths import NAPS_DIR  # noqa: E402
+SRC960 = os.path.join(NAPS_DIR, "model", "model_MCTS_ep960_11x11.pth")
 
 os.makedirs(ARCH, exist_ok=False)
 moved = []

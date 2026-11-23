@@ -19,7 +19,9 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-TENX = r"C:\Users\My PC\Desktop\final\10x10"
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))  # repo root
+from omok_paths import NAPS_DIR, V2_DIR, V3_DIR, find_extension  # noqa: E402
+TENX = NAPS_DIR
 sys.path.insert(0, TENX)
 os.chdir(TENX)
 import numpy as np
@@ -27,7 +29,7 @@ import torch
 
 # 2026-10-26 (user): VCF engine from 11x11_v2, same as the NOON grading (was mcts_core_solver, no VCF)
 import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("mcts_core", r"C:\Users\My PC\Desktop\final\11x11_v2\mcts_core.pyd")
+_spec = _ilu.spec_from_file_location("mcts_core", find_extension(V2_DIR, "mcts_core"))
 engine_mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(engine_mod)
 engine_mod.set_vcf(10, 3000)
@@ -67,8 +69,8 @@ def list_players():
         if k[2:].isdigit() and int(k[2:]) not in snap_eps:
             players[k] = {"name": f"epoch {k[2:]} (보관본)", "path": f}
     # 2026-10-23 (user): v2 strongest and v3 (Gumbel, NetV3 128x8) checkpoints for head-to-head viewing
-    V2M = r"C:\Users\My PC\Desktop\final\11x11_v2\model"
-    V3M = r"C:\Users\My PC\Desktop\final\11x11_v2\v3\model"
+    V2M = os.path.join(V2_DIR, "model")
+    V3M = os.path.join(V3_DIR, "model")
     extra = {"v3_latest": ("v3 현재 (최신)", os.path.join(V3M, "v3_latest.pth")),
              "v2_best": ("v2 최강 (후보 10/22 05:50)", os.path.join(V2M, "_rapfi_cand_20261022_055020_11x11.pth"))}
     for ep in (530, 500, 400, 300, 200, 170, 140, 120, 100):   # 10/26: 530 = NOON (정오), festival pick
@@ -95,7 +97,7 @@ def get_net(key):
         if isinstance(sd, dict) and "model" in sd and isinstance(sd["model"], dict):   # v3_latest holds model+opt
             sd = sd["model"]
         if any(k.startswith("opp_policy_head.") for k in sd):   # 2026-10-23: v3 NetV3 checkpoint
-            sys.path.insert(1, r"C:\Users\My PC\Desktop\final\11x11_v2\v3")
+            sys.path.insert(1, V3_DIR)
             from net_v3 import NetV3
             net = NetV3()
         else:

@@ -15,10 +15,9 @@ Usage: python human_rapfi_rating.py [max_games]
 import ast, json, math, os, random, re, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__)); os.chdir(HERE)
 sys.path.insert(0, HERE)
-from fast_board import fast_check_win
-RAPFI_DIR = r"C:\Users\My PC\Desktop\final\engines\rapfi"
-RAPFI_EXE = os.path.join(RAPFI_DIR, "pbrain-rapfi-windows-avx2.exe")
-N = 11
+from fast_board import BOARD_SIZE as N, fast_check_win
+sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
+from omok_paths import RAPFI_DIR, RAPFI_EXE  # noqa: E402
 REF_NODES = 100000
 LEVELS = [5, 10, 15, 20, 30, 100, 300, 1000]   # 2026-10-10 (user): low end. Rapfi plays identically at 1/3/5 nodes (no search: only forced blocks, else (1,1)), so 5 stands for all three; 15/20 added for resolution; 3000/10000 dropped
 K = 200.0                 # eval -> win probability scale (relative comparison, same metric on both sides)

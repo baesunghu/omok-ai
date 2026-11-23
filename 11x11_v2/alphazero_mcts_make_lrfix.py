@@ -3603,7 +3603,7 @@ def train_mcts_alpha_zero(
             if _picks:
                 league_model = [m for m, _ in _picks]
                 league_opponent_name = f"{len(_picks)} opponents: " + ", ".join(
-                    os.path.basename(p).replace("model_MCTS_", "").replace("_11x11.pth", "").replace(".pth", "")
+                    os.path.basename(p).replace("model_MCTS_", "").replace(f"{_SUFFIX}.pth", "").replace(".pth", "")
                     for _, p in _picks)
         elif num_league_games > 0:
             league_pick = _pick_league_opponent(self_play_device, league_pool_size, league_best_checkpoint_prob,

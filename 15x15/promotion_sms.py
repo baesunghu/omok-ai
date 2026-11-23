@@ -14,7 +14,8 @@ Usage:
 import base64, json, os, re, sys, time, urllib.parse, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPORT = os.path.join(HERE, "model", "training_report_15x15.txt")
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
+REPORT = os.path.join(HERE, "model", f"training_report{FILE_SUFFIX}.txt")
 CONF = os.path.join(os.path.expanduser("~"), ".naps_twilio.json")
 STATE = os.path.join(HERE, "model", "promotion_sms_state.json")
 LOG = os.path.join(HERE, "promotion_sms.log")

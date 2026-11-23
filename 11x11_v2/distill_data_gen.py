@@ -21,11 +21,11 @@ import torch
 
 import mcts_core
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3 as Net
-from fast_board import BOARD_SIZE as N, WIN_LENGTH
+from fast_board import BOARD_SIZE as N, WIN_LENGTH, FILE_SUFFIX
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TARGET = int(sys.argv[1]) if len(sys.argv) > 1 else 1_000_000
-TEACHER = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, "model", "best_mcts_11x11.pth")
+TEACHER = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, "model", f"best_mcts{FILE_SUFFIX}.pth")
 PARALLEL = 768          # games advanced together (one teacher batch per ply)
 RANDOM_MOVE = 0.03      # share of uniformly random legal moves
 NC = N * N

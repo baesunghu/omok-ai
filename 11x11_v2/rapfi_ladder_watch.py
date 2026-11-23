@@ -8,9 +8,11 @@ Results accumulate in model/rapfi_ladder_log.jsonl.
 Run detached:  python -u rapfi_ladder_watch.py
 """
 import json, os, shutil, subprocess, sys, time
-TENX = r"C:\Users\My PC\Desktop\final\11x11_v2"
-STATE = os.path.join(TENX, "model", "train_state_11x11.json")
-BEST = os.path.join(TENX, "model", "best_mcts_11x11.pth")
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+TENX = HERE
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
+STATE = os.path.join(TENX, "model", f"train_state{FILE_SUFFIX}.json")
+BEST = os.path.join(TENX, "model", f"best_mcts{FILE_SUFFIX}.pth")
 SNAP = os.path.join(TENX, "model", "_rapfi_ladder_snapshot.pth")
 EVERY = 20
 GAMES = 40  # 11x11_v2: 40 like 15x15. per ladder level (2026-09-28: 10 -> 20 for a tighter graduation verdict)
@@ -108,7 +110,7 @@ def main():
                 log(chr(10).join(l for l in (r2.stdout or '').splitlines() if not l.startswith("MESSAGE")) or (r2.stderr or '').strip()[-500:])
             # 2026-09-28: also measure the newest training checkpoint (not just the gated best),
             # so progress is visible even while the gate keeps rejecting candidates
-            latest = os.path.join(TENX, "model", f"model_MCTS_ep{next_at}_11x11.pth")
+            latest = os.path.join(TENX, "model", f"model_MCTS_ep{next_at}{FILE_SUFFIX}.pth")
             for _ in range(30):
                 if os.path.exists(latest):
                     break

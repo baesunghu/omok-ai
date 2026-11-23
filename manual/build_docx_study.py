@@ -67,7 +67,7 @@ ORDER_NOTE = ('<br clear="all" style="page-break-before:always"><h1>공부 순�
               '<tr><td>6</td><td>5부 연대기</td><td>이야기. 아무 때나</td></tr>'
               '<tr><td>7</td><td>6부 부록</td><td>용어집은 사전처럼. 6.10은 2부 전에 참고</td></tr></table>'
               '<p>주의: 2026-10-06 이전에 쓴 문서다. 그 뒤의 일(리그 12명, 820·840 승격)은 빠져 있고, '
-              '계보는 10x10/docs/NAPS_lineage.md가 더 정확하다.</p>')
+              '계보는 docs/NAPS_lineage.md가 더 정확하다.</p>')
 chunks.insert(1, ORDER_NOTE)
 merged = "\n".join(chunks)
 

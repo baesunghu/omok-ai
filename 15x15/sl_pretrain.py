@@ -24,7 +24,7 @@ import torch.nn.functional as F
 
 from alphago_lee import board_to_input_array
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
-from fast_board import BOARD_SIZE as N
+from fast_board import BOARD_SIZE as N, FILE_SUFFIX
 
 assert N == 15, N
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -155,9 +155,9 @@ for ep in range(EPOCHS):
 
 os.makedirs("model", exist_ok=True)
 sd = {k: v.cpu() for k, v in net.state_dict().items()}
-for path in ("model/model_MCTS_ep0_15x15.pth", "model/alphazero_mcts_15x15.pth", "model/best_mcts_15x15.pth"):
+for path in (f"model/model_MCTS_ep0{FILE_SUFFIX}.pth", f"model/alphazero_mcts{FILE_SUFFIX}.pth", f"model/best_mcts{FILE_SUFFIX}.pth"):
     torch.save(sd, path)
 json.dump(dict(date=time.strftime("%Y-%m-%d %H:%M:%S"), games=len(games), positions_train=int(len(Ptr)),
                positions_held=int(len(data["held"][1])), eval_scale=best_s, eval_scale_mse=best_mse, epochs=hist),
           open("model/sl_pretrain_report.json", "w"), indent=1)
-print("saved model/model_MCTS_ep0_15x15.pth (+ training checkpoint and best)", flush=True)
+print(f"saved model/model_MCTS_ep0{FILE_SUFFIX}.pth (+ training checkpoint and best)", flush=True)

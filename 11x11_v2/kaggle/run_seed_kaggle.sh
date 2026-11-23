@@ -2,14 +2,15 @@
 # CATFISH A/B seed replicate on a Kaggle GPU T4 x2 session (2026-11-01, user: run experiments on Kaggle to finish sooner).
 # Layout after kaggle_seed.py sets up $W (= /kaggle/working/naps):
 #   $W/11x11_v2/{alphago_lee*.py}, $W/11x11_v2/v3/{net_v3.py, cpp/mcts_core_solver.cpp},
-#   $W/11x11_v2/v3/ab_scratch/{A_nocatfish_sN,B_catfish_sN}/train_v3.py   (same files as on the laptop)
+#   $W/11x11_v2/v3/ab_scratch/{A_nocatfish_sN,B_catfish_sN}/   one working folder per arm; the trainer is always
+#   $W/11x11_v2/v3/train_v3.py <arm>, with the arm's settings from v3/arms.py
 # A and B run at the same time, one GPU each (CUDA_VISIBLE_DEVICES 0 / 1), sharing the CPU equally, so both arms see
 # the same conditions. Each arm stops after <epochs> (STOP at epoch-1, like run_seeds.ps1) or when the time budget
 # runs out; rerunning resumes from model/v3_latest.pth (attach the previous output as input).
 # Usage: bash run_seed_kaggle.sh <seed number> [epochs=60] [hours budget=11.5]
 set -uo pipefail
 S=${1:?seed number}; EPOCHS=${2:-60}; HOURS=${3:-11.5}
-ARMS=${ARMS:-"A_nocatfish_s$S B_catfish_s$S"}   # 11-01: any two arm folders (e.g. E/F arms) can be passed instead
+ARMS=${ARMS:-"A_nocatfish_s$S B_catfish_s$S"}   # 11-01: any two arms of v3/arms.py (e.g. E/F arms) can be passed instead
 W=${W:-/kaggle/working/naps}
 V3=$W/11x11_v2/v3
 DEADLINE=$(python -c "import time; print(int(time.time() + $HOURS * 3600))")
@@ -27,7 +28,7 @@ for arm in $ARMS; do
   d=$V3/ab_scratch/$arm; mkdir -p "$d/model"
   if grep -q "\] Epoch $EPOCHS " "$d/training_report_v3.txt" 2>/dev/null; then echo "$arm already done"; gpu=$((gpu+1)); continue; fi
   rm -f "$d/STOP"
-  ( cd "$d" && CUDA_VISIBLE_DEVICES=$gpu exec python -u train_v3.py > stdout.log 2> stderr.log ) &
+  ( cd "$d" && CUDA_VISIBLE_DEVICES=$gpu exec python -u "$V3/train_v3.py" "$arm" > stdout.log 2> stderr.log ) &
   echo "$arm on GPU $gpu (pid $!)"
   gpu=$((gpu+1))
 done

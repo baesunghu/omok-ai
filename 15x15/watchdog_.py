@@ -8,7 +8,7 @@ via the same detached-process pattern used manually throughout this project
 survives independently of this watchdog, this terminal, or any session.
 
 Launch this itself detached so it keeps running unattended:
-    powershell -Command "Start-Process -FilePath python -ArgumentList '-u watchdog_.py' -WorkingDirectory 'C:\\Users\\My PC\\Desktop\\final\\10x10' -WindowStyle Hidden"
+    powershell -Command "Start-Process -FilePath python -ArgumentList '-u watchdog_.py' -WorkingDirectory '<repo>\\15x15' -WindowStyle Hidden"
 """
 import os
 import subprocess
@@ -17,7 +17,8 @@ from datetime import datetime
 
 import psutil
 
-PROJECT_DIR = r"C:\Users\My PC\Desktop\final\15x15"
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+PROJECT_DIR = HERE
 TRAIN_SCRIPT_MARKER = "_restart_train15.py"  # 2026-10-14: distinct from the 11x11 trainer
 TRAIN_TASK_NAME = "AZ11x11_Training"
 CHECK_INTERVAL_SEC = 20 * 60

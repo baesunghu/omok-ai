@@ -17,7 +17,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
-FINAL = r"C:\Users\My PC\Desktop\final"
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
+from omok_paths import ROOT as FINAL  # noqa: E402
 OUT = os.path.join(FINAL, "15x15", "model", "growth_compare_11v15.png")
 for f in ("Malgun Gothic", "NanumGothic"):
     if any(f in x.name for x in font_manager.fontManager.ttflist):

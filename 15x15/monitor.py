@@ -9,6 +9,7 @@ import re
 import subprocess
 import time
 from collections import defaultdict
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 
 D = os.path.dirname(os.path.abspath(__file__))
 P = lambda *a: os.path.join(D, *a)
@@ -77,7 +78,7 @@ while True:
     out += ["  " + l.rstrip()[:150] for l in tail(P("sl_chain3.log"), 6)]
     out.append("")
     out.append("[학습 최근 에포크]")
-    for l in tail(P("model", "training_report_15x15.txt"), 4):
+    for l in tail(P("model", f"training_report{FILE_SUFFIX}.txt"), 4):
         m = re.search(r"\[(\S+ \S+)\] Epoch (\d+)/\d+ \| (.*?)\| Buffer Size: (\d+)", l)
         g = re.search(r"Gate vs best.*", l)
         if m:

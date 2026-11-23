@@ -4,7 +4,8 @@ The notebook cell is a single line (typing long code into the Kaggle editor thro
     import urllib.request as u; SEED=3; EPOCHS=60; HOURS=11.5; exec(u.urlopen('https://raw.githubusercontent.com/baesunghu/omok-ai/main/11x11_v2/kaggle/kaggle_seed.py').read())
 
 (GPU T4 x2 + Internet on). It clones github.com/baesunghu/omok-ai, lays the files out exactly as on the laptop
-(11x11_v2/..., v3/ab_scratch/<arm>/train_v3.py), builds the C++ engine and runs A and B in parallel, streaming the
+(11x11_v2/..., one v3/ab_scratch/<arm>/ folder per arm), builds the C++ engine and runs A and B in parallel
+(v3/train_v3.py <arm>, settings from v3/arms.py), streaming the
 runner's progress into the cell output. Set TEST=True for a short smoke run in a separate folder.
 Resume: attach the previous version's output as an input; its naps/ tree is copied back first.
 """
@@ -36,10 +37,7 @@ for seed in SEEDS:
         print(f"seed {seed}: not started, {left:.2f} h left", flush=True)
         break
     for arm in (f"A_nocatfish_s{seed}", f"B_catfish_s{seed}"):
-        d = f"{W}/11x11_v2/v3/ab_scratch/{arm}"
-        os.makedirs(d, exist_ok=True)
-        if not os.path.exists(f"{d}/train_v3.py"):
-            shutil.copy(f"{W}/11x11_v2/kaggle/train_{arm}.py", f"{d}/train_v3.py")
+        os.makedirs(f"{W}/11x11_v2/v3/ab_scratch/{arm}", exist_ok=True)
     print(f"=== seed {seed} ({left:.1f} h left) ===", flush=True)
     p = subprocess.Popen(["bash", f"{W}/11x11_v2/kaggle/run_seed_kaggle.sh", str(seed), str(EPOCHS), f"{left:.2f}"],
                          env=dict(os.environ, W=W), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

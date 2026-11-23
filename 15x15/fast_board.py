@@ -8,6 +8,8 @@ except ImportError:
 
 BOARD_SIZE = 15  # 2026-10-13: 15x15 run (copied from 10x10/, where it is 11)
 WIN_LENGTH = 5
+# every model / report / state file of a run carries this suffix (best_mcts_11x11.pth, training_report_11x11.txt)
+FILE_SUFFIX = "" if BOARD_SIZE == 3 else f"_{BOARD_SIZE}x{BOARD_SIZE}"
 
 if HAS_NUMBA:
     @jit(nopython=True)

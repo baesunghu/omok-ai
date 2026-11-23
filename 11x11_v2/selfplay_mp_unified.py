@@ -53,7 +53,8 @@ import time
 
 import numpy as np
 
-PROD_DIR = r"C:\Users\My PC\Desktop\final\11x11_v2"
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+PROD_DIR = HERE
 if PROD_DIR not in sys.path:
     sys.path.insert(0, PROD_DIR)
 

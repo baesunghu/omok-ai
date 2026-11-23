@@ -1,8 +1,10 @@
 """Bootstrap CI of the fitted equal-strength node count for each ladder run in ladder_hist.json,
 using the real per-game results in model/rapfi_match_log.jsonl. Writes ladder_ci.json."""
 import json, math, random
-SP = r"C:\Users\My PC\Desktop\final\15x15\model"  # ladder_hist.json / ladder_ci.json live here
-rows = [json.loads(l) for l in open(r"C:\Users\My PC\Desktop\final\15x15\model\rapfi_match_log.jsonl", encoding="utf-8")]
+import os
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+SP = os.path.join(HERE, "model")  # ladder_hist.json / ladder_ci.json live here
+rows = [json.loads(l) for l in open(os.path.join(HERE, "model", "rapfi_match_log.jsonl"), encoding="utf-8")]
 groups, prev = [], None
 for x in rows:
     key = (x.get("checkpoint"), x.get("rapfi_nodes"))
@@ -24,7 +26,7 @@ def fit(levels):
     if sl < 0: return 10 ** min(mx - my / sl, 6)
     return 1e6 if my > 0 else 1.0
 
-hist = [r for r in json.load(open(SP + r"\ladder_hist.json")) if not r["dup"] and r["eq"]]
+hist = [r for r in json.load(open(os.path.join(SP, "ladder_hist.json"))) if not r["dup"] and r["eq"]]
 random.seed(0); out = []
 for h in hist:
     # match the run by its own fitted value (hist times are not consistently start or end times)
@@ -49,4 +51,4 @@ for h in hist:
                     levels=[(n, len(s), sum(s)) for n, s in lv], ckpt=run[0]["key"][0], start=run[0]["start"]))
     o = out[-1]
     print(f"{o['ep']:>4} {o['kind']:<6} hist {o['eq_hist']:>5} refit {o['eq']:>5}  68% {o['lo68']:>6.0f}-{o['hi68']:<7.0f} 95% {o['lo95']:>6.0f}-{o['hi95']:<7.0f} {o['start']} {[(n,c) for n,c,_ in o['levels']]}")
-json.dump(out, open(SP + r"\ladder_ci.json", "w"), indent=1)
+json.dump(out, open(os.path.join(SP, "ladder_ci.json"), "w"), indent=1)

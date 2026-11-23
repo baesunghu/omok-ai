@@ -18,8 +18,12 @@ import math
 import random
 import itertools
 
-sys.path.insert(0, r"C:\Users\My PC\Desktop\final\11x11_v2")
-sys.path.append(r"C:\Users\My PC\Desktop\final\cpp_mcts")
+import os
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
+from omok_paths import CPP_MCTS_DIR  # noqa: E402
+sys.path.insert(0, HERE)
+sys.path.append(CPP_MCTS_DIR)
 
 import torch
 import numpy as np
@@ -27,14 +31,14 @@ import numpy as np
 import mcts_core_verbose
 from alphago_lee_v2_seblock import AlphaZeroTicTacToeV2 as AlphaZeroTicTacToe
 from alphago_lee import preferred_memory_format, board_to_input_array_from_numeric
-from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
+from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, FILE_SUFFIX
 
-MODEL_DIR = r"C:\Users\My PC\Desktop\final\11x11_v2\model"
+MODEL_DIR = os.path.join(HERE, "model")
 PLAYERS = {
-    "sup_ep0": MODEL_DIR + r"\model_MCTS_ep0_11x11.pth",
-    "ep50": MODEL_DIR + r"\model_MCTS_ep50_11x11.pth",
-    "ep150": MODEL_DIR + r"\model_MCTS_ep150_11x11.pth",
-    "best": MODEL_DIR + r"\best_mcts_11x11.pth",
+    "sup_ep0": os.path.join(MODEL_DIR, f"model_MCTS_ep0{FILE_SUFFIX}.pth"),
+    "ep50": os.path.join(MODEL_DIR, f"model_MCTS_ep50{FILE_SUFFIX}.pth"),
+    "ep150": os.path.join(MODEL_DIR, f"model_MCTS_ep150{FILE_SUFFIX}.pth"),
+    "best": os.path.join(MODEL_DIR, f"best_mcts{FILE_SUFFIX}.pth"),
 }
 N_OPENINGS = 6
 SIMS = 400
@@ -153,7 +157,7 @@ print("\nRound-robin Elo (Bradley-Terry, sup_ep0 anchored at 1500):")
 for n in sorted(names, key=lambda k: elo[k]):
     print(f"  {n:>8s}: {elo[n]:7.1f}")
 
-with open(MODEL_DIR + r"\elo_roundrobin_results.json", "w", encoding="utf-8") as f:
+with open(os.path.join(MODEL_DIR, "elo_roundrobin_results.json"), "w", encoding="utf-8") as f:
     json.dump({"elo": elo, "score": score, "games": games, "log": log,
                "sims": SIMS, "openings": openings}, f, indent=1)
 print("\nSaved model/elo_roundrobin_results.json\nDONE")
