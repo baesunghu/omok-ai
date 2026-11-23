@@ -30,11 +30,10 @@ from omok_paths import CPP_MCTS_DIR  # noqa: E402
 sys.path.append(CPP_MCTS_DIR)
 
 import torch
-import numpy as np
 
 import mcts_core_verbose
 from nets import GomokuNetV2 as GomokuNet
-from board_encoding import preferred_memory_format, board_to_input_array_from_numeric
+from board_encoding import preferred_memory_format, make_batch_eval
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, FILE_SUFFIX
 
 MODEL_DIR = os.path.join(HERE, "model")
@@ -59,21 +58,7 @@ def load(path):
     return m
 
 
-def make_eval(model):
-    def eval_batch_fn(boards, players):
-        inputs = [board_to_input_array_from_numeric(b, p) for b, p in zip(boards, players)]
-        t = torch.from_numpy(np.stack(inputs)).float().to(device).contiguous(
-            memory_format=preferred_memory_format(device))
-        with torch.inference_mode():
-            logits, v = model(t)
-        probs = torch.exp(logits).cpu().numpy().astype(np.float64)
-        if probs.ndim == 1:
-            probs = probs.reshape(1, -1)
-        return probs, v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
-    return eval_batch_fn
-
-
-evals = {name: make_eval(load(p)) for name, p in PLAYERS.items()}
+evals = {name: make_batch_eval(load(p), device) for name, p in PLAYERS.items()}
 
 rng = random.Random(20260926)
 openings = []

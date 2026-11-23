@@ -181,9 +181,8 @@ GAMES_MODULE = "naps_games"   # the game functions the workers run (naps_games.p
 import torch  # noqa: E402  (must follow the sys.path setup above)
 from board_encoding import preferred_memory_format  # noqa: E402
 from nets import SURVIVAL_CAP  # noqa: E402
-from fast_board import BOARD_SIZE  # noqa: E402
+from fast_board import BOARD_SIZE, NUM_CELLS  # noqa: E402
 
-NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 
 # Matches the live training loop's own tuned PooledEvaluator operating point
 # (target_batch=24, max_wait=0.015 measured +19% self-play games/sec over the
@@ -731,14 +730,6 @@ def shutdown_pool():
         except Exception:  # noqa: BLE001
             pass
         _POOL = None
-
-
-def prewarm_pool(num_workers, model, device,
-                 target_batch=DEFAULT_TARGET_BATCH, max_wait=DEFAULT_MAX_WAIT):
-    """OPTIONAL. Spawn the pool ahead of time so the first epoch doesn't pay
-    the one-time startup cost inside its own timing. Not required -- the
-    pool is created lazily on the first generate call either way."""
-    return _ensure_pool(num_workers, model, device, target_batch, max_wait)
 
 
 atexit.register(shutdown_pool)

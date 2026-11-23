@@ -7,17 +7,9 @@
 The v3 run's network (11x11_v2/v3/net_v3.py, NetV3: 128 channels x 8 blocks, auxiliary heads) is a different,
 smaller net built from GomokuNetV3. Checkpoints are state_dicts, so they load under the new class names.
 """
-import os
-
-import torch
 import torch.nn as nn
 
-from board_encoding import (  # noqa: F401 -- re-exported for convenience
-    BOARD_SIZE, WIN_LENGTH, NUM_CELLS, NUM_INPUT_CHANNELS, INPUT_SIZE,
-    board_to_input_array, board_to_input_array_from_numeric,
-    board_to_input_tensor, boards_to_input_tensor, preferred_memory_format,
-    fork_mask,
-)
+from board_encoding import BOARD_SIZE, NUM_INPUT_CHANNELS
 
 
 # ======================================================================
@@ -129,89 +121,6 @@ class GomokuNetV1(nn.Module):
         policy = self.policy_head(out)
         value = self.value_head(out)
         return policy, value
-
-
-# ============================================================
-# Global Model / Device State Caching
-# ============================================================
-
-_current_model = None
-_current_device = None
-_current_model_path = None
-
-
-def _get_model_and_device_internal():
-    global _current_model
-    global _current_device
-
-    if _current_model is None or _current_device is None:
-        _current_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        _current_model = GomokuNetV1()
-        _current_model.to(_current_device)
-
-    return _current_model, _current_device
-
-
-# ============================================================
-# AI Move Selection
-# ============================================================
-
-def _ai_make_move_with_model_internal(model, device, board_state, ai_player):
-    model_input = board_to_input_tensor(board_state, ai_player, device)
-    model.eval()
-
-    with torch.no_grad():
-        policy_logits, _ = model(model_input)
-
-    move_probabilities = torch.exp(policy_logits).squeeze().cpu().numpy()
-
-    valid_moves = []
-    for i in range(NUM_CELLS):
-        r, c = divmod(i, BOARD_SIZE)
-        if board_state[r][c] == ' ':
-            valid_moves.append((move_probabilities[i], r, c))
-
-    if not valid_moves:
-        return -1, -1
-
-    valid_moves.sort(key=lambda x: x[0], reverse=True)
-    return valid_moves[0][1], valid_moves[0][2]
-
-
-def _load_model_internal(model, path, device):
-    global _current_model_path
-    if _current_model_path == path:
-        return  # Model already loaded in memory!
-
-    try:
-        if os.path.exists(path):
-            model.load_state_dict(torch.load(path, map_location=device))
-            model.eval()
-            _current_model_path = path
-    except Exception as e:
-        print(f"AlphaGoLee Notice: Model load fallback ({e}).")
-
-
-# ============================================================
-# Public API
-# ============================================================
-
-def play(board, turn, model_name):
-    global _current_model
-    global _current_device
-
-    if _current_model is None or _current_device is None:
-        _current_model, _current_device = _get_model_and_device_internal()
-
-    model_path = os.path.join('model', model_name)
-    _load_model_internal(_current_model, model_path, _current_device)
-
-    row, col = _ai_make_move_with_model_internal(_current_model, _current_device, board, turn)
-
-    if row == -1 and col == -1:
-        return None
-
-    return (row, col)
 
 
 # ======================================================================

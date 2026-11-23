@@ -1,15 +1,16 @@
 """Games against the deterministic minimax opponent (deterministic_play): evaluation and training data.
 """
 import deterministic_play
-import numpy as np
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor
 
+from fast_board import sims_for_state
 from mcts_cpp import BOARD_SIZE, MCTS, PooledEvaluator, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH, POOLED_TARGET_BATCH
 from board_encoding import augment_sample, board_to_input_array
-from naps_common import mixed_value_target, sims_for_state
+from naps_common import mixed_value_target
+from naps_selfplay import pick_training_move
 from naps_openings import ALL_CELLS, OPENING_SQUARES
 
 
@@ -267,35 +268,13 @@ def play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pla
             break
 
         if current_player == mcts_player:
-            num_empty = sum(1 for row in board for cell in row if cell == ' ')
-            is_full_search = full_search_prob >= 1.0 or random.random() < full_search_prob
-            if is_full_search:
-                sims_this_move = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
-            else:
-                sims_this_move = fast_sims or max(1, num_simulations // 6)
-            root = mcts.search(board, current_player, model, device,
-                                num_simulations=sims_this_move, add_noise=is_full_search,
-                                dirichlet_alpha=dirichlet_alpha, noise_weight=noise_weight)
-
-            if not root.children:
+            move = pick_training_move(mcts, board, current_player, model, device, mcts_decisions, num_simulations,
+                                      boosted_sims, boost_threshold, boost_when_narrow, full_search_prob, fast_sims,
+                                      temperature_moves, dirichlet_alpha, noise_weight)
+            if move is None:
                 outcome = 0
                 break
-
-            total_visits = sum(child.n_visits for child in root.children.values())
-            target_policy_map = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
-            for act, child in root.children.items():
-                r, c = divmod(act, BOARD_SIZE)
-                target_policy_map[r, c] = child.n_visits / total_visits if total_visits > 0 else 0.0
-
-            move_count = mcts_decisions
-            actions = list(root.children.keys())
-            visits = np.array([root.children[a].n_visits for a in actions], dtype=np.float32)
-            if move_count < temperature_moves:
-                probs = visits / visits.sum()
-                chosen_act = np.random.choice(actions, p=probs)
-            else:
-                chosen_act = actions[np.argmax(visits)]
-            r, c = divmod(chosen_act, BOARD_SIZE)
+            r, c, is_full_search, target_policy_map, root = move
             mcts_decisions += 1
 
             if is_full_search:

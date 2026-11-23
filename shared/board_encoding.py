@@ -10,9 +10,8 @@ import os
 # GAME SETTINGS
 # ============================================================
 
-from fast_board import BOARD_SIZE, WIN_LENGTH  # noqa: E402  one source for the board size: fast_board.py
+from fast_board import BOARD_SIZE, NUM_CELLS, WIN_LENGTH  # noqa: E402  one source for the board size: fast_board.py
 
-NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 NUM_INPUT_CHANNELS = 5
 INPUT_SIZE = NUM_CELLS * NUM_INPUT_CHANNELS
 
@@ -79,30 +78,6 @@ _LINES = _generate_lines()
 # a 10x10/192-line board once fork_mask calls it once per empty candidate cell
 # (up to ~100 times per call, called for every MCTS simulation).
 _LINES_IDX = np.array([[r * BOARD_SIZE + c for (r, c) in line] for line in _LINES], dtype=np.int64)
-
-
-def _immediate_win_mask(curr_plane, empty_plane):
-    """Returns a (BOARD_SIZE, BOARD_SIZE) float32 array with 1.0 at every
-    empty cell that would complete a WIN_LENGTH-in-a-row for the owner of
-    curr_plane if a stone were placed there right now. Numerically identical
-    to a per-line Python-loop implementation (verified against it on 300+
-    random boards plus hand-built edge cases), just vectorized via a
-    precomputed flat index array instead of iterating _LINES in Python."""
-    curr_flat = curr_plane.ravel()
-    empty_flat = empty_plane.ravel()
-    line_curr = curr_flat[_LINES_IDX]
-    line_empty = empty_flat[_LINES_IDX]
-    curr_counts = line_curr.sum(axis=1)
-    empty_counts = line_empty.sum(axis=1)
-    hit = (curr_counts == WIN_LENGTH - 1) & (empty_counts == 1)
-    mask = np.zeros(BOARD_SIZE * BOARD_SIZE, dtype=np.float32)
-    if hit.any():
-        hit_lines = _LINES_IDX[hit]
-        hit_empty = line_empty[hit]
-        slot = hit_empty.argmax(axis=1)
-        target = hit_lines[np.arange(len(slot)), slot]
-        mask[target] = 1.0
-    return mask.reshape(BOARD_SIZE, BOARD_SIZE)
 
 
 def fork_mask(curr_plane, empty_plane):
@@ -293,35 +268,6 @@ def board_to_input_tensor(board_state, current_player, device):
     return input_tensor.unsqueeze(0).contiguous(memory_format=preferred_memory_format(device))
 
 
-def check_win(board, player):
-    """Fast win check for BOARD_SIZE x BOARD_SIZE with WIN_LENGTH."""
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if board[r][c] != player:
-                continue
-            if c <= BOARD_SIZE - WIN_LENGTH:
-                if all(board[r][c + k] == player for k in range(1, WIN_LENGTH)):
-                    return True
-            if r <= BOARD_SIZE - WIN_LENGTH:
-                if all(board[r + k][c] == player for k in range(1, WIN_LENGTH)):
-                    return True
-            if r <= BOARD_SIZE - WIN_LENGTH and c <= BOARD_SIZE - WIN_LENGTH:
-                if all(board[r + k][c + k] == player for k in range(1, WIN_LENGTH)):
-                    return True
-            if r <= BOARD_SIZE - WIN_LENGTH and c >= WIN_LENGTH - 1:
-                if all(board[r + k][c - k] == player for k in range(1, WIN_LENGTH)):
-                    return True
-    return False
-
-
-def check_draw(board):
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if board[r][c] == ' ':
-                return False
-    return True
-
-
 # 8 symmetries of one training sample (until 2026-11 in the old trainer, legacy_trainer_basic.py)
 def augment_sample(board_tensor_3d, policy_2d):
     """
@@ -347,3 +293,30 @@ def augment_sample(board_tensor_3d, policy_2d):
         augmented.append((flip_b.copy(), flip_p.flatten().copy()))
 
     return augmented
+
+
+def make_ev(model, dev):
+    """The C++ engine's evaluation callback for `model`: (boards, players) -> (move probabilities, values) from one
+    batched forward pass on `dev`."""
+    def ev(bs, ps):
+        t = torch.from_numpy(np.stack([board_to_input_array_from_numeric(b, p) for b, p in zip(bs, ps)])).float().to(dev)
+        with torch.inference_mode():
+            pl, v = model(t)
+        return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
+    return ev
+
+
+def make_batch_eval(model, device):
+    """Like make_ev, but the input batch uses the device's preferred memory format (channels_last on CUDA, as in
+    training) and a single-board batch still returns a 2-D probability array."""
+    def eval_batch_fn(boards, players):
+        inputs = [board_to_input_array_from_numeric(b, p) for b, p in zip(boards, players)]
+        t = torch.from_numpy(np.stack(inputs)).float().to(device).contiguous(
+            memory_format=preferred_memory_format(device))
+        with torch.inference_mode():
+            logits, v = model(t)
+        probs = torch.exp(logits).cpu().numpy().astype(np.float64)
+        if probs.ndim == 1:
+            probs = probs.reshape(1, -1)
+        return probs, v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
+    return eval_batch_fn

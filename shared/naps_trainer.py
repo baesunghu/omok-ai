@@ -791,16 +791,6 @@ def train_mcts_alpha_zero(
     print(f"MCTS Model saved to {checkpoint_path} and {final_path}")
 
 
-def load_model(model, path="model/model_ep2.pth"):
-    if os.path.exists(path):
-        try:
-            model.load_state_dict(torch.load(path, map_location="cpu"))
-            model.eval()
-            print(f"Loaded model checkpoint from {path}")
-        except Exception as e:
-            print(f"Could not load checkpoint ({e}). Starting fresh.")
-    else:
-        print(f"No checkpoint found at {path}. Starting fresh.")
 # load_model(model, "model/model_MCTS_ep70.pth")
 
 if __name__ == '__main__':

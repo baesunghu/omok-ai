@@ -18,8 +18,6 @@ Arms of the CATFISH controlled experiment (v3/arms.py) run with the same file:
     python train_v3.py B_catfish_s2     arm B_catfish_s2, working folder v3/ab_scratch/B_catfish_s2/
                                         (NAPS_ARM=B_catfish_s2 does the same)
 """
-import json
-import math
 import os
 import random
 import sys

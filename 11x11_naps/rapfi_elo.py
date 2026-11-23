@@ -19,7 +19,6 @@ import collections
 import json
 import math
 import os
-import sys
 
 import numpy as np
 

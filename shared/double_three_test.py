@@ -30,7 +30,7 @@ import numpy as np
 import torch
 
 import mcts_core
-from board_encoding import board_to_input_array_from_numeric
+from board_encoding import make_ev
 from nets import GomokuNetV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, FILE_SUFFIX
 
@@ -149,11 +149,7 @@ def main():
     model.load_state_dict(torch.load(ckpt, map_location=dev))
     model.to(dev).eval()
 
-    def ev(bs, ps):
-        t = torch.from_numpy(np.stack([board_to_input_array_from_numeric(bb, pp) for bb, pp in zip(bs, ps)])).float().to(dev)
-        with torch.inference_mode():
-            pl, v = model(t)
-        return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
+    ev = make_ev(model, dev)
 
     def num(b):
         return np.array([[1 if x == 'X' else 2 if x == 'O' else 0 for x in row] for row in b], dtype=np.int8)

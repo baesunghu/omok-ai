@@ -24,7 +24,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   #
 from omok_paths import enter_run  # noqa: E402
 HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
 from omok_paths import RAPFI_DIR, RAPFI_EXE, V3_DIR  # noqa: E402
-import numpy as np
 import torch
 
 import mcts_core
@@ -34,7 +33,7 @@ _MEGA_EVAL = tuple(int(x) for x in __import__('os').environ.get('MEGA_EVAL', '0,
 # VCF on wherever the engine has it (was off: engine default depth 0); VCF=0 turns it off
 if VCF and os.environ.get("VCF", "1") != "0":
     mcts_core.set_vcf(*VCF)
-from board_encoding import board_to_input_array_from_numeric
+from board_encoding import make_ev
 from nets import GomokuNetV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, FILE_SUFFIX
 
@@ -140,11 +139,7 @@ def main():
     model.load_state_dict(sd)
     model.to(dev).eval()
 
-    def ev(bs, ps):
-        t = torch.from_numpy(np.stack([board_to_input_array_from_numeric(b, p) for b, p in zip(bs, ps)])).float().to(dev)
-        with torch.inference_mode():
-            pl, v = model(t)
-        return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
+    ev = make_ev(model, dev)
 
     # RAPFI_THREADS > 1 plays that many games at once in this process and evaluates their
     # positions in ONE shared GPU batch (cross-game batching). The search itself is unchanged (1100 sims,

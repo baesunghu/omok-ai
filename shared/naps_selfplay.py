@@ -6,12 +6,46 @@ import os
 import random
 from concurrent.futures import ThreadPoolExecutor
 
+from fast_board import sims_for_state
 from mcts_cpp import BOARD_SIZE, MCTS, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH
 from nets import SURVIVAL_CAP
 from board_encoding import augment_sample, board_to_input_array
-from naps_common import mixed_value_target, sims_for_state
+from naps_common import mixed_value_target
 from naps_openings import sample_forced_opening_start, sample_tactical_start
+
+
+def pick_training_move(mcts, board, player, model, device, decisions, num_simulations, boosted_sims, boost_threshold,
+                       boost_when_narrow, full_search_prob, fast_sims, temperature_moves, dirichlet_alpha, noise_weight):
+    """The model's move in a training game (self-play, vs-Det, vs-League). A full search -- always at
+    full_search_prob=1.0, else with that probability (playout-cap randomization) -- gets sims_for_state's budget and
+    Dirichlet noise and is the one callers record; a fast search only picks the move. While `decisions` (this side's
+    moves so far) < temperature_moves the move is sampled in proportion to visits, later it is the most visited one.
+    Returns None when the search found no move, else (r, c, is_full_search, target_policy_map, root)."""
+    num_empty = sum(1 for row in board for cell in row if cell == ' ')
+    is_full_search = full_search_prob >= 1.0 or random.random() < full_search_prob
+    if is_full_search:
+        sims_this_move = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
+    else:
+        sims_this_move = fast_sims or max(1, num_simulations // 6)
+    root = mcts.search(board, player, model, device, num_simulations=sims_this_move, add_noise=is_full_search,
+                       dirichlet_alpha=dirichlet_alpha, noise_weight=noise_weight)
+    if not root.children:
+        return None
+    total_visits = sum(child.n_visits for child in root.children.values())
+    target_policy_map = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+    for act, child in root.children.items():
+        r, c = divmod(act, BOARD_SIZE)
+        target_policy_map[r, c] = child.n_visits / total_visits if total_visits > 0 else 0.0
+    actions = list(root.children.keys())
+    visits = np.array([root.children[a].n_visits for a in actions], dtype=np.float32)
+    if decisions < temperature_moves:
+        probs = visits / visits.sum()
+        chosen_act = np.random.choice(actions, p=probs)
+    else:
+        chosen_act = actions[np.argmax(visits)]
+    r, c = divmod(chosen_act, BOARD_SIZE)
+    return r, c, is_full_search, target_policy_map, root
 
 
 def play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost_threshold=0,
@@ -97,41 +131,13 @@ def play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost_
             outcome = 0
             break
 
-        num_empty = sum(1 for row in board for cell in row if cell == ' ')
-        is_full_search = full_search_prob >= 1.0 or random.random() < full_search_prob
-        if is_full_search:
-            sims_this_move = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
-        else:
-            sims_this_move = fast_sims or max(1, num_simulations // 6)
-
-        # Run MCTS search (Dirichlet noise on full searches only -- see docstring)
-        root = mcts.search(board, current_player, model, device, num_simulations=sims_this_move,
-                            add_noise=is_full_search,
-                            dirichlet_alpha=dirichlet_alpha, noise_weight=noise_weight)
-
-        if not root.children:
+        # temperature is keyed on plies actually played (equals len(history) at full_search_prob=1.0)
+        move = pick_training_move(mcts, board, current_player, model, device, ply, num_simulations,
+                                  boosted_sims, boost_threshold, boost_when_narrow, full_search_prob, fast_sims,
+                                  temperature_moves, dirichlet_alpha, noise_weight)
+        if move is None:
             break
-
-        total_visits = sum(child.n_visits for child in root.children.values())
-        target_policy_map = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
-
-        for act, child in root.children.items():
-            r, c = divmod(act, BOARD_SIZE)
-            target_policy_map[r, c] = child.n_visits / total_visits if total_visits > 0 else 0.0
-
-        # Action selection: Temperature sampling for early moves, greedy for late moves
-        # (keyed on plies actually played -- equals len(history) at full_search_prob=1.0)
-        move_count = ply
-        actions = list(root.children.keys())
-        visits = np.array([root.children[a].n_visits for a in actions], dtype=np.float32)
-
-        if move_count < temperature_moves:
-            probs = visits / visits.sum()
-            chosen_act = np.random.choice(actions, p=probs)
-        else:
-            chosen_act = actions[np.argmax(visits)]
-
-        r, c = divmod(chosen_act, BOARD_SIZE)
+        r, c, is_full_search, target_policy_map, root = move
 
         if is_full_search:
             # Store board state (3, BOARD_SIZE, BOARD_SIZE)
@@ -201,9 +207,7 @@ def generate_mcts_self_play_data(model, device, num_games=10, num_simulations=40
             else:
                 outcome_counts['draw'] += 1
             if history and ply_indices and ply_indices[0] == 0:
-                board_3d0 = history[0][0]
-                # board_3d0's plane 0 is "current player's stones" -- at
-                # history[0] no move has landed yet, so this is always empty;
+                # history[0]'s board planes are still empty (no stone has landed yet);
                 # the first ACTUAL stone is recorded as target_policy_map's
                 # single argmax entry (a one-hot visit distribution isn't
                 # guaranteed, but for a diagnostic row-coverage count the

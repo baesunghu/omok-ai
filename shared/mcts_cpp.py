@@ -4,14 +4,9 @@ import queue
 import threading
 import numpy as np
 import torch
-import os
 
-from board_encoding import (board_to_input_tensor, board_to_input_array, boards_to_input_tensor, board_to_input_array_from_numeric, fork_mask)
-# Gen12: V2 architecture (GroupNorm+SE), see nets.py
-from nets import GomokuNetV3 as GomokuNet
-from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, fast_check_draw
-
-NUM_CELLS = BOARD_SIZE * BOARD_SIZE
+from board_encoding import board_to_input_tensor, boards_to_input_tensor, board_to_input_array_from_numeric, fork_mask
+from fast_board import BOARD_SIZE, NUM_CELLS, WIN_LENGTH, fast_check_win, fast_check_draw
 
 
 def _board_to_input_array_batch_from_numeric(boards_list, players_list):
@@ -662,70 +657,3 @@ class MCTS:
                 if not node.is_expanded:
                     self._expand_with_probs(node, e['board'], sim_player, probs)
                 self._backprop(node, leaf_value, sim_player)
-
-
-# ============================================================
-# Global Model Caching & Public API
-# ============================================================
-
-_current_mcts_model = None
-_current_mcts_device = None
-_current_mcts_model_path = None
-_mcts_engine = MCTS(c_puct=1.414)
-
-
-def get_mcts_model(model_name="alphazero_mcts.pth"):
-    global _current_mcts_model, _current_mcts_device, _current_mcts_model_path
-
-    if _current_mcts_model is None or _current_mcts_device is None:
-        _current_mcts_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        _current_mcts_model = GomokuNet()
-        _current_mcts_model.to(_current_mcts_device)
-
-    model_path = os.path.join('model', model_name)
-    if _current_mcts_model_path != model_path and os.path.exists(model_path):
-        try:
-            _current_mcts_model.load_state_dict(torch.load(model_path, map_location=_current_mcts_device))
-            _current_mcts_model.eval()
-            _current_mcts_model_path = model_path
-        except Exception as e:
-            print(f"MCTS Model Notice: Initialization ({e})")
-
-    return _current_mcts_model, _current_mcts_device
-
-
-def play_mcts(board, turn, model_name="alphazero_mcts.pth", num_simulations=30, add_noise=False):
-    """
-    Public MCTS Inference API.
-    Executes MCTS tree search and returns (chosen_move, confidence_val, candidates_list, target_policy_vec).
-    """
-    model, device = get_mcts_model(model_name)
-    root = _mcts_engine.search(board, turn, model, device, num_simulations=num_simulations, add_noise=add_noise)
-
-    if not root.children:
-        return None, 0.0, [], np.zeros(NUM_CELLS, dtype=np.float32)
-
-    target_policy_vec = np.zeros(NUM_CELLS, dtype=np.float32)
-    candidates = []
-
-    total_visits = sum(child.n_visits for child in root.children.values())
-
-    for act, child in root.children.items():
-        r, c = divmod(act, BOARD_SIZE)
-        prob = child.n_visits / total_visits if total_visits > 0 else 0.0
-        target_policy_vec[act] = prob
-        candidates.append({
-            'move': [r, c],
-            'action_idx': act,
-            'visit_count': child.n_visits,
-            'prob': round(float(prob), 4),
-            'q_value': round(float(child.value()), 4)
-        })
-
-    candidates.sort(key=lambda x: x['visit_count'], reverse=True)
-
-    best_cand = candidates[0]
-    best_move = (best_cand['move'][0], best_cand['move'][1])
-    root_confidence = round(float(root.value()), 4)
-
-    return best_move, root_confidence, candidates, target_policy_vec

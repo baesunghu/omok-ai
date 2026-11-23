@@ -8,7 +8,6 @@ import torch
 from collections import deque
 from datetime import datetime
 
-from mcts_cpp import NUM_CELLS
 from fast_board import FILE_SUFFIX   # "_11x11" / "_15x15" on every model, report and state file
 from nets import GomokuNetV3 as GomokuNet
 # (until 2026-11 the trainer was one file, alphazero_mcts_make_lrfix.py; see naps_trainer.py)
@@ -111,49 +110,6 @@ def get_devices():
     train_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Self-play device: {self_play_device} | Train device: {train_device}")
     return self_play_device, train_device
-
-
-def sims_for_state(num_empty, base_sims, boosted_sims=None, boost_threshold=0, boost_when_narrow=False):
-    """
-    A sim-budget diagnostic on this project's 5x5 board (see training
-    conversation) found a fixed budget badly under-converged on wide-open
-    boards but already converged on narrower ones: at 25 empty cells, the
-    top move's visit share was still climbing at 1600 sims (49% -> 79% from
-    100 -> 1600); at 14 empty cells, it was flat from 100 all the way to
-    1600 sims (~38%, unchanged). So only spend extra search while the board
-    is still wide open -- past boost_threshold empty cells, more search
-    doesn't change the answer, it just costs time.
-
-    boost_when_narrow=False (default) keeps that exact behavior. On 3x3,
-    a diagnosed critical defensive move stayed stuck at ~1/100 visits all
-    session, in the mid/late game (few empty cells) -- the opposite end
-    from what the 5x5 finding above boosts, since 3x3's branching factor
-    (<=9) is already narrower than 5x5's "already converged" 14-empty case
-    everywhere. boost_when_narrow=True inverts the comparison so extra sims
-    go to low-num_empty states instead, targeting that specific bug.
-
-    That inversion is all-or-nothing (narrow XOR open), so once 5x5 started
-    passing boost_when_narrow=True (for its own late-game precision), it
-    silently lost the original wide-open boost above -- confirmed still
-    needed by a live diagnostic: at 23 empty cells a 100-sim search picked a
-    move MCTS itself ranks far worse than the alternative it converges to
-    given 600+ sims (visit share 24% -> 92% for the better move as sims
-    100->2400, its q swinging from -0.37 to -0.90 in the eventual mover's
-    own favor), and that misjudged move was directly upstream of a loss.
-    So independently of the boost_when_narrow branch above, also always
-    boost the wide-open end (num_empty > NUM_CELLS - 10, i.e. before the
-    10th stone is placed) to boosted_sims -- covers both ends at once
-    instead of forcing a choice between them.
-    """
-    if not boosted_sims:
-        return base_sims
-    if boost_when_narrow:
-        sims = boosted_sims if num_empty <= boost_threshold else base_sims
-    else:
-        sims = boosted_sims if num_empty > boost_threshold else base_sims
-    if num_empty > NUM_CELLS - 10:
-        sims = max(sims, boosted_sims)
-    return sims
 
 
 def mixed_value_target(z, q, q_weight):

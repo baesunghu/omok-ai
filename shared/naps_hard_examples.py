@@ -32,21 +32,11 @@ def _root_entropy_info(root):
     return float(-(probs * np.log(probs)).sum()), n
 
 
-def mine_one_selfplay_game(model, device, sims, pooled_evaluator=None, eval_cache=None):
-    """Plays one self-play game (noise on, no training-data recording) to
-    collect (board, current_player) snapshots for refresh_mined_tactical_pool
-    to scan -- mirrors mine_tactical_parallel.py's _play_one_selfplay.
-
-    2026-09-11: also returns per-ply (act, entropy_info) and the game outcome
-    so refresh_mined_tactical_pool can additionally run outcome-based hard-
-    example detection (Hard-1/2/3/5/6) on top of the original pattern scan --
-    every ply here is a model ply (self-play is the model against itself).
-
-    pooled_evaluator/eval_cache (2026-09-27, unified MP pool): optional
-    routing for the leaf evaluations; None keeps the original behavior."""
-    mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+def _mine_game(current_player, pick):
+    """The game loop the three mining games share. pick(board, player) -> ((r, c), is_model_ply, ent_info), or
+    None to end the game; every ply is recorded as (board before the move, player, (r, c), is_model_ply, ent_info).
+    Returns (plies, outcome) with outcome +1 X won, -1 O won, 0 otherwise (draw, no move, or the 130-move cap)."""
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
-    current_player = random.choice(['X', 'O'])
     plies = []
     moves = 0
     outcome = 0
@@ -61,20 +51,44 @@ def mine_one_selfplay_game(model, device, sims, pooled_evaluator=None, eval_cach
             outcome = 0
             break
         board_snapshot = [row[:] for row in board]
-        root = mcts.search(board, current_player, model, device, num_simulations=sims, add_noise=True,
-                            dirichlet_alpha=1.0, noise_weight=0.85)
-        if not root.children:
+        move = pick(board, current_player)
+        if move is None:
             break
-        act = max(root.children.items(), key=lambda kv: kv[1].n_visits)[0]
-        ent_info = _root_entropy_info(root)
-        r, c = divmod(act, BOARD_SIZE)
-        plies.append((board_snapshot, current_player, (r, c), True, ent_info))
+        (r, c), is_model_ply, ent_info = move
+        plies.append((board_snapshot, current_player, (r, c), is_model_ply, ent_info))
         board[r][c] = current_player
         current_player = 'O' if current_player == 'X' else 'X'
         moves += 1
         if moves > 130:
             break
     return plies, outcome
+
+
+def _model_move(mcts, board, player, net, device, sims, is_model_ply=True, **search_kw):
+    """The most-visited move of one search, as a _mine_game move (entropy info only for the model's own plies)."""
+    root = mcts.search(board, player, net, device, num_simulations=sims, **search_kw)
+    if not root.children:
+        return None
+    act = max(root.children.items(), key=lambda kv: kv[1].n_visits)[0]
+    return divmod(act, BOARD_SIZE), is_model_ply, (_root_entropy_info(root) if is_model_ply else None)
+
+
+
+def mine_one_selfplay_game(model, device, sims, pooled_evaluator=None, eval_cache=None):
+    """Plays one self-play game (noise on, no training-data recording) to
+    collect (board, current_player) snapshots for refresh_mined_tactical_pool
+    to scan -- mirrors mine_tactical_parallel.py's _play_one_selfplay.
+
+    2026-09-11: also returns per-ply (act, entropy_info) and the game outcome
+    so refresh_mined_tactical_pool can additionally run outcome-based hard-
+    example detection (Hard-1/2/3/5/6) on top of the original pattern scan --
+    every ply here is a model ply (self-play is the model against itself).
+
+    pooled_evaluator/eval_cache (2026-09-27, unified MP pool): optional
+    routing for the leaf evaluations; None keeps the original behavior."""
+    mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    return _mine_game(random.choice(['X', 'O']), lambda board, player: _model_move(
+        mcts, board, player, model, device, sims, add_noise=True, dirichlet_alpha=1.0, noise_weight=0.85))
 
 
 def mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=deterministic_play.MAX_DEPTH,
@@ -93,42 +107,14 @@ def mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=determi
     pooled_evaluator/eval_cache: see mine_one_selfplay_game."""
     mcts_player = 'X' if mcts_plays_x else 'O'
     mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
-    board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
-    current_player = 'X'
-    plies = []
-    moves = 0
-    outcome = 0
-    while True:
-        if fast_check_win(board, 'X'):
-            outcome = 1
-            break
-        if fast_check_win(board, 'O'):
-            outcome = -1
-            break
-        if fast_check_draw(board):
-            outcome = 0
-            break
-        board_snapshot = [row[:] for row in board]
-        if current_player == mcts_player:
-            root = mcts.search(board, current_player, model, device, num_simulations=sims, add_noise=True,
-                                dirichlet_alpha=0.3, noise_weight=0.25)
-            if not root.children:
-                break
-            act = max(root.children.items(), key=lambda kv: kv[1].n_visits)[0]
-            ent_info = _root_entropy_info(root)
-            r, c = divmod(act, BOARD_SIZE)
-            plies.append((board_snapshot, current_player, (r, c), True, ent_info))
-        else:
-            r, c = deterministic_play.play(board, current_player, max_depth=det_max_depth)
-            if r == -1:
-                break
-            plies.append((board_snapshot, current_player, (r, c), False, None))
-        board[r][c] = current_player
-        current_player = 'O' if current_player == 'X' else 'X'
-        moves += 1
-        if moves > 130:
-            break
-    return plies, outcome
+
+    def pick(board, player):
+        if player == mcts_player:
+            return _model_move(mcts, board, player, model, device, sims, add_noise=True, dirichlet_alpha=0.3,
+                               noise_weight=0.25)
+        r, c = deterministic_play.play(board, player, max_depth=det_max_depth)
+        return None if r == -1 else ((r, c), False, None)
+    return _mine_game('X', pick)
 
 
 def mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
@@ -147,42 +133,13 @@ def mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
     mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     league_mcts = MCTS(c_puct=1.6, eval_batch_size=EVAL_BATCH, shared_cache=league_eval_cache,
                        pooled_evaluator=league_pooled_evaluator)
-    board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
-    current_player = 'X'
-    plies = []
-    moves = 0
-    outcome = 0
-    while True:
-        if fast_check_win(board, 'X'):
-            outcome = 1
-            break
-        if fast_check_win(board, 'O'):
-            outcome = -1
-            break
-        if fast_check_draw(board):
-            outcome = 0
-            break
-        board_snapshot = [row[:] for row in board]
-        if current_player == mcts_player:
-            root = mcts.search(board, current_player, model, device, num_simulations=sims, add_noise=True,
-                                dirichlet_alpha=0.3, noise_weight=0.25)
-            is_model_ply = True
-        else:
-            root = league_mcts.search(board, current_player, league_model, device, num_simulations=sims,
-                                       add_noise=False)
-            is_model_ply = False
-        if not root.children:
-            break
-        act = max(root.children.items(), key=lambda kv: kv[1].n_visits)[0]
-        ent_info = _root_entropy_info(root) if is_model_ply else None
-        r, c = divmod(act, BOARD_SIZE)
-        plies.append((board_snapshot, current_player, (r, c), is_model_ply, ent_info))
-        board[r][c] = current_player
-        current_player = 'O' if current_player == 'X' else 'X'
-        moves += 1
-        if moves > 130:
-            break
-    return plies, outcome
+
+    def pick(board, player):
+        if player == mcts_player:
+            return _model_move(mcts, board, player, model, device, sims, add_noise=True, dirichlet_alpha=0.3,
+                               noise_weight=0.25)
+        return _model_move(league_mcts, board, player, league_model, device, sims, is_model_ply=False, add_noise=False)
+    return _mine_game('X', pick)
 
 
 # ============================================================

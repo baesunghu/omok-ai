@@ -51,9 +51,8 @@ import time
 
 import numpy as np
 
-from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, fast_check_draw
+from fast_board import BOARD_SIZE, NUM_CELLS, WIN_LENGTH, fast_check_win, fast_check_draw, sims_for_state
 
-NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 NUM_INPUT_CHANNELS = 5
 MAX_BATCH = 20  # eval_batch_size=16 in production + headroom
 
@@ -222,23 +221,6 @@ def make_remote_eval_batch_fn(handle, request_queue, board_to_input_array_from_n
         values = handle.values_arr[:n].copy()
         return probs, values
     return eval_batch_fn
-
-
-# ============================================================
-# sims_for_state -- duplicated on purpose to keep worker processes torch-free.
-# MUST stay identical to naps_common.sims_for_state; that function is
-# the source of truth if the two ever need to be reconciled.
-# ============================================================
-def sims_for_state(num_empty, base_sims, boosted_sims=None, boost_threshold=0, boost_when_narrow=False):
-    if not boosted_sims:
-        return base_sims
-    if boost_when_narrow:
-        sims = boosted_sims if num_empty <= boost_threshold else base_sims
-    else:
-        sims = boosted_sims if num_empty > boost_threshold else base_sims
-    if num_empty > NUM_CELLS - 10:
-        sims = max(sims, boosted_sims)
-    return sims
 
 
 # ============================================================

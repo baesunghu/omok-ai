@@ -13,7 +13,6 @@ import os
 import sys
 import time
 
-import numpy as np
 import torch
 
 V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,7 +20,7 @@ sys.path.insert(0, V2)
 sys.path.insert(1, os.path.join(V2, "v3"))
 import mcts_core
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from board_encoding import board_to_input_array_from_numeric
+from board_encoding import make_ev
 from fast_board import fast_check_win
 from net_v3 import NetV3
 from rapfi_match import Rapfi
@@ -39,11 +38,7 @@ sd = sd["model"] if isinstance(sd, dict) and "model" in sd else sd
 model = NetV3(); model.load_state_dict(sd); model.to(DEV).eval()
 
 
-def ev(bs, ps):
-    t = torch.from_numpy(np.stack([board_to_input_array_from_numeric(b, p) for b, p in zip(bs, ps)])).float().to(DEV)
-    with torch.inference_mode():
-        pl, v = model(t)
-    return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
+ev = make_ev(model, DEV)
 
 
 pr = next(p for p in json.load(open(PROBLEMS_FILE, encoding="utf-8"))["problems"] if p["id"] == pid)

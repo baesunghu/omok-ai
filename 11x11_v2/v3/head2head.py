@@ -8,7 +8,6 @@ A or B may also be a 15x15 V4 checkpoint (board-size-independent heads), played 
 import os
 import sys
 
-import numpy as np
 import torch
 
 V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,7 +15,7 @@ sys.path.insert(0, V2)
 os.chdir(V2)
 import mcts_core
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from board_encoding import board_to_input_array_from_numeric
+from board_encoding import make_ev
 from fast_board import BOARD_SIZE as N, fast_check_win
 sys.path.insert(1, os.path.join(V2, "v3"))
 from net_v3 import NetV3
@@ -50,13 +49,7 @@ def load(p):
     m.load_state_dict(sd); return m.to(DEV).eval()
 
 
-def make_ev(m):
-    def ev(bs, ps):
-        t = torch.from_numpy(np.stack([board_to_input_array_from_numeric(b, p) for b, p in zip(bs, ps)])).float().to(DEV)
-        with torch.inference_mode():
-            pl, v = m(t)
-        return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
-    return ev
+
 
 
 LIVE = None   # 관전: sharded runs write the game in progress for ab_scratch/ab_live.py
@@ -98,7 +91,7 @@ def play(evx, evo, opening, sims, info=None):
 def main():
     a, b = sys.argv[1], sys.argv[2]
     sims = int(sys.argv[3]) if len(sys.argv) > 3 else 1100
-    eva, evb = make_ev(load(a)), make_ev(load(b))
+    eva, evb = make_ev(load(a), DEV), make_ev(load(b), DEV)
     w = l = d = 0
     for i, op in enumerate(OPENINGS):
         for a_is_x in (True, False):

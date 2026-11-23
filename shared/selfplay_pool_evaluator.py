@@ -7,13 +7,12 @@ import threading
 import time
 import torch
 
-from fast_board import BOARD_SIZE
+from fast_board import NUM_CELLS
 from run_config import POOLED_TARGET_BATCH
 from board_encoding import preferred_memory_format
 from selfplay_pool_tasks import TAG_GEN
 
 
-NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 
 
 DEFAULT_TARGET_BATCH = POOLED_TARGET_BATCH   # 11x11_v2: 64 with 32-leaf requests; other runs 24

@@ -7,11 +7,12 @@ import time
 import torch
 from concurrent.futures import ThreadPoolExecutor
 
+from fast_board import sims_for_state
 from mcts_cpp import BOARD_SIZE, MCTS, PooledEvaluator, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH, GATE_LOSS_PENALTY, GATE_OPENING_RADIUS, POOLED_TARGET_BATCH
 from nets import GomokuNetV3 as GomokuNet
 from board_encoding import preferred_memory_format
-from naps_common import FILE_SUFFIX, sims_for_state
+from naps_common import FILE_SUFFIX
 from naps_openings import OPENING_SQUARES
 
 # ============================================================
@@ -178,52 +179,32 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
         except Exception as e:  # noqa: BLE001
             print(f"  [gate] unified-pool gate failed ({e!r}) -- threaded fallback", flush=True)
             results = None
-    if results is not None:
-        wins = sum(1 for r in results if r == 'a')
-        draws = sum(1 for r in results if r == 'draw')
-        losses = len(results) - wins - draws
-        n = max(1, wins + draws + losses)
-        score = (wins + 0.5 * draws - GATE_LOSS_PENALTY * losses) / n
-        promoted = score > GATE_PROMOTION_THRESHOLD
-        if promoted and GATE_CANDIDATE_MODE:
-            _save_gate_candidate(model, score)
-            promoted = False
-        elif promoted:
-            torch.save(model.state_dict(), BEST_CHECKPOINT_PATH)
-            gen_model.load_state_dict(model.state_dict())
-        return wins / n, draws / n, losses / n, promoted
+    if results is None:
+        max_workers = max_workers or max(1, min(len(GATE_OPENING_SQUARES) * 2, os.cpu_count() or 1))
+        eval_cache_model = {}
+        eval_cache_best = {}
+        owns_pooled = device.type == "cuda"
+        pooled_model = PooledEvaluator(model, device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) if owns_pooled else None
+        pooled_best = PooledEvaluator(best_model, device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) if owns_pooled else None
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = []
+                for opening in GATE_OPENING_SQUARES:
+                    for latest_plays_x in (True, False):
+                        futures.append(pool.submit(play_gate_match_game, model, best_model, device, num_simulations,
+                                                    boosted_sims, boost_threshold, boost_when_narrow, c_puct,
+                                                    latest_plays_x, opening,
+                                                    eval_cache_model, eval_cache_best, pooled_model, pooled_best))
+                results = [future.result() for future in futures]
+        finally:
+            if pooled_model is not None:
+                pooled_model.stop()
+            if pooled_best is not None:
+                pooled_best.stop()
 
-    max_workers = max_workers or max(1, min(len(GATE_OPENING_SQUARES) * 2, os.cpu_count() or 1))
-    eval_cache_model = {}
-    eval_cache_best = {}
-    owns_pooled = device.type == "cuda"
-    pooled_model = PooledEvaluator(model, device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) if owns_pooled else None
-    pooled_best = PooledEvaluator(best_model, device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) if owns_pooled else None
-
-    try:
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = []
-            for opening in GATE_OPENING_SQUARES:
-                for latest_plays_x in (True, False):
-                    futures.append(pool.submit(play_gate_match_game, model, best_model, device, num_simulations,
-                                                boosted_sims, boost_threshold, boost_when_narrow, c_puct,
-                                                latest_plays_x, opening,
-                                                eval_cache_model, eval_cache_best, pooled_model, pooled_best))
-            wins = draws = losses = 0
-            for future in futures:
-                result = future.result()
-                if result == 'a':
-                    wins += 1
-                elif result == 'draw':
-                    draws += 1
-                else:
-                    losses += 1
-    finally:
-        if pooled_model is not None:
-            pooled_model.stop()
-        if pooled_best is not None:
-            pooled_best.stop()
-
+    wins = sum(1 for r in results if r == 'a')
+    draws = sum(1 for r in results if r == 'draw')
+    losses = len(results) - wins - draws
     n = max(1, wins + draws + losses)
     score = (wins + 0.5 * draws - GATE_LOSS_PENALTY * losses) / n
     promoted = score > GATE_PROMOTION_THRESHOLD
