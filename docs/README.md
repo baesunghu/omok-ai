@@ -75,7 +75,7 @@ v3의 성과(대등점, 문제 통과, 정오)는 측정된 사실이다. 다만
 | `alphago_lee.py` | `shared/board_encoding.py` (판 → 입력 평면) + `shared/nets.py` (V1 신경망) |
 | `alphago_lee_v2_seblock.py`, `alphago_lee_v3_survival.py` | `shared/nets.py` |
 | `AlphaZeroTicTacToe`, `AlphaZeroTicTacToeV2`, `AlphaZeroTicTacToeV3` (신경망 클래스) | `GomokuNetV1`, `GomokuNetV2`, `GomokuNetV3` |
-| `alphazero_mcts_make_lrfix.py` (NAPS 학습 본체) | `shared/naps_trainer.py` |
+| `alphazero_mcts_make_lrfix.py` (NAPS 학습 본체, 4,080행 한 파일) | `shared/naps_trainer.py` (학습 루프) + `shared/naps_*.py` 8개 (게이트, 리그, 어려운 국면 등) |
 | `alphazero_mcts_lrfix.py` (C++ 엔진을 쓰는 MCTS) | `shared/mcts_cpp.py` |
 | `alphazero_mcts.py` (파이썬 MCTS) | `shared/mcts_python.py` |
 | `alphago_lee_make.py`, `alphazero_mcts_make.py` (옛 학습기) | `shared/legacy_trainer_basic.py`, `shared/legacy_trainer_mcts.py` |

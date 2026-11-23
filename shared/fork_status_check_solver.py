@@ -52,7 +52,7 @@ import mcts_core_solver as mcts_core_verbose  # 2026-09-27 solver-engine re-meas
 from nets import GomokuNetV3 as GomokuNet
 from board_encoding import preferred_memory_format, board_to_input_array_from_numeric
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
-import naps_trainer as amk
+import naps_hard_examples as amk   # _opponent_can_fork_next (until 2026-11 in the trainer module)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CKPT = os.path.join(HERE, "model", f"best_mcts{FILE_SUFFIX}.pth")

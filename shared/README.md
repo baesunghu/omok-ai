@@ -33,7 +33,15 @@ OMOK_RUN=11x11_v2 python shared/ladder_ci.py
 | 파일 | 내용 |
 |---|---|
 | `train_run.py` | 학습 시작: 중복 실행 잠금(`train.lock`)과 공통 하이퍼파라미터. 실행 폴더의 `_restart_train.py`가 부른다 |
-| `naps_trainer.py` | NAPS 학습 본체: 대국 생성, 버퍼, 학습, 게이트, 리그. 시작점은 `train_mcts_alpha_zero` |
+| `naps_trainer.py` | NAPS 학습 루프 `train_mcts_alpha_zero`: 대국 생성 → 버퍼 → 학습 → 게이트 → 측정. 아래 `naps_*` 모듈을 부른다 |
+| `naps_common.py` | 학습기 전체가 함께 쓰는 설정과 상태: `model/` 파일 경로, 보고 로거, 시뮬레이션 수·LR 설정, 가치 목표, 리플레이 버퍼, 에포크 수 |
+| `naps_openings.py` | 대국 시작 국면: 대칭으로 줄인 첫 수, 전술·강제 시작 국면 |
+| `naps_selfplay.py` | 자가대국 한 판(`_play_one_mcts_game`)과 여러 판 |
+| `naps_gate.py` | 게이트: 후보가 현재 best와 둔다. 점수 = (승 + 0.5 × 무 − 벌점 × 패) / 판 수 |
+| `naps_vsdet.py` | 결정론적 미니맥스 상대와의 대국: 평가와 학습 데이터 |
+| `naps_league.py` | 리그: 지난 체크포인트와 best 모델을 상대로 두는 대국 |
+| `naps_tactics.py` | 합성 전술 국면: 닫힌 3, 포크, 쌍사, 열린 3, 진단 국면 |
+| `naps_hard_examples.py` | 어려운 국면: 끝난 대국에서 신경망이 틀리거나 망설인 국면을 깊은 탐색으로 다시 라벨해 풀에 모으고 학습에 섞는다 |
 | `mcts_cpp.py` | MCTS: 신경망 평가를 C++ 엔진에 연결 (v2 엔진이면 VCF·MEGA 인자도 넘김) |
 | `selfplay_mp_unified.py` | 자가대국·리그·게이트를 한 풀에서 두는 멀티프로세스 풀 (v2는 C++ 스레드 자가대국 `11x11_v2/selfplay_cpp.py`) |
 | `selfplay_mp.py`, `mp_eval.py` | 예전 멀티프로세스 자가대국과 평가 (일부 함수를 학습 본체가 가져다 씀) |
