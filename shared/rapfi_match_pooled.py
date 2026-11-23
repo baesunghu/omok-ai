@@ -2,7 +2,7 @@
 Rapfi match with a pooled GPU evaluator (2026-10-10, EXPERIMENTAL, measurement only).
 
 Same games as rapfi_match.py (same openings, colours, sims, greedy, no noise), but organised like the
-training self-play pool (selfplay_mp_unified.py):
+training self-play pool (selfplay_pool.py):
   * W worker processes each play games (own Rapfi process + own C++ MCTSEngine). Workers hold NO
     network; they encode leaf boards into input planes (CPU work, in parallel) and send them to
   * one coordinator process that owns the network on the GPU, gathers requests from all workers until

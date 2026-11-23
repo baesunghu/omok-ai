@@ -42,9 +42,14 @@ OMOK_RUN=11x11_v2 python shared/ladder_ci.py
 | `naps_league.py` | 리그: 지난 체크포인트와 best 모델을 상대로 두는 대국 |
 | `naps_tactics.py` | 합성 전술 국면: 닫힌 3, 포크, 쌍사, 열린 3, 진단 국면 |
 | `naps_hard_examples.py` | 어려운 국면: 끝난 대국에서 신경망이 틀리거나 망설인 국면을 깊은 탐색으로 다시 라벨해 풀에 모으고 학습에 섞는다 |
+| `naps_threats.py` | 판 위협 검사: 4목의 빈칸, 포크 자리, 바로 이기는 자리, 상대가 다음 수에 포크를 만들 수 있는지 |
+| `naps_tactical_refresh.py` | 전술 보강 학습: 합성·채굴 전술 국면으로 몇 에폭 지도학습, 에폭마다 열린 3 국면 주입 |
 | `mcts_cpp.py` | MCTS: 신경망 평가를 C++ 엔진에 연결 (v2 엔진이면 VCF·MEGA 인자도 넘김) |
-| `selfplay_mp_unified.py` | 자가대국·리그·게이트를 한 풀에서 두는 멀티프로세스 풀 (v2는 C++ 스레드 자가대국 `11x11_v2/selfplay_cpp.py`) |
-| `selfplay_mp.py`, `mp_eval.py` | 예전 멀티프로세스 자가대국과 평가 (일부 함수를 학습 본체가 가져다 씀) |
+| `selfplay_pool.py` | 대국 풀 (주 경로): 한 에폭의 자가대국·미니맥스·리그 대국과 보강·게이트 작업을 프로세스 10개가 한 대기열에서 나눠 둔다 (v2는 C++ 스레드 자가대국 `11x11_v2/selfplay_cpp.py`) |
+| `selfplay_pool_tasks.py` | 대국 풀의 작업자가 작업 하나를 처리하는 법, 끝난 대국을 학습 표본으로 바꾸는 법 (출처별 가중치) |
+| `selfplay_pool_evaluator.py` | 대국 풀의 GPU 평가: 작업자들의 평가 요청을 모델별로 모아 한 번에 계산 |
+| `selfplay_pool_fallback.py` | 예비 대국 풀: 주 풀이 꺼졌거나(`MP_UNIFIED_OFF`) 실패했을 때 자가대국만 여러 프로세스로 둔다. 이것도 실패하면 스레드로 둔다 |
+| `mp_eval.py` | 미니맥스 상대 평가를 여러 프로세스로 (실패하면 스레드로) |
 | `fast_board.py` | 판 크기(`run_config`에서), 승리 판정, 파일 이름 접미사 `FILE_SUFFIX` (`_11x11`) |
 | `board_encoding.py` | 판을 신경망 입력 평면 5장으로 바꾸기 (내 돌, 상대 돌, 빈칸, 내·상대 포크 칸), 학습 표본의 8가지 대칭 (`augment_sample`) |
 | `nets.py` | 신경망 `GomokuNetV1`, `GomokuNetV2` (SE 블록 + GroupNorm), `GomokuNetV3` (V2 + 생존 헤드, NAPS가 쓰는 구조). v3 실행의 `NetV3`도 이것을 바탕으로 한다 |

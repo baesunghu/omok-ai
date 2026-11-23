@@ -140,7 +140,7 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
     best_model's calls are never pooled or cached together. Behavior-
     preserving for game OUTCOMES (see evaluate_vs_deterministic docstring
     for why); only wall-clock time changes.
-    runner (2026-09-27): optional selfplay_mp_unified task runner -- plays
+    runner (2026-09-27): optional selfplay_pool task runner -- plays
     the 20 gate games in the persistent multi-process pool (the two models
     under separate eval tags/caches, same isolation as the two
     PooledEvaluators below); any failure falls back to the threaded path.

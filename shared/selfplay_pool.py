@@ -1,11 +1,11 @@
 """
-selfplay_mp_unified (2026-09-26)
+selfplay_pool (2026-09-26)
 ================================
 One persistent multi-process pool that plays ALL of an epoch's training
 games at once -- self-play (including curriculum/opening starts),
 vs-Deterministic and vs-League -- instead of three back-to-back phases.
 
-Built from selfplay_mp.py (kept unchanged as the fallback path). Why:
+Built from selfplay_pool_fallback.py (kept unchanged as the fallback path). Why:
 
 * The old sequence ran self-play (multi-process), then vs-Det (threaded),
   then vs-League (threaded). Each phase ends only when its slowest game
@@ -17,7 +17,7 @@ Built from selfplay_mp.py (kept unchanged as the fallback path). Why:
   processes pull from (longest games first), so workers stay busy until
   the queue drains and the GPU coordinator keeps getting full batches.
 
-What changed relative to selfplay_mp.py
+What changed relative to selfplay_pool_fallback.py
 ---------------------------------------
 * Workers accept three task kinds ('self', 'vsdet', 'league') and call the
   UNMODIFIED production game functions for each (same principle as before:
@@ -34,7 +34,7 @@ What changed relative to selfplay_mp.py
   1.5 vs-Det / 1.25 vs-League, survival label for self-play only) and in
   the same order (self-play, then vs-Det, then vs-League).
 
-Safety (same model as selfplay_mp.py)
+Safety (same model as selfplay_pool_fallback.py)
 -------------------------------------
 Any failure (worker death, coordinator/GPU error, IPC error, stall) tears
 the pool down and the epoch is re-run through `fallback()` -- the caller's
@@ -44,14 +44,11 @@ Kill switch mid-run: create PROD_DIR\\MP_UNIFIED_OFF (checked each epoch).
 """
 import atexit
 import multiprocessing as mp
-import multiprocessing.connection as mp_connection
 import os
 import queue as pyqueue
 import sys
-import threading
 import time
 
-import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
 from omok_paths import run_dir  # noqa: E402
@@ -62,38 +59,23 @@ if PROD_DIR not in sys.path:
 
 PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "naps_trainer")
 
-import torch  # noqa: E402
-from board_encoding import preferred_memory_format  # noqa: E402
-from nets import SURVIVAL_CAP  # noqa: E402
 from fast_board import BOARD_SIZE  # noqa: E402
+from run_config import CPP_SELFPLAY  # noqa: E402
+from selfplay_pool_tasks import (  # noqa: E402
+    TAG_BEST, TAG_GEN, TAG_LEAGUE, TAG_TRAIN, _aggregate_league,
+    _aggregate_selfplay, _aggregate_vsdet, _run_task,
+)
+from selfplay_pool_evaluator import (  # noqa: E402
+    DEFAULT_MAX_WAIT, DEFAULT_TARGET_BATCH, TaggedPipePooledEvaluator, _TaggedPipeEvalProxy,
+)
 
-NUM_CELLS = BOARD_SIZE * BOARD_SIZE
-
-from run_config import POOLED_TARGET_BATCH, CPP_SELFPLAY  # noqa: E402
-DEFAULT_TARGET_BATCH = POOLED_TARGET_BATCH   # 11x11_v2: 64 with 32-leaf requests; other runs 24
-DEFAULT_MAX_WAIT = 0.015
 DEFAULT_STALL_TIMEOUT = 180.0
 MAX_STRIKES = 3
 
-_EVAL_ERROR_TAG = "__MP_UNIFIED_EVAL_ERROR__"
 KILL_SWITCH_FILE = os.path.join(PROD_DIR, "MP_UNIFIED_OFF")
 
-TAG_GEN = "gen"
-TAG_LEAGUE = "league"
-# refresh/gate epochs -- the training model being mined with /
-# gated, and the tracked best checkpoint it is gated against.
-TAG_TRAIN = "train"
-TAG_BEST = "best"
 
-# Sample weights -- must match the production aggregation in
-# naps_trainer (generate_mcts_self_play_data /
-# generate_mcts_vs_deterministic_data / generate_mcts_vs_league_data).
-SELFPLAY_MOVER_WON_WEIGHT = 1.15
-VSDET_WEIGHT = 1.5
-LEAGUE_WEIGHT = 1.25
-
-
-# The older selfplay_mp switch (PROD_DIR\MP_SELFPLAY_OFF / MP_SELFPLAY_DISABLE)
+# The older selfplay_pool_fallback switch (PROD_DIR\MP_SELFPLAY_OFF / MP_SELFPLAY_DISABLE)
 # is honored here too, so the documented "stop multi-process generation"
 # switch keeps working now that this module owns generation.
 _OLD_KILL_SWITCH_FILE = os.path.join(PROD_DIR, "MP_SELFPLAY_OFF")
@@ -109,107 +91,6 @@ def _enabled():
     if os.environ.get("MP_SELFPLAY_DISABLE", "").strip() in _TRUTHY:
         return False
     return os.environ.get("MP_UNIFIED_DISABLE", "").strip() not in _TRUTHY
-
-
-# ============================================================
-# Worker side
-# ============================================================
-class _TaggedPipeEvalProxy:
-    """Duck-types PooledEvaluator.submit(input_arrays) -> (probs, values).
-    Several proxies (one per tag) share the worker's single pipe; a worker
-    plays one game at a time and each submit blocks for its reply, so
-    requests on the pipe never interleave."""
-    __slots__ = ("conn", "tag")
-
-    def __init__(self, conn, tag):
-        self.conn = conn
-        self.tag = tag
-
-    def submit(self, input_arrays):
-        n = len(input_arrays)
-        if n == 0:
-            return np.zeros((0, NUM_CELLS), dtype=np.float64), np.zeros((0,), dtype=np.float64)
-        self.conn.send((self.tag, np.stack(input_arrays)))
-        probs, values = self.conn.recv()
-        if isinstance(probs, str) and probs == _EVAL_ERROR_TAG:
-            raise RuntimeError(f"MP unified evaluator failed: {values}")
-        return probs, values
-
-
-_WORKER_TABLES = {}
-
-
-def _tactical_tables(prod):
-    """Per-worker cache of the (pure, deterministic) tactical window/fork
-    geometry tables used by the hard-example classifier."""
-    if not _WORKER_TABLES:
-        _WORKER_TABLES["windows"] = prod._tactical_windows()
-        _WORKER_TABLES["forks"] = prod._fork_geometries()
-    return _WORKER_TABLES["windows"], _WORKER_TABLES["forks"]
-
-
-def _run_task(prod, kind, spec, cfg, proxy, cache):
-    """proxy(tag) / cache(tag): this worker's eval proxy and per-call eval
-    cache for a model tag."""
-    if kind in ("self", "vsdet", "league"):
-        common = dict(
-            boosted_sims=cfg["boosted_sims"], boost_threshold=cfg["boost_threshold"],
-            temperature_moves=cfg["temperature_moves"], dirichlet_alpha=cfg["dirichlet_alpha"],
-            noise_weight=cfg["noise_weight"], c_puct=cfg["c_puct"], eval_cache=cache(TAG_GEN),
-            boost_when_narrow=cfg["boost_when_narrow"], pooled_evaluator=proxy(TAG_GEN),
-            full_search_prob=cfg["full_search_prob"], fast_sims=cfg["fast_sims"],
-        )
-        if kind == "self":
-            start_board, start_player = spec
-            history, outcome, ply_indices, total_plies = prod._play_one_mcts_game(
-                None, None, cfg["num_simulations"], start_board=start_board, start_player=start_player,
-                return_ply_info=True, max_plies=cfg.get("max_plies"), **common)
-            return (history, outcome, ply_indices, total_plies)
-        if kind == "vsdet":
-            mcts_plays_x, opening, depth = spec
-            return prod._play_one_mcts_vs_deterministic_game(
-                None, None, cfg["num_simulations"], mcts_plays_x, opening=opening, det_max_depth=depth, **common)
-        mcts_plays_x, opening = spec[0], spec[1]
-        ltag = spec[2] if len(spec) > 2 else TAG_LEAGUE  # One tag per league opponent
-        return prod._play_one_mcts_vs_league_game(
-            None, None, None, cfg["num_simulations"], mcts_plays_x, opening=opening,
-            league_pooled_evaluator=proxy(ltag), league_eval_cache=cache(ltag),
-            max_plies=cfg.get("max_plies"), **common)
-
-    # ---- refresh epoch: mining games (+ their hard-example classification,
-    # which is pure-Python CPU work -- ~0.4 s per model ply -- and so is run
-    # here in parallel instead of serially in the trainer afterwards).
-    if kind in ("mine_self", "mine_vsdet", "mine_league"):
-        if kind == "mine_self":
-            (sims,) = spec
-            plies, outcome = prod._mine_one_selfplay_game(
-                None, None, sims, pooled_evaluator=proxy(TAG_TRAIN), eval_cache=cache(TAG_TRAIN))
-        elif kind == "mine_vsdet":
-            sims, mcts_plays_x, depth = spec
-            plies, outcome = prod._mine_one_vsdet_game(
-                None, None, sims, mcts_plays_x, depth, pooled_evaluator=proxy(TAG_TRAIN), eval_cache=cache(TAG_TRAIN))
-        else:
-            sims, mcts_plays_x = spec
-            plies, outcome = prod._mine_one_vsleague_game(
-                None, None, None, sims, mcts_plays_x,
-                pooled_evaluator=proxy(TAG_TRAIN), eval_cache=cache(TAG_TRAIN),
-                league_pooled_evaluator=proxy(TAG_LEAGUE), league_eval_cache=cache(TAG_LEAGUE))
-        windows, forks = _tactical_tables(prod)
-        flagged = prod._classify_hard_examples([(plies, outcome)], windows, forks)
-        return (plies, outcome, flagged)
-
-    if kind == "relabel":
-        item, sims = spec
-        return prod._relabel_one(item, None, None, sims, pooled_evaluator=proxy(TAG_TRAIN), eval_cache=cache(TAG_TRAIN))
-
-    if kind == "gate":
-        opening, a_plays_x = spec
-        return prod._play_gate_match_game(
-            None, None, None, cfg["num_simulations"], cfg["boosted_sims"], cfg["boost_threshold"],
-            cfg["boost_when_narrow"], cfg["c_puct"], a_plays_x, opening,
-            cache(TAG_TRAIN), cache(TAG_BEST), proxy(TAG_TRAIN), proxy(TAG_BEST))
-
-    raise ValueError(f"unknown task kind {kind!r}")
 
 
 def _worker_main(worker_id, task_queue, result_queue, eval_conn, ready_queue, error_queue):
@@ -264,191 +145,6 @@ def _worker_main(worker_id, task_queue, result_queue, eval_conn, ready_queue, er
             eval_conn.close()
         except Exception:  # noqa: BLE001
             pass
-
-
-# ============================================================
-# Coordinator: background thread in the main process, owns the GPU
-# ============================================================
-class TaggedPipePooledEvaluator:
-    """PipePooledEvaluator (selfplay_mp.py) with per-request model tags.
-    Same accumulate-until-target_batch-or-silence-gap flush policy; a flush
-    runs one forward pass per tag present in it."""
-
-    def __init__(self, models, device, parent_conns,
-                 target_batch=DEFAULT_TARGET_BATCH, max_wait=DEFAULT_MAX_WAIT):
-        self.models = dict(models)
-        self.device = device
-        self.parent_conns = list(parent_conns)
-        self.target_batch = target_batch
-        self.max_wait = max_wait
-        self._stop = threading.Event()
-        self._lock = threading.Lock()
-        self._flush_count = 0
-        self._total_samples = 0
-        self._max_flush = 0
-        self._at_target_count = 0
-        self._tag_forwards = {}  # tag -> [forward passes, boards]
-        self._error = None
-        self._thread = threading.Thread(target=self._run, daemon=True, name="mp-unified-gpu-coordinator")
-        self._thread.start()
-
-    @property
-    def flush_count(self):
-        return self._flush_count
-
-    def check_error(self):
-        if self._error is not None:
-            return self._error
-        if not self._thread.is_alive() and not self._stop.is_set():
-            return "evaluator coordinator thread exited unexpectedly"
-        return None
-
-    def stats_snapshot(self):
-        return (self._flush_count, self._total_samples, self._at_target_count,
-                {k: list(v) for k, v in self._tag_forwards.items()})
-
-    def stats_since(self, snap):
-        """Per-call batching stats (deltas since `snap`), with the
-        per-model forward-pass sizes reported separately -- a flush that
-        mixes tags runs one forward pass per tag."""
-        f0, s0, a0, t0 = snap
-        flushes = self._flush_count - f0
-        if flushes <= 0:
-            return "no flushes"
-        boards = self._total_samples - s0
-        at_target = self._at_target_count - a0
-        per_tag = []
-        for tag, (n, b) in sorted(self._tag_forwards.items()):
-            n0, b0 = t0.get(tag, [0, 0])
-            if n - n0 > 0:
-                per_tag.append(f"{tag} {n - n0} fwd avg {(b - b0) / (n - n0):.1f}")
-        return (f"{flushes} flushes, avg {boards / flushes:.1f} boards/flush, "
-                f"{at_target}/{flushes} ({100.0 * at_target / flushes:.0f}%) hit target_batch={self.target_batch}"
-                + (f" | {', '.join(per_tag)}" if per_tag else ""))
-
-    def set_models(self, models, device):
-        """Swap the tag -> model map (per call: gen model + this epoch's
-        league opponent). Workers hold no weights, so nothing to resync."""
-        with self._lock:
-            self.models = dict(models)
-            self.device = device
-
-    def _run(self):
-        pending = []  # list of (conn, tag, arr)
-        pending_total = 0
-        live_conns = list(self.parent_conns)
-        try:
-            while not self._stop.is_set():
-                if not live_conns:
-                    time.sleep(0.1)
-                    continue
-                wait_timeout = self.max_wait if pending else 0.5
-                try:
-                    ready = mp_connection.wait(live_conns, timeout=wait_timeout)
-                except (OSError, ValueError):
-                    ready = []
-                if self._stop.is_set():
-                    break
-                if not ready:
-                    if pending:
-                        self._flush(pending)
-                        pending, pending_total = [], 0
-                    continue
-                for conn in ready:
-                    try:
-                        if conn.closed:
-                            live_conns = [c for c in live_conns if c is not conn]
-                            continue
-                        msg = conn.recv()
-                    except (EOFError, OSError, BrokenPipeError):
-                        live_conns = [c for c in live_conns if c is not conn]
-                        continue
-                    if isinstance(msg, tuple) and len(msg) == 2 and isinstance(msg[0], str):
-                        tag, arr = msg
-                    else:  # untagged -> generation model
-                        tag, arr = TAG_GEN, msg
-                    pending.append((conn, tag, arr))
-                    pending_total += arr.shape[0]
-                if pending_total >= self.target_batch:
-                    self._flush(pending)
-                    pending, pending_total = [], 0
-            if pending:
-                self._flush(pending)
-        except Exception as e:  # noqa: BLE001
-            self._error = f"coordinator loop crashed: {e!r}"
-            self._wake_with_error([c for c, _, _ in pending], self._error)
-
-    def _wake_with_error(self, conns, msg):
-        for conn in conns:
-            try:
-                conn.send((_EVAL_ERROR_TAG, msg))
-            except Exception:  # noqa: BLE001
-                pass
-
-    def _forward(self, model, device, arrays):
-        batch_np = np.concatenate(arrays, axis=0) if len(arrays) > 1 else np.asarray(arrays[0])
-        batch = torch.from_numpy(batch_np).float().to(device)
-        batch = batch.contiguous(memory_format=preferred_memory_format(device))
-        with torch.inference_mode():
-            policy_logits, value_tensor = model(batch)
-        probs = torch.exp(policy_logits).cpu().numpy().astype(np.float64)
-        if probs.ndim == 1:
-            probs = probs.reshape(1, -1)
-        values = value_tensor.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
-        return probs, values
-
-    def _flush(self, pending):
-        with self._lock:
-            models, device = dict(self.models), self.device
-        device = torch.device(device) if not isinstance(device, torch.device) else device
-
-        by_tag = {}
-        for item in pending:
-            by_tag.setdefault(item[1], []).append(item)
-
-        n_total = 0
-        for tag, items in by_tag.items():
-            conns = [c for c, _, _ in items]
-            arrays = [a for _, _, a in items]
-            model = models.get(tag)
-            if model is None:
-                msg = f"no model registered for eval tag {tag!r}"
-                if self._error is None:
-                    self._error = msg
-                self._wake_with_error(conns, msg)
-                continue
-            try:
-                probs, values = self._forward(model, device, arrays)
-            except Exception as e:  # noqa: BLE001  (realistic case: CUDA OOM)
-                msg = f"GPU forward pass failed ({tag}): {e!r}"
-                if self._error is None:
-                    self._error = msg
-                self._wake_with_error(conns, msg)
-                continue
-            offset = 0
-            for conn, arr in zip(conns, arrays):
-                k = arr.shape[0]
-                try:
-                    conn.send((probs[offset:offset + k], values[offset:offset + k]))
-                except (BrokenPipeError, OSError):
-                    pass
-                offset += k
-            n_total += offset
-            tf = self._tag_forwards.setdefault(tag, [0, 0])
-            tf[0] += 1
-            tf[1] += offset
-
-        if n_total:
-            self._flush_count += 1
-            self._total_samples += n_total
-            if n_total > self._max_flush:
-                self._max_flush = n_total
-            if n_total >= self.target_batch:
-                self._at_target_count += 1
-
-    def stop(self):
-        self._stop.set()
-        self._thread.join(timeout=2.0)
 
 
 # ============================================================
@@ -521,7 +217,7 @@ class UnifiedGamePool:
 
     def run_tasks(self, tasks, stall_timeout=DEFAULT_STALL_TIMEOUT):
         """tasks: list of (task_id, kind, spec, cfg). Returns {task_id: payload}.
-        Progress-based stall detection, as in selfplay_mp.MPGamePool."""
+        Progress-based stall detection, as in selfplay_pool_fallback.MPGamePool."""
         call_id = self._next_call_id
         self._next_call_id += 1
         for (task_id, kind, spec, cfg) in tasks:
@@ -631,8 +327,8 @@ def _ensure_pool(num_workers, models, device, target_batch, max_wait):
         # Release the old self-play-only pool if a previous fallback epoch
         # spawned it, so the two never hold 2 x num_workers processes at once.
         try:
-            import selfplay_mp
-            selfplay_mp.shutdown_pool()
+            import selfplay_pool_fallback
+            selfplay_pool_fallback.shutdown_pool()
         except Exception:  # noqa: BLE001
             pass
         _POOL = UnifiedGamePool(num_workers, models, device, target_batch, max_wait)
@@ -662,76 +358,6 @@ def _resolve_workers(max_workers):
         except ValueError:
             pass
     return max_workers or max(1, os.cpu_count() or 1)
-
-
-# ============================================================
-# Aggregation (mirrors the production generate_* functions exactly)
-# ============================================================
-def _aggregate_selfplay(results_in_order, augment_sample, mix, q_weight):
-    raw_samples = []
-    outcome_counts = {'x_win': 0, 'o_win': 0, 'draw': 0}
-    opening_rows = []
-    for history, outcome, ply_indices, total_plies in results_in_order:
-        if outcome == 1:
-            outcome_counts['x_win'] += 1
-        elif outcome == -1:
-            outcome_counts['o_win'] += 1
-        else:
-            outcome_counts['draw'] += 1
-        # Only a recorded ply 0 is the game's actual first move (PCR skips
-        # recording fast-search plies).
-        if history and ply_indices and ply_indices[0] == 0:
-            first_cell = int(np.argmax(history[0][2]))
-            opening_rows.append(first_cell // BOARD_SIZE)
-        for (board_3d, player_turn, target_policy_map, q), ply_idx in zip(history, ply_indices):
-            final_val = mix(float(outcome if player_turn == 'X' else -outcome), q, q_weight)
-            mover_won = ((outcome == 1 and player_turn == 'X') or (outcome == -1 and player_turn == 'O'))
-            sample_weight = SELFPLAY_MOVER_WON_WEIGHT if mover_won else 1.0
-            survival = (None if total_plies is None  # capped game: remaining length unknown
-                        else min(total_plies - ply_idx, SURVIVAL_CAP) / SURVIVAL_CAP)
-            for (aug_b, aug_p) in augment_sample(board_3d, target_policy_map):
-                raw_samples.append((aug_b, aug_p, final_val, sample_weight, survival))
-    return raw_samples, outcome_counts, opening_rows
-
-
-def _aggregate_vsdet(results_in_order, depths, augment_sample, mix, q_weight):
-    raw_samples = []
-    outcome_counts = {'mcts_win': 0, 'det_win': 0, 'draw': 0}
-    by_depth = {}
-    for (history, outcome, mcts_result), depth in zip(results_in_order, depths):
-        tally = by_depth.setdefault(depth, {'w': 0, 'l': 0, 'd': 0})
-        if mcts_result == 'mcts':
-            outcome_counts['mcts_win'] += 1
-            tally['w'] += 1
-        elif mcts_result == 'det':
-            outcome_counts['det_win'] += 1
-            tally['l'] += 1
-        else:
-            outcome_counts['draw'] += 1
-            tally['d'] += 1
-        for (board_3d, player_turn, target_policy_map, q) in history:
-            final_val = mix(float(outcome if player_turn == 'X' else -outcome), q, q_weight)
-            for (aug_b, aug_p) in augment_sample(board_3d, target_policy_map):
-                raw_samples.append((aug_b, aug_p, final_val, VSDET_WEIGHT))
-    outcome_counts['by_depth'] = by_depth
-    return raw_samples, outcome_counts
-
-
-def _aggregate_league(results_in_order, augment_sample, mix, q_weight):
-    raw_samples = []
-    outcome_counts = {'mcts_win': 0, 'league_win': 0, 'draw': 0}
-    for (history, outcome, mcts_result) in results_in_order:
-        if mcts_result == 'mcts':
-            outcome_counts['mcts_win'] += 1
-        elif mcts_result == 'league':
-            outcome_counts['league_win'] += 1
-        else:
-            outcome_counts['draw'] += 1
-        for (board_3d, player_turn, target_policy_map, q) in history:
-            final_val = mix(float(outcome if player_turn == 'X' else -outcome), q, q_weight)
-            for (aug_b, aug_p) in augment_sample(board_3d, target_policy_map):
-                raw_samples.append((aug_b, aug_p, final_val, LEAGUE_WEIGHT))
-    return raw_samples, outcome_counts
 
 
 # ============================================================

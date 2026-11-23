@@ -3,7 +3,7 @@ Started by shared/train_run.py (each run folder's _restart_train.py). Until 2026
 everything now in naps_common / naps_openings / naps_selfplay / naps_gate / naps_vsdet / naps_league /
 naps_tactics / naps_hard_examples.
 """
-# The self-play pools (selfplay_mp.py, selfplay_mp_unified.py) import this module by name and use
+# The self-play pools (selfplay_pool_fallback.py, selfplay_pool.py) import this module by name and use
 # prod._play_one_mcts_game, prod._OPENING_SQUARES, ... -- those names are imported here for them too.
 import numpy as np
 import os
@@ -16,8 +16,8 @@ import torch.optim as optim
 from run_config import EVAL_BATCH, LR_MIN, LR_PEAK, POOLED_TARGET_BATCH
 from nets import GomokuNetV3 as GomokuNet
 from mcts_cpp import PooledEvaluator
-from selfplay_mp_unified import generate_epoch_games_unified, get_task_runner
-from selfplay_mp import generate_mcts_self_play_data_mp
+from selfplay_pool import generate_epoch_games_unified, get_task_runner
+from selfplay_pool_fallback import generate_mcts_self_play_data_mp
 from board_encoding import preferred_memory_format
 from naps_common import (
     BOOST_RAMP_CEILING, BOOST_RAMP_STEP, LR_COOLDOWN_EPOCHS, SIM_RAMP_CEILING, SIM_RAMP_STEP, STAGNATION_RAMP_LIMIT,
@@ -31,9 +31,8 @@ from naps_vsdet import evaluate_vs_deterministic, format_by_depth, generate_mcts
 from naps_league import (
     LEAGUE_NUM_OPPONENTS, _pick_league_opponent, _pick_league_opponents_multi, generate_mcts_vs_league_data,
 )
-from naps_hard_examples import (
-    _get_fork_mistake_samples, _get_hard_example_samples, _get_open_three_injection_samples, refresh_mined_tactical_pool,
-)
+from naps_hard_examples import _get_fork_mistake_samples, _get_hard_example_samples
+from naps_tactical_refresh import _get_open_three_injection_samples, refresh_mined_tactical_pool
 # for the self-play pools, which use them as prod.<name> (see the note at the top)
 from naps_common import (  # noqa: F401
     mixed_value_target,
@@ -56,9 +55,8 @@ from naps_league import (  # noqa: F401
 from naps_tactics import (  # noqa: F401
     _fork_geometries,
 )
-from naps_hard_examples import (  # noqa: F401
-    _classify_hard_examples, _mine_one_selfplay_game, _mine_one_vsdet_game, _mine_one_vsleague_game,
-    _relabel_one,
+from naps_hard_examples import (
+    _classify_hard_examples, _mine_one_selfplay_game, _mine_one_vsdet_game, _mine_one_vsleague_game, _relabel_one,
 )
 
 
@@ -106,7 +104,7 @@ def train_mcts_alpha_zero(
     # previous behavior, where one value was passed to all three).
     full_search_prob_other=None,
     # Play self-play + vs-Det + vs-League games in ONE
-    # multi-process pool (selfplay_mp_unified) instead of three sequential
+    # multi-process pool (selfplay_pool) instead of three sequential
     # phases. False = the previous sequential path (which is also the
     # automatic fallback whenever the unified pool fails).
     use_unified_game_pool=False,

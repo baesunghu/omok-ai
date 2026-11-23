@@ -1,5 +1,5 @@
 """One self-play game with the C++ MCTS (_play_one_mcts_game) and a batch of them (generate_mcts_self_play_data).
-The multiprocess pools (selfplay_mp.py, selfplay_mp_unified.py) call _play_one_mcts_game directly.
+The multiprocess pools (selfplay_pool_fallback.py, selfplay_pool.py) call _play_one_mcts_game directly.
 """
 import numpy as np
 import os
