@@ -1,9 +1,4 @@
-import os
-import sys
-if __name__ == "__main__":   # run directly from a run folder: work there, its fast_board.py first on sys.path
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from omok_paths import enter_run
-    enter_run()
+# (until 2026-11 this file was alphazero_mcts_make_lrfix.py)
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,15 +9,28 @@ import random
 import os
 import pickle
 import re
+import time
 from datetime import datetime
 
-from alphago_lee import AlphaZeroTicTacToe, board_to_input_tensor, board_to_input_array, preferred_memory_format
-from alphazero_mcts import MCTS, BOARD_SIZE, NUM_CELLS, fast_check_win, fast_check_draw, PooledEvaluator
-from alphago_lee_make import augment_sample, logger
+from board_encoding import board_to_input_tensor, board_to_input_array, preferred_memory_format
+# 2026-09-22 Gen12: swapped to the V2 architecture (GroupNorm+SE, see
+# nets.py) -- aliased as GomokuNet so every
+# existing instantiation site below (model/best_model/league_model/
+# gen_model) picks it up without individual edits. NOT weight-compatible
+# with the old nets.GomokuNetV1 checkpoints -- this run
+# starts from the freshly-trained gen12_full_FINAL.pth, not an old one.
+# 2026-09-25: V3 = V2 + auxiliary survival (remaining-plies) head, see
+# nets.py. Loads V2 checkpoints; forward() unchanged.
+from nets import GomokuNetV3 as GomokuNet, SURVIVAL_CAP
+SURVIVAL_LOSS_WEIGHT = 0.25
+from mcts_cpp import MCTS, BOARD_SIZE, NUM_CELLS, fast_check_win, fast_check_draw, PooledEvaluator
+from legacy_trainer_basic import augment_sample, logger
 from fast_board import WIN_LENGTH
-import determinisic_play
+import deterministic_play
+from selfplay_mp import generate_mcts_self_play_data_mp
+from selfplay_mp_unified import generate_epoch_games_unified, get_task_runner
 
-model = AlphaZeroTicTacToe()
+model = GomokuNet()
 
 # Keep 3x3 and other board sizes writing to separate checkpoint/log files so
 # concurrent runs (e.g. a 3x3 job still training while a 5x5 job starts)
@@ -69,7 +77,10 @@ def compute_policy_entropy(policies_np):
 # around 1.59-1.61 instead of trending down. A persisted replay buffer fixes
 # that, and also survives across separate runs of this script.
 REPLAY_BUFFER_PATH = f"model/mcts_replay_buffer{_SUFFIX}.pkl"
-REPLAY_BUFFER_MAX_SIZE = 24_000
+# 2026-10-08 (user): 24,000 -> 196,608 (~40 epochs of data instead of ~5). Training
+# no longer sweeps the whole buffer: each epoch draws TRAIN_SAMPLES_PER_EPOCH at random.
+REPLAY_BUFFER_MAX_SIZE = 196_608
+TRAIN_SAMPLES_PER_EPOCH = 24_000
 # History: was 50_000, cut to 8_000 -- ~66-generation-stale MCTS targets
 # plateaued Policy Loss (see the 50k->8k comment this replaced, copied from
 # the 5x5 sibling file). 2026-08-29: raised 8_000->12_000, mirroring the
@@ -151,6 +162,25 @@ def sims_for_state(num_empty, base_sims, boosted_sims=None, boost_threshold=0, b
     return sims
 
 
+def mixed_value_target(z, q, q_weight):
+    """Value training target = (1 - q_weight) * z + q_weight * q (2026-09-27).
+
+    z is the game result from the mover's side (+1/0/-1); q is the root
+    value of the full search that produced this ply's policy target, from
+    the same mover's side (the C++ engine's root_value). Pure z carries one
+    noisy bit per game: in 11x11 freestyle the side on defense usually loses
+    whatever the quality of an individual defensive move, so z alone kept
+    re-teaching the value head "defending = lost" even after the value head
+    was reset (pessimism probe: raw -0.42 vs empirical -0.09 at ep435, while
+    the search value was already close, -0.14). Mixing in q (Oracle
+    "Lessons from AlphaZero" pt.4 z/q averaging; Lc0 q_ratio) lowers that
+    variance with the search's own look-ahead. q=None (e.g. plies searched
+    by a league opponent) or q_weight<=0 falls back to pure z."""
+    if q is None or q_weight <= 0.0:
+        return z
+    return (1.0 - q_weight) * z + q_weight * float(q)
+
+
 def annealed_value(epoch, anneal_epochs, start_value, end_value):
     """Linearly anneals start_value -> end_value over anneal_epochs, then
     holds at end_value. anneal_epochs<=0 disables annealing (always
@@ -168,11 +198,19 @@ def annealed_value(epoch, anneal_epochs, start_value, end_value):
 def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost_threshold=0,
                          temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25, c_puct=1.414,
                          eval_cache=None, boost_when_narrow=False, start_board=None, start_player=None,
-                         pooled_evaluator=None, full_search_prob=1.0, fast_sims=None):
+                         pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
+                         return_ply_info=False, max_plies=None):
     """
     Plays a single MCTS self-play game to completion and returns
     (history, outcome), where history is a list of
     (board_3d, player_turn, target_policy_map) tuples, pre-augmentation.
+    With return_ply_info=True it returns (history, outcome, ply_indices,
+    total_plies) instead: ply_indices[k] is the ply number (0-based, counted
+    from this game's start position) at which history[k] was recorded, and
+    total_plies is how many plies the game actually lasted. Needed for the
+    V3 survival target once Playout Cap Randomization skips recording
+    fast-search plies -- len(history) - k then undercounts the true
+    plies-to-end.
 
     Builds its own MCTS() instance, but eval_cache (when passed) is shared
     across every game and move in the calling epoch -- safe to call
@@ -197,8 +235,18 @@ def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost
     games/more full searches elsewhere. full_search_prob=1.0 (default)
     disables this -- every move is a full search and recorded, matching
     prior behavior exactly.
+
+    2026-09-26 PCR fixes (no effect at full_search_prob=1.0):
+      * temperature sampling is keyed on the number of plies actually played
+        (`ply`), not len(history) -- with PCR, len(history) only counts the
+        recorded (full-search) plies, which would have stretched the
+        temperature_moves exploratory window over ~1/full_search_prob times
+        as many real moves.
+      * fast searches run without Dirichlet noise (KataGo: fast searches
+        exist to play strong moves cheaply, not to explore -- they are never
+        recorded as training targets).
     """
-    mcts = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     if start_board is not None:
         board = [row[:] for row in start_board]
         current_player = start_player
@@ -206,9 +254,20 @@ def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost
         board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
         current_player = random.choice(['X', 'O'])
     history = []
+    ply_indices = []
+    ply = 0
     outcome = 0
+    # 2026-09-28: max_plies caps the game length (plies counted from this
+    # game's start position). A capped game is scored a draw, and its
+    # survival labels are dropped (total_plies returned as None) since the
+    # real remaining length is unknown.
+    truncated = False
 
     while True:
+        if max_plies and ply >= max_plies:
+            outcome = 0
+            truncated = True
+            break
         if fast_check_win(board, 'X'):
             outcome = 1
             break
@@ -226,8 +285,9 @@ def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost
         else:
             sims_this_move = fast_sims or max(1, num_simulations // 6)
 
-        # Run MCTS search with Dirichlet noise
-        root = mcts.search(board, current_player, model, device, num_simulations=sims_this_move, add_noise=True,
+        # Run MCTS search (Dirichlet noise on full searches only -- see docstring)
+        root = mcts.search(board, current_player, model, device, num_simulations=sims_this_move,
+                            add_noise=is_full_search,
                             dirichlet_alpha=dirichlet_alpha, noise_weight=noise_weight)
 
         if not root.children:
@@ -241,7 +301,8 @@ def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost
             target_policy_map[r, c] = child.n_visits / total_visits if total_visits > 0 else 0.0
 
         # Action selection: Temperature sampling for early moves, greedy for late moves
-        move_count = len(history)
+        # (keyed on plies actually played -- equals len(history) at full_search_prob=1.0)
+        move_count = ply
         actions = list(root.children.keys())
         visits = np.array([root.children[a].n_visits for a in actions], dtype=np.float32)
 
@@ -256,11 +317,17 @@ def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost
         if is_full_search:
             # Store board state (3, BOARD_SIZE, BOARD_SIZE)
             board_3d = board_to_input_array(board, current_player)
-            history.append((board_3d, current_player, target_policy_map))
+            # 4th element: this search's root value from the mover's side
+            # (for the z/q value-target mix, see mixed_value_target).
+            history.append((board_3d, current_player, target_policy_map, float(root.value())))
+            ply_indices.append(ply)
 
         board[r][c] = current_player
         current_player = 'O' if current_player == 'X' else 'X'
+        ply += 1
 
+    if return_ply_info:
+        return history, outcome, ply_indices, (None if truncated else ply)
     return history, outcome
 
 
@@ -269,7 +336,8 @@ def generate_mcts_self_play_data(model, device, num_games=10, num_simulations=40
                                   temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25, c_puct=1.414,
                                   eval_cache=None, boost_when_narrow=False, num_curriculum_games=0,
                                   num_opening_games=0,
-                                  pooled_evaluator=None, full_search_prob=1.0, fast_sims=None):
+                                  pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
+                                  value_q_weight=0.0, max_plies=None):
     """
     Generates MCTS Self-Play games using full MCTS search and Dirichlet noise.
 
@@ -304,16 +372,16 @@ def generate_mcts_self_play_data(model, device, num_games=10, num_simulations=40
             futures.append(pool.submit(_play_one_mcts_game, model, device, num_simulations, boosted_sims,
                                         boost_threshold, temperature_moves, dirichlet_alpha, noise_weight, c_puct,
                                         eval_cache, boost_when_narrow, start_board, start_player, pooled_evaluator,
-                                        full_search_prob, fast_sims))
+                                        full_search_prob, fast_sims, True, max_plies))
         for future in futures:
-            history, outcome = future.result()
+            history, outcome, ply_indices, total_plies = future.result()
             if outcome == 1:
                 outcome_counts['x_win'] += 1
             elif outcome == -1:
                 outcome_counts['o_win'] += 1
             else:
                 outcome_counts['draw'] += 1
-            if history:
+            if history and ply_indices and ply_indices[0] == 0:
                 board_3d0 = history[0][0]
                 # board_3d0's plane 0 is "current player's stones" -- at
                 # history[0] no move has landed yet, so this is always empty;
@@ -323,19 +391,23 @@ def generate_mcts_self_play_data(model, device, num_games=10, num_simulations=40
                 # argmax cell is a fine proxy for "where game i opened").
                 first_cell = int(np.argmax(history[0][2]))
                 opening_rows.append(first_cell // BOARD_SIZE)
-            # Assign outcomes and apply 8x Data Augmentation
-            for (board_3d, player_turn, target_policy_map) in history:
+            # Assign outcomes and apply 8x Data Augmentation. Survival uses the
+            # real ply index (PCR skips recording fast-search plies, so the
+            # history index alone would undercount plies-to-end).
+            for (board_3d, player_turn, target_policy_map, q), ply_idx in zip(history, ply_indices):
+                survival = (None if total_plies is None
+                            else min(total_plies - ply_idx, SURVIVAL_CAP) / SURVIVAL_CAP)
                 # Full +-1.0 scale (was 0.5 until 2026-09-10). The halved scale
                 # shrank Q's dynamic range against an unchanged c_puct, which
                 # doubles the effective exploration constant and quadruples the
                 # simulations needed for visit counts to overcome the prior. It
                 # also fought tactical_refresh's own 0.97 value target.
-                final_val = float(outcome if player_turn == 'X' else -outcome)
+                final_val = mixed_value_target(float(outcome if player_turn == 'X' else -outcome), q, value_q_weight)
                 mover_won = (outcome == 1 and player_turn == 'X') or (outcome == -1 and player_turn == 'O')
                 sample_weight = 1.15 if mover_won else 1.0
                 aug_samples = augment_sample(board_3d, target_policy_map)
                 for (aug_b, aug_p) in aug_samples:
-                    raw_samples.append((aug_b, aug_p, final_val, sample_weight))
+                    raw_samples.append((aug_b, aug_p, final_val, sample_weight, survival))
 
     print(f"Generated {len(raw_samples)} augmented MCTS training samples. "
           f"Outcomes: X {outcome_counts['x_win']} / O {outcome_counts['o_win']} / Draw {outcome_counts['draw']} "
@@ -403,7 +475,34 @@ random.Random(1109).shuffle(_ALL_CELLS)
 # monitoring/deployment (e.g. play_vs_ai.py) independent of whatever the
 # latest raw weights happen to be doing.
 BEST_CHECKPOINT_PATH = f"model/best_mcts{_SUFFIX}.pth"
-GATE_PROMOTION_THRESHOLD = 0.55  # AlphaGo Zero's own threshold; draws count as 0.5
+GATE_PROMOTION_THRESHOLD = 0.35  # 2026-10-13 (user): 0.25 -> 0.35 (6-8-6, an even result, scored 0.275 and promoted ep1005). 2026-10-12: 0.50 -> 0.25. 2026-10-11: was 0.55 (AlphaGo Zero, draws 0.5)
+# 2026-10-11 (user): "a model that does not lose" -- a loss now costs points:
+# score = (wins + 0.5*draws - GATE_LOSS_PENALTY*losses) / n, promoted only if score > 0.50 (strictly).
+# With 0.75 that is exactly "wins > 2.5 x losses"; draws alone can never promote (all draws = 0.50).
+# Per-run settings (run_config.py): gate loss penalty (11x11 0.75, 15x15 0.4), gate opening radius, LR band,
+# MCTS eval batch and pooled-evaluator batch.
+from run_config import (GATE_LOSS_PENALTY, GATE_OPENING_RADIUS, LR_PEAK, LR_MIN,  # noqa: E402
+                        EVAL_BATCH, POOLED_TARGET_BATCH)
+# 2026-10-13 (user): two-stage promotion. The gate (vs the current best only) can pick a model that is
+# weaker by the Rapfi ladder (ep1050 beat ep960 12-5-3 but measured 2,404 vs 4,432). A gate pass now only
+# makes a CANDIDATE: its weights go to model/gate_candidates/ and model/gate_candidate.json; the ladder
+# watcher measures it and promotes it (model/ladder_promote.json) only if it is not weaker than the best.
+GATE_CANDIDATE_MODE = True
+RECORD_LEAGUE_SIDE = False   # 2026-10-13 (user): see _play_one_mcts_vs_league_game
+_LAST_GATE_CANDIDATE = {"path": None}
+
+
+def _save_gate_candidate(model, score):
+    import json as _json
+    os.makedirs("model/gate_candidates", exist_ok=True)
+    tag = time.strftime("%Y%m%d_%H%M%S")
+    path = f"model/gate_candidates/cand_{tag}{_SUFFIX}.pth"
+    torch.save(model.state_dict(), path)
+    with open("model/gate_candidate.json", "w", encoding="utf-8") as f:
+        _json.dump({"ckpt": path, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "gate_score": round(score, 4),
+                    "status": "pending"}, f, indent=1)
+    _LAST_GATE_CANDIDATE["path"] = path
+    return path
 
 
 def _play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sims=None, boost_threshold=0,
@@ -420,8 +519,8 @@ def _play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sim
     a_player = 'X' if a_plays_x else 'O'
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
-    mcts_a = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache_a, pooled_evaluator=pooled_evaluator_a)
-    mcts_b = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache_b, pooled_evaluator=pooled_evaluator_b)
+    mcts_a = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache_a, pooled_evaluator=pooled_evaluator_a)
+    mcts_b = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache_b, pooled_evaluator=pooled_evaluator_b)
 
     if opening is not None:
         r0, c0 = opening
@@ -459,13 +558,16 @@ def _play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sim
 # _canonical_symmetry_openings happened to emit them (same principle as the
 # vs-Det opening fix). Trades some promotion-decision precision (10%-point
 # granularity instead of ~2.4%-point) for roughly half the gate-check cost.
-_GATE_OPENING_SQUARES = list(_OPENING_SQUARES)
+# 2026-10-13 (15x15): canonical openings include far corner squares; there the gate keeps squares within
+# Chebyshev distance GATE_OPENING_RADIUS of the centre. The 11x11 runs used every canonical square (radius None).
+_GATE_OPENING_SQUARES = [sq for sq in _OPENING_SQUARES if GATE_OPENING_RADIUS is None
+                         or max(abs(sq[0] - BOARD_SIZE // 2), abs(sq[1] - BOARD_SIZE // 2)) <= GATE_OPENING_RADIUS]
 random.Random(910).shuffle(_GATE_OPENING_SQUARES)
 _GATE_OPENING_SQUARES = _GATE_OPENING_SQUARES[:10]
 
 
 def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=None, boost_threshold=0,
-                      boost_when_narrow=False, c_puct=1.414, max_workers=None):
+                      boost_when_narrow=False, c_puct=1.414, max_workers=None, runner=None):
     """
     Plays the currently-training `model` against the tracked best checkpoint
     across all board-symmetry openings x both sides (fair games). If model's
@@ -485,6 +587,10 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
     best_model's calls are never pooled or cached together. Behavior-
     preserving for game OUTCOMES (see evaluate_vs_deterministic docstring
     for why); only wall-clock time changes.
+    runner (2026-09-27): optional selfplay_mp_unified task runner -- plays
+    the 20 gate games in the persistent multi-process pool (the two models
+    under separate eval tags/caches, same isolation as the two
+    PooledEvaluators below); any failure falls back to the threaded path.
     Returns (win_rate, draw_rate, loss_rate, promoted).
     """
     if not os.path.exists(BEST_CHECKPOINT_PATH):
@@ -492,7 +598,7 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
         gen_model.load_state_dict(model.state_dict())
         return 1.0, 0.0, 0.0, True
 
-    best_model = AlphaZeroTicTacToe()
+    best_model = GomokuNet()
     try:
         best_model.load_state_dict(torch.load(BEST_CHECKPOINT_PATH, map_location=device))
     except Exception as e:
@@ -509,12 +615,37 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
     # only (2026-08-29: same bug confirmed in the 5x5 sibling's gate check).
     model.eval()
 
+    results = None
+    if runner is not None:
+        try:
+            results = runner.gate(model, best_model, device, dict(
+                num_simulations=num_simulations, boosted_sims=boosted_sims, boost_threshold=boost_threshold,
+                boost_when_narrow=boost_when_narrow, c_puct=c_puct),
+                [(opening, latest_plays_x) for opening in _GATE_OPENING_SQUARES for latest_plays_x in (True, False)])
+        except Exception as e:  # noqa: BLE001
+            print(f"  [gate] unified-pool gate failed ({e!r}) -- threaded fallback", flush=True)
+            results = None
+    if results is not None:
+        wins = sum(1 for r in results if r == 'a')
+        draws = sum(1 for r in results if r == 'draw')
+        losses = len(results) - wins - draws
+        n = max(1, wins + draws + losses)
+        score = (wins + 0.5 * draws - GATE_LOSS_PENALTY * losses) / n
+        promoted = score > GATE_PROMOTION_THRESHOLD
+        if promoted and GATE_CANDIDATE_MODE:
+            _save_gate_candidate(model, score)
+            promoted = False
+        elif promoted:
+            torch.save(model.state_dict(), BEST_CHECKPOINT_PATH)
+            gen_model.load_state_dict(model.state_dict())
+        return wins / n, draws / n, losses / n, promoted
+
     max_workers = max_workers or max(1, min(len(_GATE_OPENING_SQUARES) * 2, os.cpu_count() or 1))
     eval_cache_model = {}
     eval_cache_best = {}
     owns_pooled = device.type == "cuda"
-    pooled_model = PooledEvaluator(model, device, target_batch=24, max_wait=0.015) if owns_pooled else None
-    pooled_best = PooledEvaluator(best_model, device, target_batch=24, max_wait=0.015) if owns_pooled else None
+    pooled_model = PooledEvaluator(model, device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) if owns_pooled else None
+    pooled_best = PooledEvaluator(best_model, device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) if owns_pooled else None
 
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -541,9 +672,12 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
             pooled_best.stop()
 
     n = max(1, wins + draws + losses)
-    score = (wins + 0.5 * draws) / n
-    promoted = score >= GATE_PROMOTION_THRESHOLD
-    if promoted:
+    score = (wins + 0.5 * draws - GATE_LOSS_PENALTY * losses) / n
+    promoted = score > GATE_PROMOTION_THRESHOLD
+    if promoted and GATE_CANDIDATE_MODE:
+        _save_gate_candidate(model, score)
+        promoted = False
+    elif promoted:
         torch.save(model.state_dict(), BEST_CHECKPOINT_PATH)
         gen_model.load_state_dict(model.state_dict())
     return wins / n, draws / n, losses / n, promoted
@@ -563,7 +697,7 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
 SIM_RAMP_PATH = f"model/sim_ramp_state{_SUFFIX}.json"
 SIM_RAMP_START = 150
 SIM_RAMP_STEP = 100
-SIM_RAMP_CEILING = 1100
+SIM_RAMP_CEILING = 1600  # 2026-10-13 (user): 1100 -> 1600 (deeper full searches = better policy targets)
 BOOST_RAMP_START = 300
 BOOST_RAMP_STEP = 200
 BOOST_RAMP_CEILING = 2200
@@ -618,10 +752,10 @@ def _play_vs_deterministic(model, device, num_simulations, mcts_plays_x, boosted
                             eval_cache=None, pooled_evaluator=None):
     """
     Plays one game: the in-memory model (via fresh MCTS search, no noise,
-    greedy) against determinisic_play's minimax AI. Returns 'mcts', 'det',
+    greedy) against deterministic_play's minimax AI. Returns 'mcts', 'det',
     or 'draw'.
 
-    add_noise=False makes MCTS search deterministic, and determinisic_play is
+    add_noise=False makes MCTS search deterministic, and deterministic_play is
     deterministic too, so without `opening` every game with the same
     mcts_plays_x is an identical replay of the same line -- num_games games
     then really only cover 2 distinct positions (one per side). Passing a
@@ -631,7 +765,7 @@ def _play_vs_deterministic(model, device, num_simulations, mcts_plays_x, boosted
     mcts_player = 'X' if mcts_plays_x else 'O'
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
-    mcts_engine = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    mcts_engine = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
 
     if opening is not None:
         r0, c0 = opening
@@ -656,7 +790,7 @@ def _play_vs_deterministic(model, device, num_simulations, mcts_plays_x, boosted
             best_action = max(root.children.items(), key=lambda kv: kv[1].n_visits)[0]
             r, c = divmod(best_action, BOARD_SIZE)
         else:
-            r, c = determinisic_play.play(board, current_player)
+            r, c = deterministic_play.play(board, current_player)
             if r == -1:
                 return 'draw'
 
@@ -668,14 +802,14 @@ def evaluate_vs_deterministic(model, device, num_games=10, num_simulations=50, b
                                c_puct=1.414, boost_when_narrow=False, max_workers=None, pooled_evaluator=None,
                                all_cells=None):
     """
-    Plays num_games against determinisic_play (minimax/alpha-beta), alternating
+    Plays num_games against deterministic_play (minimax/alpha-beta), alternating
     who moves first, and returns (win_rate, draw_rate, loss_rate) from the
     trained model's perspective. This is the direct metric for the research
     goal ("beat the deterministic algorithm").
 
     Tries the multiprocessing implementation (mp_eval.evaluate_vs_deterministic_mp)
     first -- each game gets a real OS process instead of a thread, which
-    matters because determinisic_play (the pure-Python minimax opponent)
+    matters because deterministic_play (the pure-Python minimax opponent)
     holds the GIL for its whole call and was found to fully serialize the
     threaded implementation down to ~1 CPU core regardless of thread count
     (the C++ MCTS engine itself already releases the GIL correctly and was
@@ -741,7 +875,7 @@ def _evaluate_vs_deterministic_threaded(model, device, num_games=10, num_simulat
     eval_cache = {}
     owns_pooled_evaluator = pooled_evaluator is None and device.type == "cuda"
     if owns_pooled_evaluator:
-        pooled_evaluator = PooledEvaluator(model, device, target_batch=24, max_wait=0.015)
+        pooled_evaluator = PooledEvaluator(model, device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05)
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = []
@@ -772,11 +906,11 @@ def _sample_vs_det_max_depth(epoch):
     Opponent-depth ladder for vs-Deterministic training-data generation
     ONLY (never evaluate_vs_deterministic or run_gating_check, which must
     stay a fixed, comparable depth-2 opponent forever). Samples a per-game
-    minimax search depth for determinisic_play from a schedule keyed on the
+    minimax search depth for deterministic_play from a schedule keyed on the
     current training epoch, so the model faces a weak/shallow opponent
     early on and a deeper one later instead of a fixed difficulty from
     epoch 0. Depth 0 means "skip minimax, play a uniformly random legal
-    move" (handled by the caller, not by determinisic_play itself).
+    move" (handled by the caller, not by deterministic_play itself).
 
     Deliberately capped at depth 3 for compute budget -- never sample
     beyond it (a deeper minimax is exponentially more expensive, and this
@@ -813,20 +947,20 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
                                           temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25,
                                           c_puct=1.414, eval_cache=None, boost_when_narrow=False,
                                           pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
-                                          opening=None, det_max_depth=determinisic_play.MAX_DEPTH):
+                                          opening=None, det_max_depth=deterministic_play.MAX_DEPTH):
     """
     Plays one training game between the in-memory model (MCTS with noise
     and temperature sampling -- same exploration settings as self-play) and
-    determinisic_play's minimax AI. Only the MCTS side's decisions are
+    deterministic_play's minimax AI. Only the MCTS side's decisions are
     recorded, in the same (board_3d, player_turn, target_policy_map) format
     _play_one_mcts_game produces, so callers can mix both into one buffer.
 
     Pure self-play never has to defend against or attack the specific
-    tactics determinisic_play actually uses, so the model can stay blind to
+    tactics deterministic_play actually uses, so the model can stay blind to
     patterns that opponent exploits no matter how long training runs.
     Mixing in games against it directly closes that loop.
 
-    determinisic_play is deterministic, so without `opening` every game
+    deterministic_play is deterministic, so without `opening` every game
     with the same mcts_plays_x replays the same line -- see
     _play_vs_deterministic's docstring. Passing a (row, col) `opening`
     pre-places X's first move there before normal play resumes.
@@ -840,10 +974,14 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
     'mcts'/'det'/'draw' from the trained model's perspective.
     """
     mcts_player = 'X' if mcts_plays_x else 'O'
-    mcts = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
     history = []
+    # MCTS-side decisions made so far (full or fast) -- drives temperature;
+    # equals len(history) at full_search_prob=1.0 (2026-09-26 PCR fix, see
+    # _play_one_mcts_game's docstring).
+    mcts_decisions = 0
     outcome = 0
 
     if opening is not None:
@@ -870,7 +1008,7 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
             else:
                 sims_this_move = fast_sims or max(1, num_simulations // 6)
             root = mcts.search(board, current_player, model, device,
-                                num_simulations=sims_this_move, add_noise=True,
+                                num_simulations=sims_this_move, add_noise=is_full_search,
                                 dirichlet_alpha=dirichlet_alpha, noise_weight=noise_weight)
 
             if not root.children:
@@ -883,7 +1021,7 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
                 r, c = divmod(act, BOARD_SIZE)
                 target_policy_map[r, c] = child.n_visits / total_visits if total_visits > 0 else 0.0
 
-            move_count = len(history)
+            move_count = mcts_decisions
             actions = list(root.children.keys())
             visits = np.array([root.children[a].n_visits for a in actions], dtype=np.float32)
             if move_count < temperature_moves:
@@ -892,10 +1030,11 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
             else:
                 chosen_act = actions[np.argmax(visits)]
             r, c = divmod(chosen_act, BOARD_SIZE)
+            mcts_decisions += 1
 
             if is_full_search:
                 board_3d = board_to_input_array(board, current_player)
-                history.append((board_3d, current_player, target_policy_map))
+                history.append((board_3d, current_player, target_policy_map, float(root.value())))
         else:
             if det_max_depth == 0:
                 empty_spots = [(rr, cc) for rr in range(BOARD_SIZE) for cc in range(BOARD_SIZE)
@@ -905,7 +1044,7 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
                     break
                 r, c = random.choice(empty_spots)
             else:
-                r, c = determinisic_play.play(board, current_player, max_depth=det_max_depth)
+                r, c = deterministic_play.play(board, current_player, max_depth=det_max_depth)
                 if r == -1:
                     outcome = 0
                     break
@@ -928,14 +1067,14 @@ def generate_mcts_vs_deterministic_data(model, device, num_games=6, num_simulati
                                          temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25,
                                          c_puct=1.414, eval_cache=None, boost_when_narrow=False,
                                          pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
-                                         epoch=0):
+                                         epoch=0, value_q_weight=0.0):
     """
     Same shape as generate_mcts_self_play_data, but MCTS plays against
-    determinisic_play instead of itself (alternating X/O by game index), so
+    deterministic_play instead of itself (alternating X/O by game index), so
     the replay buffer includes direct experience of the exact opponent
     evaluate_vs_deterministic measures against.
 
-    Each game cycles through _OPENING_SQUARES by game index (determinisic_play
+    Each game cycles through _OPENING_SQUARES by game index (deterministic_play
     is deterministic, so without this every game with the same side
     assignment would replay the same line -- see _play_vs_deterministic's
     docstring) and samples its own opponent search depth from the
@@ -977,13 +1116,13 @@ def generate_mcts_vs_deterministic_data(model, device, num_games=6, num_simulati
             else:
                 outcome_counts['draw'] += 1
                 tally['d'] += 1
-            for (board_3d, player_turn, target_policy_map) in history:
+            for (board_3d, player_turn, target_policy_map, q) in history:
                 # Full +-1.0 scale (was 0.5 until 2026-09-10). The halved scale
                 # shrank Q's dynamic range against an unchanged c_puct, which
                 # doubles the effective exploration constant and quadruples the
                 # simulations needed for visit counts to overcome the prior. It
                 # also fought tactical_refresh's own 0.97 value target.
-                final_val = float(outcome if player_turn == 'X' else -outcome)
+                final_val = mixed_value_target(float(outcome if player_turn == 'X' else -outcome), q, value_q_weight)
                 sample_weight = 1.5
                 aug_samples = augment_sample(board_3d, target_policy_map)
                 for (aug_b, aug_p) in aug_samples:
@@ -1008,6 +1147,8 @@ def generate_mcts_vs_deterministic_data(model, device, num_games=6, num_simulati
 # self-play sees a diversity of strategies instead of one fixed target.
 
 
+LEAGUE_ANCHOR_PROB = 0.0   # random anchor draw (2026-09-30 first try) -- superseded by the rotation below
+LEAGUE_ANCHOR_ROTATION = True  # 2026-09-30: epoch%3 -> Dawn / ep645 / normal draw
 _LEAGUE_SNAPSHOT_RE = re.compile(r"model_MCTS_ep(\d+)" + re.escape(_SUFFIX) + r"\.pth$")
 
 
@@ -1016,7 +1157,7 @@ def _load_league_model(path, device):
     branches (tracked-best / snapshot-pool). Returns the loaded, eval()'d
     model, or None on any load failure (caller treats None as "skip league
     games this epoch", same as the pre-existing failure behavior)."""
-    league_model = AlphaZeroTicTacToe()
+    league_model = GomokuNet()
     try:
         league_model.load_state_dict(torch.load(path, map_location=device))
     except Exception as e:
@@ -1025,6 +1166,9 @@ def _load_league_model(path, device):
     league_model.to(device, memory_format=preferred_memory_format(device))
     league_model.eval()
     return league_model
+
+
+import glob
 
 
 def _pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch=0,
@@ -1064,13 +1208,33 @@ def _pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch
     failed, or if fewer than 2 snapshots exist yet -- too early in training
     for league play to add anything over the fixed deterministic opponent
     already in use."""
+    # 2026-09-30 (user, option A): deterministic rotation over epochs --
+    # epoch % 3 == 0 -> first anchor (Dawn ep625), == 1 -> second anchor (ep645),
+    # == 2 -> the normal draw below (best / deep history / recency pool).
+    anchors = sorted(glob.glob("model/league_anchors/*.pth")) if LEAGUE_ANCHOR_ROTATION else []
+    if anchors and epoch % 3 < len(anchors) and epoch % 3 < 2:
+        chosen = anchors[epoch % 3]
+        league_model = _load_league_model(chosen, device)
+        if league_model is not None:
+            return league_model, chosen
+
     if best_checkpoint_prob > 0 and random.random() < best_checkpoint_prob and os.path.exists(BEST_CHECKPOINT_PATH):
         league_model = _load_league_model(BEST_CHECKPOINT_PATH, device)
         if league_model is None:
             return None
         return league_model, BEST_CHECKPOINT_PATH
 
-    import glob
+    # 2026-09-30 (user): fixed "anchor" opponents -- the graduated Dawn (ep625) and the
+    # long-standing best ep645 -- so league play keeps facing the strongest known models
+    # while the gate is stuck. Checked right after the best-checkpoint draw.
+    anchors = [p for p in sorted(glob.glob("model/league_anchors/*.pth"))] if LEAGUE_ANCHOR_PROB > 0 else []
+    if anchors and random.random() < LEAGUE_ANCHOR_PROB:
+        chosen = random.choice(anchors)
+        league_model = _load_league_model(chosen, device)
+        if league_model is None:
+            return None
+        return league_model, chosen
+
     pattern = f"model/model_MCTS_ep*{_SUFFIX}.pth"
     numbered = []
     for path in glob.glob(pattern):
@@ -1101,15 +1265,56 @@ def _pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch
     return league_model, chosen
 
 
+LEAGUE_NUM_OPPONENTS = 12  # 2026-10-08 (user): many opponents per epoch instead of one
+
+
+def _pick_league_opponents_multi(device, k, pool_size=40, epoch=0):
+    """2026-10-08 (user, option A): k distinct league opponents for ONE epoch --
+    the fixed anchors (Dawn ep625, ep645), the current best, one uniform pick from
+    the whole snapshot history, and the rest recency-weighted from the newest
+    pool_size snapshots without replacement. Returns [(model, path), ...]."""
+    chosen = []
+    seen = set()
+
+    def add(path):
+        if path in seen or len(chosen) >= k:
+            return
+        m = _load_league_model(path, device)
+        if m is not None:
+            chosen.append((m, path))
+            seen.add(path)
+
+    for a in sorted(glob.glob("model/league_anchors/*.pth")):
+        add(a)
+    if os.path.exists(BEST_CHECKPOINT_PATH):
+        add(BEST_CHECKPOINT_PATH)
+    numbered = []
+    for path in glob.glob(f"model/model_MCTS_ep*{_SUFFIX}.pth"):
+        mm = _LEAGUE_SNAPSHOT_RE.search(os.path.basename(path))
+        if mm:
+            numbered.append((int(mm.group(1)), path))
+    numbered.sort(key=lambda t: t[0])
+    snapshots = [p for _, p in numbered]
+    if snapshots:
+        add(random.choice(snapshots))
+    cands = snapshots[-pool_size:]
+    weights = list(range(1, len(cands) + 1))
+    while len(chosen) < k and any(c not in seen for c in cands):
+        pool = [(c, w) for c, w in zip(cands, weights) if c not in seen]
+        add(random.choices([c for c, _ in pool], weights=[w for _, w in pool], k=1)[0])
+    return chosen
+
+
 def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, mcts_plays_x,
                                    boosted_sims=None, boost_threshold=0,
                                    temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25,
                                    c_puct=1.414, eval_cache=None, boost_when_narrow=False,
                                    pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
-                                   opening=None):
+                                   opening=None, league_pooled_evaluator=None, league_eval_cache=None,
+                                   max_plies=None):
     """
     Like _play_one_mcts_vs_deterministic_game, but the opponent is a frozen
-    past checkpoint of this same model instead of determinisic_play. Both
+    past checkpoint of this same model instead of deterministic_play. Both
     sides' moves are recorded (the league opponent runs a real, always-full
     search -- see league_sims below -- so its visit distribution is just as
     valid a policy target as the live model's own): the live model was
@@ -1122,15 +1327,27 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
     add_noise=False (greedy), so when it moves first, every game with the
     same side assignment would otherwise replay the identical opening move.
 
+    league_pooled_evaluator/league_eval_cache (2026-09-26, unified MP
+    game pool): route the LEAGUE side's leaf evaluations through a separate
+    evaluator/cache -- a worker process holds no weights, so it needs a
+    proxy that the GPU coordinator maps to the league model. Both default
+    to None, which keeps the original behavior (league side calls
+    league_model directly with a private per-search cache).
+
     Returns (history, outcome, mcts_result): mcts_result is
     'mcts'/'league'/'draw' from the live model's perspective.
     """
     mcts_player = 'X' if mcts_plays_x else 'O'
-    mcts = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
-    league_mcts = MCTS(c_puct=c_puct, eval_batch_size=16)
+    mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    league_mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=league_eval_cache,
+                       pooled_evaluator=league_pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
     history = []
+    # Decisions that record (or, for a PCR fast search, would have recorded)
+    # a history entry -- drives temperature; equals len(history) at
+    # full_search_prob=1.0 (2026-09-26 PCR fix).
+    decisions = 0
     outcome = 0
 
     if opening is not None:
@@ -1139,6 +1356,10 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
         current_player = 'O'
 
     while True:
+        # 2026-09-28: game-length cap (stones on the board); capped = draw.
+        if max_plies and sum(1 for row in board for cell in row if cell != ' ') >= max_plies:
+            outcome = 0
+            break
         if fast_check_win(board, 'X'):
             outcome = 1
             break
@@ -1158,7 +1379,7 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
             else:
                 sims_this_move = fast_sims or max(1, num_simulations // 6)
             root = mcts.search(board, current_player, model, device,
-                                num_simulations=sims_this_move, add_noise=True,
+                                num_simulations=sims_this_move, add_noise=is_full_search,
                                 dirichlet_alpha=dirichlet_alpha, noise_weight=noise_weight)
             if not root.children:
                 outcome = 0
@@ -1170,7 +1391,7 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
                 r, c = divmod(act, BOARD_SIZE)
                 target_policy_map[r, c] = child.n_visits / total_visits if total_visits > 0 else 0.0
 
-            move_count = len(history)
+            move_count = decisions
             actions = list(root.children.keys())
             visits = np.array([root.children[a].n_visits for a in actions], dtype=np.float32)
             if move_count < temperature_moves:
@@ -1179,12 +1400,20 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
             else:
                 chosen_act = actions[np.argmax(visits)]
             r, c = divmod(chosen_act, BOARD_SIZE)
+            decisions += 1
 
             if is_full_search:
                 board_3d = board_to_input_array(board, current_player)
-                history.append((board_3d, current_player, target_policy_map))
+                history.append((board_3d, current_player, target_policy_map, float(root.value())))
         else:
-            league_sims = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
+            # 2026-09-28: PCR on the league side too (same full_search_prob
+            # as the MCTS side): a fast search only picks the move and is not
+            # recorded. At full_search_prob=1.0 this is the old behavior.
+            league_full = full_search_prob >= 1.0 or random.random() < full_search_prob
+            if league_full:
+                league_sims = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
+            else:
+                league_sims = fast_sims or max(1, num_simulations // 6)
             root = league_mcts.search(board, current_player, league_model, device,
                                        num_simulations=league_sims, add_noise=False)
             if not root.children:
@@ -1199,8 +1428,14 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
             best_action = max(root.children.items(), key=lambda kv: kv[1].n_visits)[0]
             r, c = divmod(best_action, BOARD_SIZE)
 
-            board_3d = board_to_input_array(board, current_player)
-            history.append((board_3d, current_player, target_policy_map))
+            # 2026-10-13 (user): league-side plies are no longer training targets -- the opponents are older,
+            # weaker checkpoints (some ~700-1,000 equal nodes), so their visit counts taught weaker moves.
+            if league_full and RECORD_LEAGUE_SIDE:
+                board_3d = board_to_input_array(board, current_player)
+                # League-side ply: its search value comes from a different
+                # (older) network, so this ply keeps a pure-z value target.
+                history.append((board_3d, current_player, target_policy_map, None))
+            decisions += 1
 
         board[r][c] = current_player
         current_player = 'O' if current_player == 'X' else 'X'
@@ -1219,7 +1454,8 @@ def generate_mcts_vs_league_data(model, league_model, device, num_games=6, num_s
                                   boosted_sims=None, boost_threshold=0,
                                   temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25,
                                   c_puct=1.414, eval_cache=None, boost_when_narrow=False,
-                                  pooled_evaluator=None, full_search_prob=1.0, fast_sims=None, epoch=0):
+                                  pooled_evaluator=None, full_search_prob=1.0, fast_sims=None, epoch=0,
+                                  value_q_weight=0.0, max_plies=None):
     """
     Same shape as generate_mcts_vs_deterministic_data, but the opponent is a
     frozen past checkpoint of this model (see _play_one_mcts_vs_league_game).
@@ -1237,7 +1473,8 @@ def generate_mcts_vs_league_data(model, league_model, device, num_games=6, num_s
                                 i % 2 == 0, boosted_sims, boost_threshold,
                                 temperature_moves, dirichlet_alpha, noise_weight, c_puct, eval_cache,
                                 boost_when_narrow, pooled_evaluator, full_search_prob, fast_sims,
-                                _OPENING_SQUARES[(i + epoch) % len(_OPENING_SQUARES)])
+                                _OPENING_SQUARES[(i + epoch) % len(_OPENING_SQUARES)],
+                                None, None, max_plies)
                    for i in range(num_games)]
         for future in futures:
             history, outcome, mcts_result = future.result()
@@ -1247,13 +1484,13 @@ def generate_mcts_vs_league_data(model, league_model, device, num_games=6, num_s
                 outcome_counts['league_win'] += 1
             else:
                 outcome_counts['draw'] += 1
-            for (board_3d, player_turn, target_policy_map) in history:
+            for (board_3d, player_turn, target_policy_map, q) in history:
                 # Full +-1.0 scale (was 0.5 until 2026-09-10). The halved scale
                 # shrank Q's dynamic range against an unchanged c_puct, which
                 # doubles the effective exploration constant and quadruples the
                 # simulations needed for visit counts to overcome the prior. It
                 # also fought tactical_refresh's own 0.97 value target.
-                final_val = float(outcome if player_turn == 'X' else -outcome)
+                final_val = mixed_value_target(float(outcome if player_turn == 'X' else -outcome), q, value_q_weight)
                 sample_weight = 1.25
                 aug_samples = augment_sample(board_3d, target_policy_map)
                 for (aug_b, aug_p) in aug_samples:
@@ -1767,9 +2004,39 @@ def generate_open_three_examples():
     examples = []
     for cells in _closed_three_spans():
         end1, three_cells, end2 = cells[0], cells[1:4], cells[4]
+        # 2026-09-23: edge/corner oversampling (added earlier today, REMOVED
+        # here) -- the organic self-play open-three test
+        # (open3_organic_test.py) found the model missing threats located
+        # centrally while repeatedly playing near row 0 instead, matching
+        # exactly the kind of "edge habit" this oversampling could produce
+        # if it overshot: skewing the network toward edge/corner moves as a
+        # general prior rather than genuinely improving edge-tactic
+        # recognition. Reverting to a flat, position-independent variant
+        # count (matches the window-count distribution the board's own
+        # geometry produces, not artificially reweighted) to isolate
+        # whether the organic-test miss rate improves without it.
+        n_variants = 14
         for offense in (True, False):
             three_color = 'X' if offense else 'O'
-            for variant in range(3):  # 1 clean + a couple of clutter variants
+            # 2026-09-21: 3->8 variants (1 clean + more clutter diversity) --
+            # open-three defense is the pattern the passive open3 tracker
+            # has shown persistently flat/noisy (0.2-0.7 miss rate) despite
+            # training, so this deliberately over-represents it relative to
+            # the other four tactical families in the combined curriculum.
+            # 2026-09-22: 8->14 -- tactical_refresh() (the periodic burst
+            # supervised re-injection this curriculum used to feed) was
+            # removed the same day: isolated testing
+            # (scratch/.../tactical_refresh_destroy_test.py) measured ONE
+            # refresh call immediately dropping vs-Det win rate 65%->25%,
+            # and a separate retention check
+            # (scratch/.../tactical_retention_check.py) found that gain
+            # decayed from ~100% back to ~70% tactical accuracy within just
+            # 2 epochs anyway -- net negative. Replaced by continuous
+            # per-epoch injection into the ordinary replay buffer (see
+            # _get_open_three_injection_samples), so this pool now needs
+            # more inherent variant diversity since it's no longer refreshed
+            # by a dedicated fine-tuning pass, just sampled from directly.
+            for variant in range(n_variants):  # was: flat range(14); now edge/corner-weighted
                 board = [[' '] * BOARD_SIZE for _ in range(BOARD_SIZE)]
                 for (r, c) in three_cells:
                     board[r][c] = three_color
@@ -1854,6 +2121,30 @@ _DIAGNOSED_POSITIONS = [
         [('X', 0, 6), ('X', 0, 10), ('X', 1, 8), ('O', 1, 10), ('X', 3, 4), ('O', 3, 6), ('O', 3, 7), ('X', 3, 8), ('X', 4, 3), ('X', 4, 4), ('O', 4, 6), ('O', 4, 9), ('X', 5, 2), ('O', 5, 5), ('O', 6, 1), ('X', 6, 3), ('X', 6, 6), ('X', 7, 2), ('X', 7, 4), ('O', 7, 5), ('O', 7, 6), ('O', 7, 8), ('O', 8, 2), ('O', 8, 3), ('X', 8, 5), ('O', 8, 6), ('O', 8, 8), ('X', 9, 1), ('O', 9, 3), ('O', 9, 6)],
         'X', [(2, 8), (6, 4)],
     ),
+    # 2026-09-23 Position F: HLT (human) loss for Gen13/NAPS, epoch129,
+    # cumulative_epoch 129 checkpoint. Root value swung to +0.977 (AI very
+    # confident of winning) at move 24, then collapsed to -0.921 by move 36
+    # as the human found the refutation -- see the session's HLT-analysis
+    # discussion. Root cause traced by replaying row 8's stone history:
+    # after X's move at (8,3) (ply 35), row 8 reads "...X.XXXOX." -- X at
+    # cols 3,5,6,7 with a SINGLE empty gap at col 4 and O blocking col 8.
+    # This is a plain 4-of-5-gap shape (the OLDEST tactical curriculum
+    # family in this file, generate_tactical_examples) with exactly one
+    # winning cell (8,4) -- yet the live model's actual move-36 search
+    # never surfaced (8,4) in its top-5 candidates at any simulation
+    # checkpoint (only (3,7)/(8,4-adjacent) cells the network's prior
+    # never weighted), meaning this wasn't a search-depth miss but a
+    # policy-prior blind spot on a pattern the model has trained on
+    # extensively. Distinct from Positions A-E (all open-three shapes) --
+    # this is a gap-four shape missed on a busy, asymmetric real board.
+    (
+        [('X', 5, 5), ('O', 4, 6), ('X', 5, 4), ('O', 5, 6), ('X', 4, 4), ('O', 6, 6), ('X', 3, 6), ('O', 6, 5),
+         ('X', 6, 3), ('O', 4, 5), ('X', 3, 4), ('O', 6, 4), ('X', 3, 5), ('O', 6, 7), ('X', 6, 8), ('O', 7, 8),
+         ('X', 8, 9), ('O', 7, 6), ('X', 8, 6), ('O', 3, 3), ('X', 7, 7), ('O', 5, 9), ('X', 8, 5), ('O', 4, 7),
+         ('X', 7, 4), ('O', 3, 8), ('X', 2, 9), ('O', 4, 8), ('X', 4, 9), ('O', 5, 2), ('X', 5, 3), ('O', 2, 6),
+         ('X', 8, 7), ('O', 8, 8), ('X', 8, 3)],
+        'O', [(8, 4)],
+    ),
 ]
 
 
@@ -1913,6 +2204,7 @@ def generate_diagnosed_positions_examples():
 
 _synthetic_tactical_tensors_cache = None
 _mined_tactical_tensors_cache = None
+_open_three_injection_cache = None
 
 # Real positions mined from actual self-play/vs-Deterministic games (150
 # sims/move, live checkpoint), scanned for the same "4-of-5+gap" pattern
@@ -2091,7 +2383,7 @@ def _root_entropy_info(root):
     return float(-(probs * np.log(probs)).sum()), n
 
 
-def _mine_one_selfplay_game(model, device, sims):
+def _mine_one_selfplay_game(model, device, sims, pooled_evaluator=None, eval_cache=None):
     """Plays one self-play game (noise on, no training-data recording) to
     collect (board, current_player) snapshots for refresh_mined_tactical_pool
     to scan -- mirrors mine_tactical_parallel.py's _play_one_selfplay.
@@ -2099,8 +2391,11 @@ def _mine_one_selfplay_game(model, device, sims):
     2026-09-11: also returns per-ply (act, entropy_info) and the game outcome
     so refresh_mined_tactical_pool can additionally run outcome-based hard-
     example detection (Hard-1/2/3/5/6) on top of the original pattern scan --
-    every ply here is a model ply (self-play is the model against itself)."""
-    mcts = MCTS(c_puct=3.2, eval_batch_size=16)
+    every ply here is a model ply (self-play is the model against itself).
+
+    pooled_evaluator/eval_cache (2026-09-27, unified MP pool): optional
+    routing for the leaf evaluations; None keeps the original behavior."""
+    mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = random.choice(['X', 'O'])
     plies = []
@@ -2133,19 +2428,22 @@ def _mine_one_selfplay_game(model, device, sims):
     return plies, outcome
 
 
-def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=determinisic_play.MAX_DEPTH):
+def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=deterministic_play.MAX_DEPTH,
+                         pooled_evaluator=None, eval_cache=None):
     """vs-Deterministic counterpart to _mine_one_selfplay_game -- mirrors
     mine_tactical_parallel.py's _play_one_vsdet.
 
-    2026-09-11 bugfix: this used to call determinisic_play.play(board,
+    2026-09-11 bugfix: this used to call deterministic_play.play(board,
     current_player) with no depth argument, silently mining exclusively
     against the fixed depth-2 opponent -- the same fixed opponent
     evaluate_vs_deterministic/run_gating_check hold as an untouched
     promotion metric. Callers now pass _sample_vs_det_max_depth(epoch) so
     mining draws from the same 0-3 depth ladder training data generation
-    already uses, keeping the fixed-depth-2 metric uncontaminated."""
+    already uses, keeping the fixed-depth-2 metric uncontaminated.
+
+    pooled_evaluator/eval_cache: see _mine_one_selfplay_game."""
     mcts_player = 'X' if mcts_plays_x else 'O'
-    mcts = MCTS(c_puct=3.2, eval_batch_size=16)
+    mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
     plies = []
@@ -2172,7 +2470,7 @@ def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=determ
             r, c = divmod(act, BOARD_SIZE)
             plies.append((board_snapshot, current_player, (r, c), True, ent_info))
         else:
-            r, c = determinisic_play.play(board, current_player, max_depth=det_max_depth)
+            r, c = deterministic_play.play(board, current_player, max_depth=det_max_depth)
             if r == -1:
                 break
             plies.append((board_snapshot, current_player, (r, c), False, None))
@@ -2184,16 +2482,22 @@ def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=determ
     return plies, outcome
 
 
-def _mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x):
+def _mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
+                            pooled_evaluator=None, eval_cache=None,
+                            league_pooled_evaluator=None, league_eval_cache=None):
     """vs-League counterpart to _mine_one_vsdet_game -- the opponent is a
     frozen past checkpoint's own greedy (no-noise) search instead of
-    determinisic_play, mirroring _play_one_mcts_vs_league_game's
+    deterministic_play, mirroring _play_one_mcts_vs_league_game's
     opponent-side logic. Mining from vs-League games closes a gap the
     self-play/vs-Det mining above never reaches: whatever tactical patterns
-    specifically arise when the model plays against its own past selves."""
+    specifically arise when the model plays against its own past selves.
+
+    pooled_evaluator/eval_cache route the model side, league_* the league
+    side (see _mine_one_selfplay_game); all None = original behavior."""
     mcts_player = 'X' if mcts_plays_x else 'O'
-    mcts = MCTS(c_puct=3.2, eval_batch_size=16)
-    league_mcts = MCTS(c_puct=1.6, eval_batch_size=16)
+    mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    league_mcts = MCTS(c_puct=1.6, eval_batch_size=EVAL_BATCH, shared_cache=league_eval_cache,
+                       pooled_evaluator=league_pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
     plies = []
@@ -2305,6 +2609,104 @@ def _fork_hits(board, color, forks):
     return hits
 
 
+def _opponent_can_fork_next(board, opponent):
+    """True if `opponent` has SOME reply (placed right now) that either wins
+    outright or creates 2+ simultaneous immediate-winning cells for
+    `opponent` -- i.e. the position already contains a next-move fork
+    `opponent` can walk into unopposed. This is the check that actually
+    matters for Hard-7 (see its call site): a fork isn't visible by
+    inspecting the board as-is (that only shows CURRENTLY-live winning
+    cells, which is what _immediate_win_cells checks) -- it's visible one
+    ply further, in whether the opponent HAS a move that manufactures a
+    fork out of stones already on the board. O(BOARD_SIZE^2) candidate
+    replies x O(BOARD_SIZE^2) fast_check_win each -- only run on already-
+    mined game plies at refresh_mined_tactical_pool's cadence, not in the
+    self-play hot loop."""
+    # 2026-10-14 (15x15, now every run): same answer, window-based. The brute force was O(N^6) fast_check_win
+    # calls per _fork_safe_cells and stalled the relabel step for 30+ minutes on 15x15.
+    if _immediate_win_cells(board, opponent):
+        return True
+    # With no win cell on the board, a reply can only create one inside a window that already holds
+    # 3 opponent stones and 2 empties, so only those empties need trying.
+    cand = set()
+    for cells_w in _WIN_WINDOWS:
+        vals = [board[r][c] for r, c in cells_w]
+        if vals.count(opponent) == WIN_LENGTH - 2 and vals.count(' ') == 2:
+            cand.update(cell for cell, v in zip(cells_w, vals) if v == ' ')
+    for r, c in cand:
+        board[r][c] = opponent
+        n = len(_immediate_win_cells(board, opponent))
+        board[r][c] = ' '
+        if n >= 2:
+            return True
+    return False
+
+
+def _immediate_win_cells(board, color):
+    """Every empty cell where placing `color` right now completes 5-in-a-row.
+    Template-free (unlike _fork_hits/_fork_geometries, which only match the
+    clean symmetric double-open-three shape) -- brute-forces every empty
+    cell through fast_check_win, so it also catches irregular, real-game
+    multi-threat shapes _fork_geometries structurally can't represent.
+    len(...) >= 2 means an UNSTOPPABLE fork for whoever must move next (no
+    single move blocks two simultaneous winning replies).
+
+    2026-09-23: added after 4 straight HLT (human) losses this session, all
+    ending in this exact kind of fork, NONE of which were caught by the
+    existing (narrow, template-based) Hard-3 detector below -- see the
+    session's find_fork_points.py/test_fork_prevention.py scratch analysis.
+    O(BOARD_SIZE^2) fast_check_win calls per invocation; only run on
+    already-mined game plies (a few hundred per refresh cycle), not inside
+    the hot self-play loop itself.
+    """
+    # 2026-10-14 (15x15, now every run): window scan instead of one fast_check_win per empty cell. A cell completes
+    # 5+ in a row iff some 5-cell window through it holds 4 `color` stones and that one empty cell.
+    cells = set()
+    for cells_w in _WIN_WINDOWS:
+        vals = [board[r][c] for r, c in cells_w]
+        if vals.count(color) == WIN_LENGTH - 1 and vals.count(' ') == 1:
+            cells.add(cells_w[vals.index(' ')])
+    return sorted(cells)
+
+
+_WIN_WINDOWS = [[(r + k * dr, c + k * dc) for k in range(WIN_LENGTH)]
+                for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
+                for dr, dc in ((0, 1), (1, 0), (1, 1), (1, -1))
+                if 0 <= r + (WIN_LENGTH - 1) * dr < BOARD_SIZE and 0 <= c + (WIN_LENGTH - 1) * dc < BOARD_SIZE]
+
+
+def _fork_safe_cells(board, player, other):
+    """Every empty cell where `player` moving there does NOT hand `other` an
+    unstoppable next-move fork (winning outright always counts as safe too)
+    -- the Hard-7 analogue of _threat_gaps' g_p/g_o: a verified, brute-force
+    ground truth for "which replies are actually correct here", not just
+    "is a fork possible". Used by _relabel_hard_examples to force the
+    Hard-7 policy target onto a real safe cell when the re-searched MCTS
+    visit distribution doesn't already favor one -- mirrors how hard_class
+    1/2 force their policy onto g_p/g_o. Without this, Hard-7's policy
+    target was just whatever a RELABEL_SIMS-budget search happened to
+    converge to, which an artificial verified-answer puzzle test
+    (2026-09-24 session) showed can itself fail to concentrate visits on
+    the best-Q move -- i.e. the relabel step could silently inherit and
+    reinforce the same policy-prior blind spot it's meant to correct.
+    O(BOARD_SIZE^2) candidate moves x _opponent_can_fork_next's own
+    O(BOARD_SIZE^2)-worst-case scan; only run inside
+    _relabel_hard_examples's already-capped (RELABEL_CAP) pass, not the
+    self-play hot loop."""
+    safe = []
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            if board[r][c] != ' ':
+                continue
+            board[r][c] = player
+            if fast_check_win(board, player):
+                safe.append((r, c))
+            elif not _opponent_can_fork_next(board, other):
+                safe.append((r, c))
+            board[r][c] = ' '
+    return safe
+
+
 def _classify_hard_examples(games, windows, forks):
     """games: list of (plies, outcome) from _mine_one_*_game -- each ply is
     (board, player, act_rc, is_model_ply, entropy_info_or_None). Scans only
@@ -2324,11 +2726,28 @@ def _classify_hard_examples(games, windows, forks):
             g_o = _threat_gaps(board, other, windows)
             forked = _fork_hits(board, player, forks) + _fork_hits(board, other, forks)
 
+            # Hard-7 (2026-09-23): general, template-free fork check -- does
+            # THIS move (act) leave `other` with SOME reply that manufactures
+            # an unstoppable fork (or outright win)? Must look one ply past
+            # the move itself (_opponent_can_fork_next), not just inspect
+            # the board as-is -- see that function's docstring for why a
+            # same-ply check (an earlier version of this) misses the real
+            # case. Checked separately from g_p/g_o/forked above since none
+            # of those catch irregular real-game fork shapes (see
+            # _immediate_win_cells docstring).
+            after = [row[:] for row in board]
+            ar, ac = act
+            after[ar][ac] = player
+            allowed_fork = (not fast_check_win(after, player)
+                             and _opponent_can_fork_next(after, other))
+
             hard_class = None
             if g_p and act not in g_p:
                 hard_class = 1
             elif g_o and not g_p and act not in g_o:
                 hard_class = 2
+            elif allowed_fork:
+                hard_class = 7
             elif forked and not g_p and not g_o and act not in forked:
                 hard_class = 3
             elif outcome_for_player == -1 and rank >= len(model_ply_positions) - HARD5_LOOKBACK:
@@ -2358,49 +2777,111 @@ def _relabel_hard_examples(flagged, model, device, cap=RELABEL_CAP, sims=RELABEL
     supervision), matching generate_tactical_examples' own block/fork
     convention -- none of those three license a value claim.
     Returns a list of (board, player, policy[NUM_CELLS] float32, value_or_None, hard_class)."""
-    by_class = {}
-    for f in flagged:
-        by_class.setdefault(f[2], []).append(f)
-    ordered = []
-    for cls in (1, 2, 3, 5, 6):
-        items = by_class.get(cls, [])
-        random.shuffle(items)
-        ordered.extend(items)
-    ordered = ordered[:cap]
-
+    ordered = _order_relabel_candidates(flagged, cap)
     was_training = model.training
     model.eval()
     relabeled = []
     try:
-        for board, player, hard_class, outcome_for_player, g_p, g_o in ordered:
-            mcts = MCTS(c_puct=1.6, eval_batch_size=16)
-            root = mcts.search(board, player, model, device, num_simulations=sims, add_noise=False)
-            if not root.children:
-                continue
-            total_visits = sum(ch.n_visits for ch in root.children.values())
-            policy = np.zeros(NUM_CELLS, dtype=np.float32)
-            for act, ch in root.children.items():
-                policy[act] = (ch.n_visits / total_visits) if total_visits > 0 else 0.0
-
-            if hard_class in (1, 2):
-                gaps = g_p if hard_class == 1 else g_o
-                argmax_rc = divmod(int(np.argmax(policy)), BOARD_SIZE)
-                if gaps and argmax_rc not in gaps:
-                    forced = random.choice(gaps)
-                    policy[:] = 0.0
-                    policy[forced[0] * BOARD_SIZE + forced[1]] = 1.0
-
-            if hard_class == 1:
-                value = 1.0
-            elif hard_class == 5:
-                value = float(outcome_for_player)
-            else:
-                value = None
-
-            relabeled.append(([row[:] for row in board], player, policy, value, hard_class))
+        for item in ordered:
+            r = _relabel_one(item, model, device, sims)
+            if r is not None:
+                relabeled.append(r)
     finally:
         model.train(was_training)
     return relabeled
+
+
+def _order_relabel_candidates(flagged, cap=RELABEL_CAP):
+    """Class-priority order + per-class shuffle + cap -- the selection step of
+    _relabel_hard_examples, factored out (2026-09-27) so the unified MP pool
+    can relabel the SAME selection in parallel."""
+    by_class = {}
+    for f in flagged:
+        by_class.setdefault(f[2], []).append(f)
+    ordered = []
+    for cls in (1, 2, 7, 3, 5, 6):
+        items = by_class.get(cls, [])
+        random.shuffle(items)
+        ordered.extend(items)
+    ordered = ordered[:cap]
+    return ordered
+
+
+def _relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, eval_cache=None):
+    """Relabels ONE flagged item (see _relabel_hard_examples); returns the
+    (board, player, policy, value, hard_class) tuple, or None if the search
+    found no children. Factored out 2026-09-27 so the unified MP pool can
+    run relabels in parallel worker processes (pooled_evaluator/eval_cache
+    route the leaf evaluations there); None/None = original behavior."""
+    board, player, hard_class, outcome_for_player, g_p, g_o = item
+    mcts = MCTS(c_puct=1.6, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    root = mcts.search(board, player, model, device, num_simulations=sims, add_noise=False)
+    if not root.children:
+        return None
+    total_visits = sum(ch.n_visits for ch in root.children.values())
+    policy = np.zeros(NUM_CELLS, dtype=np.float32)
+    for act, ch in root.children.items():
+        policy[act] = (ch.n_visits / total_visits) if total_visits > 0 else 0.0
+
+    if hard_class in (1, 2):
+        gaps = g_p if hard_class == 1 else g_o
+        argmax_rc = divmod(int(np.argmax(policy)), BOARD_SIZE)
+        if gaps and argmax_rc not in gaps:
+            forced = random.choice(gaps)
+            policy[:] = 0.0
+            policy[forced[0] * BOARD_SIZE + forced[1]] = 1.0
+    elif hard_class == 7:
+        # 2026-09-24: same forcing as Hard-1/2, but the "known
+        # correct cells" have to be computed here (not stored at
+        # mining time) via _fork_safe_cells -- see that function's
+        # docstring for why this was needed (the re-searched policy
+        # target could otherwise inherit the same weak-prior
+        # blind spot it's supposed to correct).
+        other = 'O' if player == 'X' else 'X'
+        safe_cells = _fork_safe_cells(board, player, other)
+        argmax_rc = divmod(int(np.argmax(policy)), BOARD_SIZE)
+        if safe_cells and argmax_rc not in safe_cells:
+            forced = random.choice(safe_cells)
+            policy[:] = 0.0
+            policy[forced[0] * BOARD_SIZE + forced[1]] = 1.0
+
+    if hard_class == 1:
+        # 2026-09-23: 1.0 -> 0.95 (label smoothing). value_overfit_check.py
+        # found the live value head badly overconfident on FRESH,
+        # never-trained-on self-play games (held-out MSE 1.36 --
+        # worse than a constant-0 predictor; 61% of predictions
+        # saturated past |0.9|; the model's own "very confident"
+        # bucket only actually won ~67% of the time, not ~100%).
+        # Confident artificial labels (this class and Hard-7) are
+        # the most likely amplifier -- softening them off the
+        # tanh's saturated tail should reduce that overconfidence
+        # without giving up the corrective signal's direction.
+        value = 0.95
+    elif hard_class == 7:
+        # 2026-09-23: unlike Hard-1/5, this is a confident NEGATIVE
+        # label, not a policy-only class -- letting `other` reach an
+        # unstoppable fork is a near-certain loss for `player`
+        # regardless of what happens afterward (session evidence:
+        # test_fork_prevention.py found 0/3 real HLT forks
+        # preventable even with a fresh 10000-sim search, so this
+        # needs a direct value correction, not just more search at
+        # relabel time). -1.0 -> -0.95: same label-smoothing
+        # rationale as Hard-1 above.
+        # 2026-09-26: REMOVED -- policy-only now (value=None). The
+        # board stored here is the position BEFORE the defender
+        # moves, where fork-safe replies exist, so "near-certain
+        # loss" was the value of the position AFTER a bad reply, not
+        # this one. pessimism_probe (14 Hard-7 positions, safe reply
+        # then best-vs-best playouts) measured raw value -0.78 vs an
+        # empirical outcome of -0.04: this label was teaching the
+        # value head that any fork threat means the game is lost.
+        value = None
+    elif hard_class == 5:
+        value = float(outcome_for_player)
+    else:
+        value = None
+
+    return ([row[:] for row in board], player, policy, value, hard_class)
 
 
 def _load_hard_example_pool():
@@ -2439,15 +2920,125 @@ def _get_hard_example_samples(device, n_positions=46, sample_weight=1.5):
     for board, player, policy, value, hard_class in chosen:
         board_3d = board_to_input_array(board, player)
         target_policy_map = policy.reshape(BOARD_SIZE, BOARD_SIZE)
-        final_val = 0.0 if value is None else float(value)
+        final_val = float('nan') if value is None else float(value)  # NaN = no value label, masked in training
         for aug_b, aug_p in augment_sample(board_3d, target_policy_map):
             samples.append((aug_b, aug_p, final_val, sample_weight))
     return samples
 
 
+def _get_fork_mistake_samples(n_positions=60, sample_weight=3.0):
+    """Per-epoch DEDICATED draw from the Hard-7 (general, template-free
+    fork) slice of the hard-mined pool, separate from
+    _get_hard_example_samples' whole-pool draw.
+
+    2026-09-23: Hard-7 is currently a small fraction of the shared 8000-cap
+    pool (261/8000 the first time it was measured), so
+    _get_hard_example_samples' n_positions=46 draw only pulls ~1-2 Hard-7
+    examples per epoch by chance -- measured directly
+    (hard7_adaptation_test.py): the live model still walked into 18/20
+    freshly-mined Hard-7 positions one epoch after mining, essentially no
+    real training exposure yet. This dedicated draw guarantees Hard-7 gets
+    real per-epoch volume regardless of how large the rest of the pool
+    (mostly Hard-5, outcome-based) grows around it. sample_weight=2.0
+    (higher than the shared draw's 1.5) since Hard-7 carries a confident
+    value=-1.0 label (see _relabel_hard_examples), not a policy-only one.
+    """
+    pool = _load_hard_example_pool()
+    h7 = [item for item in pool if item[4] == 7]
+    if not h7:
+        return []
+    chosen = random.sample(h7, min(n_positions, len(h7)))
+    samples = []
+    for board, player, policy, value, hard_class in chosen:
+        board_3d = board_to_input_array(board, player)
+        target_policy_map = policy.reshape(BOARD_SIZE, BOARD_SIZE)
+        final_val = float('nan') if value is None else float(value)  # NaN = no value label, masked in training
+        for aug_b, aug_p in augment_sample(board_3d, target_policy_map):
+            samples.append((aug_b, aug_p, final_val, sample_weight))
+    return samples
+
+
+def _get_open_three_injection_samples(n_examples=120, sample_weight=1.0):
+    """Per-epoch draw of open-three + open-3-3-fork (+ diagnosed-position)
+    examples for the regular replay buffer, same pattern as
+    _get_hard_example_samples right below this.
+
+    2026-09-22: replaces tactical_refresh()'s periodic burst supervised
+    fine-tune as this curriculum's delivery mechanism. Isolated before/after
+    testing (scratch/.../tactical_refresh_destroy_test.py) found ONE
+    tactical_refresh() call immediately dropped vs-Det win rate 65%->25%
+    (a single 20-game/600-sim sample -- noisy, but the direction matches the
+    loss-spike pattern already documented in tactical_refresh's own
+    docstring at ep22/ep43/ep64). A separate retention check
+    (scratch/.../tactical_retention_check.py) found the ~100% tactical
+    accuracy right after a refresh had already decayed to ~70% just 2
+    epochs later, before the next refresh even fired -- so each burst was
+    paying a real, measured cost for a gain that mostly didn't survive to
+    the next cycle anyway. Blending a smaller amount of this curriculum into
+    EVERY epoch's ordinary training batch (like the hard-mined pool
+    already does) avoids both problems: no isolated-batch overfit spike,
+    and no burst to decay away between refreshes since there's no longer a
+    gap between applications.
+
+    n_examples=120 positions x up to 8-way dihedral augmentation ~= up to
+    ~960 samples/epoch -- deliberately a larger share of the epoch's buffer
+    than the hard-mined pool's ~368/epoch (n_positions=46), since this is
+    now the sole delivery path for the open-three curriculum rather than a
+    supplement to periodic bursts.
+    """
+    global _open_three_injection_cache
+    if _open_three_injection_cache is None:
+        # 2026-09-24: generate_fork_examples() (the open-3-3 / double-open-
+        # three geometry -- see _fork_geometries) added to this SAME
+        # continuous pool. It was already implemented and already used to
+        # get delivered via tactical_refresh()'s burst fine-tune, but that
+        # call was removed from the main loop this session (see the
+        # tactical_refresh_interval guard's comment) and nothing replaced
+        # it for this specific curriculum the way open-three's own got
+        # migrated here on 2026-09-22 -- so it silently went from
+        # "burst-delivered" to "never delivered". A held-out T-shape probe
+        # this session (test_t_shape_33fork_realistic.py) found this
+        # measurably regressing over the ~200 epochs since: raw policy
+        # rank for the correct denial cell 3rd/121 at the Gen12 reset
+        # point -> 47th/121 at the current live checkpoint, MCTS solving
+        # it correctly at epoch 0 and failing every checkpoint since --
+        # i.e. real forgetting of knowledge the supervised-pretrain
+        # checkpoint already had, not just slow acquisition. No new
+        # examples are being authored here -- this is reconnecting an
+        # existing generator to an existing delivery mechanism.
+        examples = [(board, 'X', gap, is_mc) for (board, gap, is_mc) in generate_open_three_examples()]
+        examples += [(board, 'X', gap, is_mc) for (board, gap, is_mc) in generate_fork_examples()]
+        examples += generate_diagnosed_positions_examples()
+        board_by_key, rows_by_key = {}, {}
+        for board, player, (gr, gc), is_mc in examples:
+            key = (tuple(tuple(row) for row in board), player)
+            board_by_key.setdefault(key, (board, player))
+            rows_by_key.setdefault(key, []).append(((gr, gc), is_mc))
+        pool = []
+        for key, target, has_win in _multi_label_targets_from_rows(rows_by_key):
+            board, player = board_by_key[key]
+            board_arr = board_to_input_array(board, player)
+            target_policy_map = target.reshape(BOARD_SIZE, BOARD_SIZE)
+            value = 0.97 if has_win else 0.0
+            pool.append((board_arr, target_policy_map, value))
+        _open_three_injection_cache = pool
+        print(f"Open-three(+3-3-fork) injection pool built: {len(pool)} unique positions "
+              f"(continuous per-epoch draw, replaces tactical_refresh burst)")
+    pool = _open_three_injection_cache
+    if not pool:
+        return []
+    chosen = random.sample(pool, min(n_examples, len(pool)))
+    samples = []
+    for board_arr, target_policy_map, value in chosen:
+        for aug_b, aug_p in augment_sample(board_arr, target_policy_map):
+            samples.append((aug_b, aug_p, value, sample_weight))
+    return samples
+
+
 def refresh_mined_tactical_pool(model, device, num_selfplay_games=16, num_vsdet_games=16,
                                  sims=150, max_workers=6, cap=20000, num_vsleague_games=16,
-                                 epoch=0, league_pool_size=20, league_best_checkpoint_prob=0.28):
+                                 epoch=0, league_pool_size=20, league_best_checkpoint_prob=0.28,
+                                 runner=None):
     """
     Periodic top-up for the real-game-mined tactical pool (see
     _get_mined_tactical_tensors), called once per tactical_refresh cycle
@@ -2488,6 +3079,12 @@ def refresh_mined_tactical_pool(model, device, num_selfplay_games=16, num_vsdet_
     just above this one for the full design. Kept in the same function
     (rather than a second refresh call) so the expensive game-generation
     itself is only paid once per tactical_refresh cycle.
+
+    runner (2026-09-27): optional selfplay_mp_unified task runner. When
+    given, the mining games (+ their per-game hard-example classification)
+    and the relabel searches run in the persistent multi-process game pool
+    instead of threads in this process; any runner failure falls back to
+    the original threaded/sequential code below for that step.
     """
     global _mined_tactical_tensors_cache
 
@@ -2497,32 +3094,45 @@ def refresh_mined_tactical_pool(model, device, num_selfplay_games=16, num_vsdet_
     forks = _fork_geometries()
     games = []  # (plies, outcome) per game, for the hard-example pass
     games_played = 0
+    flagged = None
+    # Opponent picks / depth draws happen here, once, for either path.
+    mine_depths = [_sample_vs_det_max_depth(epoch) for _ in range(num_vsdet_games)]
+    mine_league_model = None
+    if num_vsleague_games > 0:
+        # deep_history_prob=0.0: mining wants the model's CURRENT blind
+        # spots (see docstring above), so this pick stays biased toward
+        # recent/strong opponents only.
+        _mine_pick = _pick_league_opponent(device, league_pool_size, league_best_checkpoint_prob,
+                                           epoch=epoch, deep_history_prob=0.0)
+        if _mine_pick is not None:
+            mine_league_model = _mine_pick[0]
+    if runner is not None:
+        try:
+            games, flagged = runner.mine(model, mine_league_model, device, sims,
+                                         num_selfplay_games, mine_depths,
+                                         num_vsleague_games if mine_league_model is not None else 0)
+            games_played = len(games)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [refresh] unified-pool mining failed ({e!r}) -- threaded fallback", flush=True)
+            games, flagged, games_played = [], None, 0
+            runner = None
     try:
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = [pool.submit(_mine_one_selfplay_game, model, device, sims)
-                       for _ in range(num_selfplay_games)]
-            for fut in futures:
-                games.append(fut.result())
-        games_played += num_selfplay_games
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = [pool.submit(_mine_one_vsdet_game, model, device, sims, (g % 2 == 0),
-                                    _sample_vs_det_max_depth(epoch))
-                       for g in range(num_vsdet_games)]
-            for fut in futures:
-                games.append(fut.result())
-        games_played += num_vsdet_games
-        if num_vsleague_games > 0:
-            # deep_history_prob=0.0: mining wants the model's CURRENT blind
-            # spots (see docstring above), so this pick stays biased toward
-            # recent/strong opponents only -- independent of whatever
-            # league_pool_size widening _pick_league_opponent's TRAINING-data
-            # call site uses.
-            league_pick = _pick_league_opponent(device, league_pool_size, league_best_checkpoint_prob,
-                                                 epoch=epoch, deep_history_prob=0.0)
-            if league_pick is not None:
-                league_model, _ = league_pick
+        if runner is None:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = [pool.submit(_mine_one_selfplay_game, model, device, sims)
+                           for _ in range(num_selfplay_games)]
+                for fut in futures:
+                    games.append(fut.result())
+            games_played += num_selfplay_games
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = [pool.submit(_mine_one_vsdet_game, model, device, sims, (g % 2 == 0), mine_depths[g])
+                           for g in range(num_vsdet_games)]
+                for fut in futures:
+                    games.append(fut.result())
+            games_played += num_vsdet_games
+            if mine_league_model is not None:
                 with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                    futures = [pool.submit(_mine_one_vsleague_game, model, league_model, device, sims, (g % 2 == 0))
+                    futures = [pool.submit(_mine_one_vsleague_game, model, mine_league_model, device, sims, (g % 2 == 0))
                                for g in range(num_vsleague_games)]
                     for fut in futures:
                         games.append(fut.result())
@@ -2557,12 +3167,21 @@ def refresh_mined_tactical_pool(model, device, num_selfplay_games=16, num_vsdet_
 
     _mined_tactical_tensors_cache = None  # force _get_mined_tactical_tensors to reload from disk next call
 
-    flagged = _classify_hard_examples(games, windows, forks)
-    relabeled = _relabel_hard_examples(flagged, model, device)
+    if flagged is None:
+        flagged = _classify_hard_examples(games, windows, forks)
+    relabeled = None
+    if runner is not None:
+        try:
+            relabeled = runner.relabel(model, device, _order_relabel_candidates(flagged), RELABEL_SIMS)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [refresh] unified-pool relabel failed ({e!r}) -- sequential fallback", flush=True)
+            relabeled = None
+    if relabeled is None:
+        relabeled = _relabel_hard_examples(flagged, model, device)
     hard_pool = _load_hard_example_pool()
     hard_pool = _save_hard_example_pool(hard_pool + relabeled)
     class_counts = Counter(r[4] for r in relabeled)
-    class_note = " ".join(f"H{c}={class_counts.get(c,0)}" for c in (1, 2, 3, 5, 6))
+    class_note = " ".join(f"H{c}={class_counts.get(c,0)}" for c in (1, 2, 7, 3, 5, 6))
 
     msg = (f"Tactical pool re-mined: +{len(new_examples)} new (from {len(all_positions)} positions "
            f"across {games_played} games) -> {len(combined)} total"
@@ -2642,7 +3261,15 @@ def tactical_refresh(model, device, epochs=3, batch_size=32):
     inputs, targets, value_targets = inputs.to(device), targets.to(device), value_targets.to(device)
     n = inputs.shape[0]
 
-    optimizer = optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-4)
+    # 2026-09-21 lr-fix restart: 5e-4 -> 5e-5. This was tuned (2026-09-10)
+    # against the OLD main-loop lr=1e-3 (a 0.5x ratio); the main loop is now
+    # 1e-4 (this restart's lr-fix), and tactical_refresh_interval dropped
+    # 21->5 for denser gate-check signal, so this refresh now fires ~4.2x
+    # more often. Left at 5e-4 it would repeatedly overpower the just-
+    # lowered main LR with the same-ratio-violating nudge, ~4x more often --
+    # likely why gate checks are still stuck at ~0% 25+ epochs into this
+    # restart. Scaling down to preserve the original 0.5x-of-main-lr ratio.
+    optimizer = optim.Adam(model.parameters(), lr=5e-5, weight_decay=1e-4)
     model.train()
     last_acc = 0.0
     for _ in range(epochs):
@@ -2718,6 +3345,31 @@ def train_mcts_alpha_zero(
     # it (backward compatible default -- every move is a full search).
     full_search_prob=1.0,
     fast_sims=None,
+    # 2026-09-26: PCR for vs-Det/vs-League games, kept separate so PCR can
+    # be applied to self-play only. None = same as full_search_prob (the
+    # previous behavior, where one value was passed to all three).
+    full_search_prob_other=None,
+    # 2026-09-26: play self-play + vs-Det + vs-League games in ONE
+    # multi-process pool (selfplay_mp_unified) instead of three sequential
+    # phases. False = the previous sequential path (which is also the
+    # automatic fallback whenever the unified pool fails).
+    use_unified_game_pool=False,
+    # 2026-09-27: value target = (1-w)*z + w*q for generated games (see
+    # mixed_value_target). 0.0 = pure game result (previous behavior).
+    value_target_q_weight=0.0,
+    # 2026-10-10 (user): half-life decay of the q weight. From epoch
+    # value_target_q_decay_start on, w(epoch) = value_target_q_weight *
+    # 0.5 ** ((epoch - start) / value_target_q_halflife); below
+    # value_target_q_floor it becomes exactly 0 (pure z). halflife 0 = off.
+    value_target_q_halflife=0,
+    value_target_q_decay_start=0,
+    value_target_q_floor=0.01,
+    # 2026-09-28: cap self-play / league game length (plies); None = no cap.
+    max_game_plies=None,
+    # 2026-09-28: vs-Deterministic games inside the refresh-epoch MINING pass
+    # (the old hard-coded default was 16). 0 = mining uses self-play and
+    # league games only.
+    refresh_vsdet_games=16,
     # -- Exploration noise annealing: noise_anneal_epochs=0 disables it
     # (backward compatible default -- noise_weight/dirichlet_alpha stay
     # fixed at their passed-in value for the whole run, as before).
@@ -2728,21 +3380,57 @@ def train_mcts_alpha_zero(
     use_prioritized_replay=False,
 ):
     self_play_device, train_device = get_devices()
-    optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
-    # Fixed LR for tens of thousands of epochs lets Adam oscillate around a
-    # basin instead of settling into it once loss stops improving; decay it
-    # geometrically instead. Resets to full LR on every process restart since
-    # the scheduler is recreated here, same as the optimizer.
-    # T_0=450 (2026-09-15, was 150): at ~3-4 min/epoch, T_0=150 forced a full
-    # decay-then-reset roughly every ~1-2 real-world days on a run meant to
-    # span thousands of epochs, and it collided once already (the epoch-300
-    # warm restart landing inside the still-unrecovered epoch-273-promotion
-    # window -- see LR_COOLDOWN_EPOCHS above). A longer period cuts the odds
-    # of a full-peak LR jump landing during a fragile post-promotion window.
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=450, T_mult=1, eta_min=5e-5)
+    # 2026-09-21 lr-fix restart: base_lr 0.001->0.0001 and T_0 450->150.
+    # Weight-drift measurement (see conversation/workflow findings) showed
+    # lr=0.001 drifts the post-supervised-pretrain checkpoint 1.86x farther
+    # (matched-epoch comparison) than lr=0.0001, and drift never reverses
+    # even during low-instantaneous-LR windows of the T_0=450 schedule --
+    # consistent with the gate-check having stayed stuck at ~0% for 564+
+    # epochs after the Gen10 supervised-pretrain restart. The prior Gen7->
+    # Gen8 supervised-pretrain restart broke through gate-check right around
+    # the point its T_0=150 schedule decayed to ~1.2e-4 -- this restart
+    # starts there directly instead of spending hundreds of epochs decaying
+    # down to it.
+    # 2026-09-30 (user): gate stuck 15 checks (650-720) while losses kept falling ->
+    # halve the LR band (1e-4..5e-5 -> 5e-5..1e-5) to consolidate instead of drifting.
+    # 2026-10-11 (user): ep937 cooldown ended -> LR jumped 1e-5 -> 4.4e-5 and ep940 fell to ~1,092 Rapfi nodes.
+    # Cosine peak 5e-5 -> 2e-5 (band 2e-5..1e-5) to polish rather than shake before the festival.
+    # LR band per run (run_config.py): 11x11 NAPS 2e-5..1e-5, 11x11_v2 5e-5..1e-5, 15x15 1e-4..2e-5
+    # (2026-10-15, user: the 2e-5 polish band of the mature 11x11 net kept the young 15x15 net flat).
+    optimizer = optim.Adam(model.parameters(), lr=LR_PEAK, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150, T_mult=1, eta_min=LR_MIN)
     start_epoch = load_start_epoch()
     for _ in range(start_epoch):
         scheduler.step()
+    # 2026-10-12 (user): restore Adam's moments across restarts. Every restart used to reset them
+    # (loss spikes at 905/911/913/945). Loaded only if saved right after the epoch we resume at;
+    # the LR stays whatever the schedule/cooldown says now (the saved param_groups LR is discarded).
+    OPT_STATE_PATH = f"model/optimizer_state{_SUFFIX}.pth"
+    # 2026-10-13: a fresh Adam moves every weight by ~LR on its first steps (bias-corrected m/sqrt(v) ~ sign(g)),
+    # which caused the loss spikes after every restart/rollback (ep1003 0.38, ep1047 0.41). If the moments
+    # are not restored, ramp the LR over the first epochs instead.
+    _fresh_opt_warmup = [0.1, 0.3, 0.6]
+    if os.path.exists(OPT_STATE_PATH):
+        try:
+            _os = torch.load(OPT_STATE_PATH, map_location="cpu")
+            if _os.get("next_epoch") == start_epoch:
+                _keep = [(g["lr"], g.get("initial_lr")) for g in optimizer.param_groups]
+                optimizer.load_state_dict(_os["optimizer"])
+                for g, (lr_, ilr) in zip(optimizer.param_groups, _keep):
+                    g["lr"] = lr_
+                    if ilr is not None:
+                        g["initial_lr"] = ilr
+                print(f"Optimizer state restored (saved after epoch {start_epoch - 1}).")
+                _fresh_opt_warmup = []
+            else:
+                print(f"Optimizer state not restored (saved for epoch {_os.get('next_epoch')}, resuming at {start_epoch}).")
+        except Exception as e:
+            print(f"Optimizer state load notice ({e}); starting with a fresh optimizer.")
+    if _fresh_opt_warmup:   # first trained epoch uses the first factor; the rest follow each scheduler step
+        _f0 = _fresh_opt_warmup.pop(0)
+        for _pg in optimizer.param_groups:
+            _pg['lr'] = _pg['lr'] * _f0
+        print(f"Fresh optimizer: LR warm-up x{_f0} for the first trained epoch, then {_fresh_opt_warmup}", flush=True)
     # reduction='none' so prioritized replay (below) can reweight per-sample
     # before averaging; when use_prioritized_replay=False the weights are
     # all 1.0 so this is numerically identical to 'batchmean'/'mean'.
@@ -2774,7 +3462,7 @@ def train_mcts_alpha_zero(
     # not-yet-validated weights. Synced with the tracked best via
     # run_gating_check on every promotion (including bootstrap) -- never
     # trained directly (.train() must never be called on it).
-    gen_model = AlphaZeroTicTacToe()
+    gen_model = GomokuNet()
     if os.path.exists(BEST_CHECKPOINT_PATH):
         try:
             gen_model.load_state_dict(torch.load(BEST_CHECKPOINT_PATH, map_location="cpu"))
@@ -2791,7 +3479,7 @@ def train_mcts_alpha_zero(
     # Constructed once (not per-epoch): holds a reference to `gen_model`, not
     # a weight snapshot, so it keeps working correctly as run_gating_check's
     # promotions mutate those same weights in place across epochs.
-    # target_batch=24, max_wait=0.015 (2026-09-15, was 48/0.005): live stats
+    # target_batch=24, max_wait=0.05 (2026-09-15, was 48/0.005): live stats
     # logging showed this PooledEvaluator hitting its target batch 0% of the
     # time across 300K+ flushes (avg batch ~4, timing out every single time)
     # -- PooledEvaluator._run's `timeout = self.max_wait if pending else None`
@@ -2806,7 +3494,7 @@ def train_mcts_alpha_zero(
     # wall-clock, so this is a real but modest gain, not a step-change. Kept
     # consistent with evaluate_vs_deterministic / run_gating_check's own
     # scoped PooledEvaluators below, which use the same values.
-    pooled_evaluator = PooledEvaluator(gen_model, self_play_device, target_batch=24, max_wait=0.015) \
+    pooled_evaluator = PooledEvaluator(gen_model, self_play_device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) \
         if self_play_device.type == "cuda" else None
 
     cur_num_simulations, cur_boosted_sims, cur_stagnation_count, cur_lr_cooldown = load_sim_budget()
@@ -2842,6 +3530,38 @@ def train_mcts_alpha_zero(
     epoch = start_epoch
     for _local_i in range(num_epochs):
         epoch = start_epoch + _local_i
+        cur_q_weight = value_target_q_weight
+        if value_target_q_halflife and epoch >= value_target_q_decay_start:
+            cur_q_weight = value_target_q_weight * 0.5 ** ((epoch - value_target_q_decay_start) / value_target_q_halflife)
+            if cur_q_weight < value_target_q_floor:
+                cur_q_weight = 0.0
+        print(f"  [value target] epoch {epoch}: q weight {cur_q_weight:.4f} (z weight {1 - cur_q_weight:.4f})", flush=True)
+        # 2026-10-12 (user): second promotion path -- Rapfi ladder. The gate (vs the current best only)
+        # can be blocked by a matchup ("상성"); if the ladder watcher finds a measured checkpoint stronger
+        # than the best with P >= 80% (bootstrap), it writes model/ladder_promote.json and the checkpoint
+        # becomes the best AND the self-play generation model here, at the start of the next epoch.
+        try:
+            _lp_path = "model/ladder_promote.json"
+            if os.path.exists(_lp_path):
+                import json as _json
+                with open(_lp_path, encoding="utf-8") as _f:
+                    _lp = _json.load(_f)
+                if not _lp.get("applied") and os.path.exists(_lp["ckpt"]):
+                    _sd = torch.load(_lp["ckpt"], map_location="cpu")
+                    if os.path.exists(BEST_CHECKPOINT_PATH):
+                        __import__("shutil").copy2(BEST_CHECKPOINT_PATH, BEST_CHECKPOINT_PATH + f".before_ladder_promo_ep{epoch}")
+                    torch.save(_sd, BEST_CHECKPOINT_PATH)
+                    gen_model.load_state_dict(_sd)
+                    gen_model.to(self_play_device, memory_format=preferred_memory_format(self_play_device))
+                    gen_model.eval()
+                    _lp["applied"] = True; _lp["applied_at_epoch"] = epoch
+                    with open(_lp_path, "w", encoding="utf-8") as _f:
+                        _json.dump(_lp, _f, ensure_ascii=False, indent=1)
+                    report_logger(f"Epoch {epoch} | Ladder promotion: {_lp.get('name', _lp['ckpt'])} -> best "
+                                  f"(eq {_lp.get('eq', '?')} vs best {_lp.get('best_eq', '?')}, P {_lp.get('p', '?')}) -> PROMOTED (ladder)")
+                    print(f"  [ladder promotion] {_lp['ckpt']} is now best + generation model", flush=True)
+        except Exception as _e:
+            print(f"  [ladder promotion] notice: {_e!r}", flush=True)
         if epoch % 10 == 0:
             snap_path = f"model/model_MCTS_ep{epoch}{_SUFFIX}.pth"
             torch.save(model.state_dict(), snap_path)
@@ -2853,7 +3573,7 @@ def train_mcts_alpha_zero(
         # matches board_to_input_tensor's output format per device: on CUDA
         # that's contiguous_format (channels_last measured 1.4x-3.4x SLOWER
         # on this GPU -- see preferred_memory_format's docstring in
-        # alphago_lee.py), on CPU it stays channels_last as before.
+        # board_encoding.py), on CPU it stays channels_last as before.
         model.to(self_play_device, memory_format=preferred_memory_format(self_play_device))
         torch.set_num_threads(1)
         # Fresh per-epoch NN-eval cache: weights are frozen for this whole
@@ -2881,46 +3601,102 @@ def train_mcts_alpha_zero(
             cur_dirichlet_alpha = _target_dirichlet_alpha
             _last_safe_noise_weight = cur_noise_weight
             _last_safe_dirichlet_alpha = cur_dirichlet_alpha
-        raw_samples, outcome_counts = generate_mcts_self_play_data(
-            gen_model, self_play_device, num_games=num_self_play_games, num_simulations=cur_num_simulations,
-            max_workers=self_play_workers, boosted_sims=cur_boosted_sims, boost_threshold=boost_threshold,
-            temperature_moves=temperature_moves, dirichlet_alpha=cur_dirichlet_alpha, noise_weight=cur_noise_weight,
-            c_puct=c_puct, eval_cache=epoch_eval_cache, boost_when_narrow=boost_when_narrow,
-            num_curriculum_games=num_curriculum_games, num_opening_games=num_opening_games,
-            pooled_evaluator=pooled_evaluator,
-            full_search_prob=full_search_prob, fast_sims=fast_sims
-        )
-        replay_buffer.extend(raw_samples)
+        _t_epoch_start = time.monotonic()
+        _fsp_other = full_search_prob if full_search_prob_other is None else full_search_prob_other
 
-        vs_det_outcome_counts = None
-        if num_vs_deterministic_games > 0:
-            vs_det_samples, vs_det_outcome_counts = generate_mcts_vs_deterministic_data(
-                gen_model, self_play_device, num_games=num_vs_deterministic_games, num_simulations=cur_num_simulations,
-                max_workers=self_play_workers, boosted_sims=cur_boosted_sims, boost_threshold=boost_threshold,
-                temperature_moves=temperature_moves, dirichlet_alpha=vs_det_dirichlet_alpha, noise_weight=vs_det_noise_weight,
-                c_puct=c_puct_exploit, eval_cache=epoch_eval_cache, boost_when_narrow=boost_when_narrow,
-                pooled_evaluator=pooled_evaluator, full_search_prob=full_search_prob, fast_sims=fast_sims,
-                epoch=epoch
-            )
-            replay_buffer.extend(vs_det_samples)
-
-        league_outcome_counts = None
+        # League opponent is picked up front (it used to be picked after the
+        # self-play/vs-Det phases) so the unified pool can play its games
+        # alongside everything else.
+        league_model = None
         league_opponent_name = None
-        if num_league_games > 0:
+        if num_league_games > 0 and LEAGUE_NUM_OPPONENTS > 1:
+            _picks = _pick_league_opponents_multi(self_play_device, min(LEAGUE_NUM_OPPONENTS, num_league_games),
+                                                  league_pool_size, epoch=epoch)
+            if _picks:
+                league_model = [m for m, _ in _picks]
+                league_opponent_name = f"{len(_picks)} opponents: " + ", ".join(
+                    os.path.basename(p).replace("model_MCTS_", "").replace(f"{_SUFFIX}.pth", "").replace(".pth", "")
+                    for _, p in _picks)
+        elif num_league_games > 0:
             league_pick = _pick_league_opponent(self_play_device, league_pool_size, league_best_checkpoint_prob,
                                                  epoch=epoch)
             if league_pick is not None:
                 league_model, league_path = league_pick
                 league_opponent_name = os.path.basename(league_path)
-                league_samples, league_outcome_counts = generate_mcts_vs_league_data(
-                    gen_model, league_model, self_play_device, num_games=num_league_games, num_simulations=cur_num_simulations,
+
+        def _sequential_generation(reason=None):
+            """The original three-phase generation (self-play MP, then
+            vs-Det threaded, then vs-League threaded). Used directly when the
+            unified pool is off, and as its automatic fallback."""
+            if reason:
+                print(f"  [generation] sequential path: {reason}", flush=True)
+            _sp, _sp_counts = generate_mcts_self_play_data_mp(
+                gen_model, self_play_device, num_games=num_self_play_games, num_simulations=cur_num_simulations,
+                max_workers=self_play_workers, boosted_sims=cur_boosted_sims, boost_threshold=boost_threshold,
+                temperature_moves=temperature_moves, dirichlet_alpha=cur_dirichlet_alpha, noise_weight=cur_noise_weight,
+                c_puct=c_puct, eval_cache=epoch_eval_cache, boost_when_narrow=boost_when_narrow,
+                num_curriculum_games=num_curriculum_games, num_opening_games=num_opening_games,
+                pooled_evaluator=pooled_evaluator,
+                full_search_prob=full_search_prob, fast_sims=fast_sims,
+                value_q_weight=cur_q_weight, max_plies=max_game_plies
+            )
+            _vd, _vd_counts = None, None
+            if num_vs_deterministic_games > 0:
+                _vd, _vd_counts = generate_mcts_vs_deterministic_data(
+                    gen_model, self_play_device, num_games=num_vs_deterministic_games, num_simulations=cur_num_simulations,
                     max_workers=self_play_workers, boosted_sims=cur_boosted_sims, boost_threshold=boost_threshold,
                     temperature_moves=temperature_moves, dirichlet_alpha=vs_det_dirichlet_alpha, noise_weight=vs_det_noise_weight,
                     c_puct=c_puct_exploit, eval_cache=epoch_eval_cache, boost_when_narrow=boost_when_narrow,
-                    pooled_evaluator=pooled_evaluator, full_search_prob=full_search_prob, fast_sims=fast_sims,
-                    epoch=epoch
+                    pooled_evaluator=pooled_evaluator, full_search_prob=_fsp_other, fast_sims=fast_sims,
+                    epoch=epoch, value_q_weight=cur_q_weight
                 )
-                replay_buffer.extend(league_samples)
+            _lg, _lg_counts = None, None
+            _lm = league_model[0] if isinstance(league_model, list) else league_model  # fallback: first opponent only
+            if _lm is not None:
+                _lg, _lg_counts = generate_mcts_vs_league_data(
+                    gen_model, _lm, self_play_device, num_games=num_league_games, num_simulations=cur_num_simulations,
+                    max_workers=self_play_workers, boosted_sims=cur_boosted_sims, boost_threshold=boost_threshold,
+                    temperature_moves=temperature_moves, dirichlet_alpha=vs_det_dirichlet_alpha, noise_weight=vs_det_noise_weight,
+                    c_puct=c_puct_exploit, eval_cache=epoch_eval_cache, boost_when_narrow=boost_when_narrow,
+                    pooled_evaluator=pooled_evaluator, full_search_prob=_fsp_other, fast_sims=fast_sims,
+                    epoch=epoch, value_q_weight=cur_q_weight, max_plies=max_game_plies
+                )
+            return _sp, _sp_counts, _vd, _vd_counts, _lg, _lg_counts
+
+        if use_unified_game_pool:
+            _selfplay_cfg = dict(
+                num_simulations=cur_num_simulations, boosted_sims=cur_boosted_sims, boost_threshold=boost_threshold,
+                temperature_moves=temperature_moves, dirichlet_alpha=cur_dirichlet_alpha, noise_weight=cur_noise_weight,
+                c_puct=c_puct, boost_when_narrow=boost_when_narrow,
+                full_search_prob=full_search_prob, fast_sims=fast_sims,
+                max_plies=max_game_plies,
+            )
+            _vsdet_cfg = dict(
+                num_simulations=cur_num_simulations, boosted_sims=cur_boosted_sims, boost_threshold=boost_threshold,
+                temperature_moves=temperature_moves, dirichlet_alpha=vs_det_dirichlet_alpha, noise_weight=vs_det_noise_weight,
+                c_puct=c_puct_exploit, boost_when_narrow=boost_when_narrow,
+                full_search_prob=_fsp_other, fast_sims=fast_sims,
+                max_plies=max_game_plies,  # used by the league games (vs-Det has no cap)
+            )
+            (raw_samples, outcome_counts, vs_det_samples, vs_det_outcome_counts,
+             league_samples, league_outcome_counts) = generate_epoch_games_unified(
+                gen_model, self_play_device, epoch=epoch, max_workers=self_play_workers,
+                selfplay_cfg=_selfplay_cfg, num_self_play_games=num_self_play_games,
+                num_curriculum_games=num_curriculum_games, num_opening_games=num_opening_games,
+                vsdet_cfg=_vsdet_cfg, num_vs_det_games=num_vs_deterministic_games,
+                league_model=league_model, num_league_games=num_league_games,
+                fallback=_sequential_generation, value_q_weight=cur_q_weight,
+            )
+        else:
+            (raw_samples, outcome_counts, vs_det_samples, vs_det_outcome_counts,
+             league_samples, league_outcome_counts) = _sequential_generation()
+
+        replay_buffer.extend(raw_samples)
+        if vs_det_samples:
+            replay_buffer.extend(vs_det_samples)
+        if league_samples:
+            replay_buffer.extend(league_samples)
+        _t_gen_done = time.monotonic()
 
         # Continuous sampling from the hard-mined pool (2026-09-11) -- the
         # mining/relabeling itself stays batched on the expensive
@@ -2933,6 +3709,22 @@ def train_mcts_alpha_zero(
         hard_samples = _get_hard_example_samples(self_play_device, n_positions=46)
         if hard_samples:
             replay_buffer.extend(hard_samples)
+
+        # 2026-09-22: continuous per-epoch open-three curriculum injection,
+        # replacing tactical_refresh()'s periodic burst (see
+        # _get_open_three_injection_samples docstring for why).
+        open_three_samples = _get_open_three_injection_samples(n_examples=120)
+        if open_three_samples:
+            replay_buffer.extend(open_three_samples)
+
+        # 2026-09-23: dedicated Hard-7 (general fork) quota, on top of
+        # hard_samples' whole-pool draw above -- see
+        # _get_fork_mistake_samples docstring (measured: without this,
+        # Hard-7 got ~1-2 exposures/epoch by chance, essentially no real
+        # training signal one full mining cycle after being added).
+        fork_mistake_samples = _get_fork_mistake_samples(n_positions=60)
+        if fork_mistake_samples:
+            replay_buffer.extend(fork_mistake_samples)
 
         # Interval-saved (not every epoch): the buffer only changes by ~1-2%
         # per epoch, so pickling all 50,000 samples every single epoch was
@@ -2957,7 +3749,9 @@ def train_mcts_alpha_zero(
                            f"League-win {league_outcome_counts['league_win']} / "
                            f"Draw {league_outcome_counts['draw']}")
 
-        if len(replay_buffer) < batch_size:
+        # 2026-10-13 (user, clean rollback to ep960): with an emptied buffer, only generate data until
+        # NAPS_MIN_BUFFER samples exist, so the first training steps do not overfit a tiny buffer.
+        if len(replay_buffer) < max(batch_size, int(os.environ.get("NAPS_MIN_BUFFER", "0") or 0)):
             print(f"  Replay buffer warming up: {len(replay_buffer)}/{batch_size} samples "
                   f"(need at least one full batch). Skipping the training step this epoch.")
             report_logger(f"Epoch {epoch + 1}/{num_epochs} | Warming up ({len(replay_buffer)}/{batch_size}) | "
@@ -2967,6 +3761,8 @@ def train_mcts_alpha_zero(
             continue
 
         buffer_list = list(replay_buffer)
+        if len(buffer_list) > TRAIN_SAMPLES_PER_EPOCH:
+            buffer_list = random.sample(buffer_list, TRAIN_SAMPLES_PER_EPOCH)
         inputs_np = np.array([s[0] for s in buffer_list], dtype=np.float32)
         policies_np = np.array([s[1] for s in buffer_list], dtype=np.float32)
         values_np = np.array([[s[2]] for s in buffer_list], dtype=np.float32)
@@ -2975,6 +3771,11 @@ def train_mcts_alpha_zero(
         # weights); default to 1.0 for older 3-element samples already sitting
         # in a loaded replay buffer pickle from before this feature existed.
         weights_np = np.array([[s[3] if len(s) > 3 else 1.0] for s in buffer_list], dtype=np.float32)
+        # 5th element: V3 survival target (self-play samples only); NaN =
+        # no label (vs-Det/vs-League/hard/injection samples, older buffer
+        # entries), masked out of the auxiliary loss below.
+        survival_np = np.array([[s[4] if len(s) > 4 and s[4] is not None else np.nan] for s in buffer_list],
+                               dtype=np.float32)
 
         # Training phase: GPU (batched forward+backward is faster there
         # even though single-sample self-play forward passes are not).
@@ -2982,6 +3783,12 @@ def train_mcts_alpha_zero(
         # below produces -- leaving this as channels_last (inherited from the
         # self-play .to() above) made every conv convert layout on the fly.
         model.to(train_device, memory_format=torch.contiguous_format)
+        # 2026-10-14 (15x15): Adam moments restored on resume were loaded while the model sat on the CPU;
+        # keep them on the training device or the first step fails (cuda:0 vs cpu).
+        for _st in optimizer.state.values():
+            for _k, _v in _st.items():
+                if torch.is_tensor(_v) and _v.device != train_device and _k != "step":
+                    _st[_k] = _v.to(train_device)
         if train_device.type == "cpu":
             torch.set_num_threads(os.cpu_count() or 4)
         model.train()
@@ -2997,7 +3804,10 @@ def train_mcts_alpha_zero(
         pol_t = torch.from_numpy(policies_np).to(train_device)
         val_t = torch.from_numpy(values_np).to(train_device)
         weight_t = torch.from_numpy(weights_np).to(train_device)
+        surv_t = torch.from_numpy(survival_np).to(train_device)
         n_samples = in_t.shape[0]
+        total_s_loss = 0.0
+        num_s_b = 0
         perm = torch.randperm(n_samples, device=train_device)
 
         total_p_loss = torch.zeros((), device=train_device, dtype=torch.float64)
@@ -3007,19 +3817,24 @@ def train_mcts_alpha_zero(
         for i in range(0, n_samples, batch_size):
             idx = perm[i:i + batch_size]
             b_in, b_pol, b_val, b_weight = in_t[idx], pol_t[idx], val_t[idx], weight_t[idx]
+            b_surv = surv_t[idx]
             optimizer.zero_grad()
 
-            pred_pol_logits, pred_val = model(b_in)
+            pred_pol_logits, pred_val, pred_surv = model.forward_all(b_in)
             # reduction='none': policy_criterion gives (B, NUM_CELLS), sum
             # over dim=1 to match KLDivLoss(reduction='batchmean')'s
             # per-sample contribution; value_criterion gives (B, 1).
             p_loss_per_sample = policy_criterion(pred_pol_logits, b_pol).sum(dim=1)
-            v_loss_per_sample = value_criterion(pred_val, b_val).squeeze(-1)
+            # 2026-09-26: value=None samples (policy-only hard classes) carry
+            # NaN and are masked out here. Before this they were stored as
+            # 0.0 and silently trained the value head toward "draw".
+            v_mask = ~torch.isnan(b_val.squeeze(-1))
+            v_loss_per_sample = value_criterion(pred_val, torch.nan_to_num(b_val, nan=0.0)).squeeze(-1) * v_mask
             # Logged/tracked regardless of use_prioritized_replay, so the
             # Policy/Value Loss numbers in training_report stay comparable
             # to every epoch before this feature existed.
             p_loss_unweighted = p_loss_per_sample.mean()
-            v_loss_unweighted = v_loss_per_sample.mean()
+            v_loss_unweighted = v_loss_per_sample.sum() / v_mask.sum().clamp_min(1)
 
             # Prioritized replay (Schaul et al. 2015), adapted to this
             # project's full-buffer-pass-per-epoch training loop instead
@@ -3051,6 +3866,17 @@ def train_mcts_alpha_zero(
 
             loss = p_loss + 1.0 * v_loss
 
+            # V3 auxiliary survival loss (KataGo-style dense signal: how many
+            # plies remain), only on rows that carry a label. Weighted low
+            # (0.25) so it shapes the shared trunk without competing with
+            # the policy/value objectives.
+            s_mask = ~torch.isnan(b_surv)
+            if s_mask.any():
+                s_loss = nn.functional.mse_loss(pred_surv[s_mask], b_surv[s_mask])
+                loss = loss + SURVIVAL_LOSS_WEIGHT * s_loss
+                total_s_loss += float(s_loss.detach())
+                num_s_b += 1
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -3081,19 +3907,37 @@ def train_mcts_alpha_zero(
             for _pg in optimizer.param_groups:
                 _pg['lr'] = scheduler.eta_min
             cur_lr_cooldown -= 1
+        if _fresh_opt_warmup:
+            _f = _fresh_opt_warmup.pop(0)
+            for _pg in optimizer.param_groups:
+                _pg['lr'] = _pg['lr'] * _f
+            print(f"  [fresh optimizer] LR warm-up x{_f} this epoch ({len(_fresh_opt_warmup)} warm-up epochs left)", flush=True)
 
-        # Periodically re-inject the tactical curriculum (see tactical_refresh
-        # docstring) so it doesn't get diluted back out by ordinary self-play
-        # volume between refreshes. Runs on train_device right after the
-        # regular training step, reusing the same optimizer.
+        # 2026-09-22: tactical_refresh() (the periodic burst supervised
+        # re-injection that used to run here) was REMOVED -- see
+        # _get_open_three_injection_samples docstring for the measured
+        # before/after evidence (immediate vs-Det win-rate drop, decays back
+        # within ~2 epochs anyway). The open-three/diagnosed-position
+        # curriculum is now injected continuously every epoch instead (see
+        # the open_three_samples call above, right after hard_samples).
+        # refresh_mined_tactical_pool (mining fresh REAL tactical examples
+        # from current self-play, unrelated to the burst fine-tune) and the
+        # promotion gate check both still run on this same interval cadence
+        # -- neither was implicated by the destroy/retention tests, and the
+        # gate check in particular still needs a periodic "checkpoint" cadence
+        # to compare against, unrelated to whether tactical_refresh runs.
+        _t_train_done = time.monotonic()
         tactical_note = ""
         gate_note = ""
         if tactical_refresh_interval > 0 and (epoch + 1) % tactical_refresh_interval == 0:
+            _runner = get_task_runner(self_play_workers) if use_unified_game_pool else None
+            _t_refresh0 = time.monotonic()
             refresh_mined_tactical_pool(model, train_device, epoch=epoch,
+                                         num_vsdet_games=refresh_vsdet_games,
                                          league_pool_size=league_pool_size,
-                                         league_best_checkpoint_prob=league_best_checkpoint_prob)
-            tactical_acc = tactical_refresh(model, train_device, epochs=tactical_refresh_epochs)
-            tactical_note = f" | Tactical Refresh Acc: {tactical_acc:.0%}"
+                                         league_best_checkpoint_prob=league_best_checkpoint_prob,
+                                         runner=_runner)
+            _t_refresh1 = time.monotonic()
 
             # Promotion gate (see run_gating_check docstring): reuses this
             # same periodic cadence since it's the natural "checkpoint" point
@@ -3101,10 +3945,22 @@ def train_mcts_alpha_zero(
             # would add unnecessary cost for no extra signal at this pace.
             model.to(self_play_device, memory_format=preferred_memory_format(self_play_device))
             torch.set_num_threads(1)
+            _LAST_GATE_CANDIDATE["path"] = None
             gate_win, gate_draw, gate_loss, promoted = run_gating_check(
                 model, gen_model, self_play_device, eval_simulations, boosted_sims=boosted_sims,
-                boost_threshold=boost_threshold, boost_when_narrow=boost_when_narrow, c_puct=c_puct_exploit
+                boost_threshold=boost_threshold, boost_when_narrow=boost_when_narrow, c_puct=c_puct_exploit,
+                runner=_runner
             )
+            # 2026-10-11 (user): keep the weights of every gate where the OLD rule (W + D/2 >= 55%) would
+            # have promoted but the new loss-penalty rule did not, so the new rule's judgement can be checked
+            # later (e.g. Rapfi ladder). Only these disagreements are saved (~34 MB each).
+            if not promoted and gate_win + 0.5 * gate_draw >= 0.55:
+                os.makedirs("model/gate_disagree", exist_ok=True)
+                _gd_path = f"model/gate_disagree/ep{epoch}{_SUFFIX}.pth"
+                torch.save(model.state_dict(), _gd_path)
+                print(f"  [gate] old rule would have promoted ep{epoch}; weights kept at {_gd_path}", flush=True)
+            print(f"  [refresh-timing] mining+relabel {_t_refresh1 - _t_refresh0:.1f}s | "
+                  f"gate {time.monotonic() - _t_refresh1:.1f}s", flush=True)
             ramp_note = ""
             if promoted:
                 cur_stagnation_count = 0
@@ -3127,10 +3983,13 @@ def train_mcts_alpha_zero(
                         ramp_note = f" -> sim budget now {cur_num_simulations}/{cur_boosted_sims} (stagnation bump)"
                 save_sim_budget(cur_num_simulations, cur_boosted_sims, cur_stagnation_count, cur_lr_cooldown)
             gate_note = (f" | Gate vs best ({len(_GATE_OPENING_SQUARES) * 2} games): Win {gate_win:.0%} / "
-                         f"Draw {gate_draw:.0%} / Loss {gate_loss:.0%} -> {'PROMOTED' if promoted else 'kept'}{ramp_note}")
+                         f"Draw {gate_draw:.0%} / Loss {gate_loss:.0%} -> {'PROMOTED' if promoted else ('CANDIDATE (ladder check pending)' if _LAST_GATE_CANDIDATE['path'] else 'kept')}{ramp_note}")
             model.train()
 
+        _t_gate_done = time.monotonic()
         msg = f"MCTS Epoch {epoch + 1}: Policy Loss: {avg_p:.4f}, Value Loss: {avg_v:.4f}, Buffer: {len(replay_buffer)}"
+        if num_s_b:
+            msg += f", Survival Loss: {total_s_loss / num_s_b:.4f}"
         logger(msg)
         print(f"  {msg}")
 
@@ -3159,6 +4018,11 @@ def train_mcts_alpha_zero(
         # Saving epoch+1 here, right after this epoch's own checkpoint write,
         # closes that window: a kill after this line correctly resumes at
         # epoch+1; a kill before it correctly redoes only epoch (never more).
+        try:   # 2026-10-12: optimizer moments for the next restart (atomic write)
+            torch.save({"next_epoch": epoch + 1, "optimizer": optimizer.state_dict()}, OPT_STATE_PATH + ".tmp")
+            os.replace(OPT_STATE_PATH + ".tmp", OPT_STATE_PATH)
+        except Exception as e:
+            print(f"Optimizer state save notice ({e})")
         save_cumulative_epoch(epoch + 1)
 
         # Periodically measure the actual research goal: win rate against the
@@ -3185,6 +4049,15 @@ def train_mcts_alpha_zero(
             line = report_logger(eval_msg)
             print(f"  {line}")
             model.train()
+
+        # Per-stage wall-clock (2026-09-26): games = all generation games,
+        # train = injections + the training pass, refresh+gate = mining +
+        # promotion gate (every tactical_refresh_interval epochs), eval =
+        # formal vs-Det eval (every eval_interval epochs).
+        _t_end = time.monotonic()
+        print(f"  [stage-timing] epoch {epoch + 1}: games {_t_gen_done - _t_epoch_start:.1f}s | "
+              f"train {_t_train_done - _t_gen_done:.1f}s | refresh+gate {_t_gate_done - _t_train_done:.1f}s | "
+              f"eval {_t_end - _t_gate_done:.1f}s | total {_t_end - _t_epoch_start:.1f}s", flush=True)
 
     final_path = f"model/model_MCTS_ep{epoch + 1}_final{_SUFFIX}.pth"
     torch.save(model.state_dict(), checkpoint_path)

@@ -4,7 +4,7 @@
 /*
 !/.gitignore
 !/README.md
-!/10x10/
+!/11x11_naps/
 !/cpp_mcts/
 !/manual/
 # 2026-11: one docs tree and one path config for every run folder
@@ -20,18 +20,18 @@
 **/__pycache__/
 
 # --- 10x10: source, docs, problems, web board only ---
-/10x10/**
-!/10x10/**/
-!/10x10/*.py
-!/10x10/*.md
-!/10x10/hlt/web/*.py
-!/10x10/hlt/web/*.html
-!/10x10/tactical_problems/*.json
+/11x11_naps/**
+!/11x11_naps/**/
+!/11x11_naps/*.py
+!/11x11_naps/*.md
+!/11x11_naps/hlt/web/*.py
+!/11x11_naps/hlt/web/*.html
+!/11x11_naps/tactical_problems/*.json
 # never: weights, buffers, logs, binaries, old backup folders
-/10x10/model/
-/10x10/backup_*/
-/10x10/**/__pycache__/
-/10x10/scratch*/
+/11x11_naps/model/
+/11x11_naps/backup_*/
+/11x11_naps/**/__pycache__/
+/11x11_naps/scratch*/
 
 # --- cpp_mcts: the engine sources the 11x11 run actually uses ---
 /cpp_mcts/*
@@ -84,8 +84,8 @@
 # never: backups, generated game viewers (visitor games)
 *.bak*
 *.reverted_*
-/10x10/hlt/web/games_viewer.html
-/10x10/hlt/web/watch_list.html
+/11x11_naps/hlt/web/games_viewer.html
+/11x11_naps/hlt/web/watch_list.html
 # 2026-11-01: Kaggle runner for the CATFISH seed replicates
 !/11x11_v2/kaggle/
 /11x11_v2/kaggle/*

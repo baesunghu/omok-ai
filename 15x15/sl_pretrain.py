@@ -3,7 +3,7 @@
 
 Eval mapping: v = tanh(eval / S), with S fitted so tanh(eval / S) best predicts the game result from the
 side to move (z = +1 win, -1 loss, 0 draw); mate scores ("M"/"+M"/"-M") map to +-1.
-Inputs use the production encoder (alphago_lee.board_to_input_array, 5 planes); each batch applies a random
+Inputs use the production encoder (board_encoding.board_to_input_array, 5 planes); each batch applies a random
 dihedral symmetry. 5% of the GAMES are held out.
 
 Writes model/model_MCTS_ep0_15x15.pth (the epoch-0 starting point) plus the training checkpoint and best
@@ -23,8 +23,8 @@ import torch
 import torch.nn.functional as F
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
+from board_encoding import board_to_input_array
+from nets import GomokuNetV3
 from fast_board import BOARD_SIZE as N, FILE_SUFFIX
 
 assert N == 15, N
@@ -101,7 +101,7 @@ V = {k: value_targets(v[2]) for k, v in data.items()}
 
 dev = torch.device("cuda")
 torch.backends.cudnn.benchmark = True
-net = AlphaZeroTicTacToeV3().to(dev)
+net = GomokuNetV3().to(dev)
 opt = torch.optim.AdamW(net.parameters(), lr=LR, weight_decay=1e-4)
 Xtr, Ptr = data["train"][0], data["train"][1]
 steps = EPOCHS * ((len(Ptr) + BATCH - 1) // BATCH)

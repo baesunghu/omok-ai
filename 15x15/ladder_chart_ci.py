@@ -3,7 +3,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 plt.rcParams["font.family"] = "Malgun Gothic"; plt.rcParams["axes.unicode_minus"] = False
 import os
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (11x11_naps / 11x11_v2 / 15x15)
 SP = os.path.join(HERE, "model")  # ladder_hist.json / ladder_ci.json live here
 rows = [r for r in json.load(open(os.path.join(SP, "ladder_hist.json"))) if not r["dup"] and r["eq"]]
 INK, INK2, MUTED, GRID, SURF = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#fcfcfb"

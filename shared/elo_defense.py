@@ -33,8 +33,8 @@ import torch
 import numpy as np
 
 import mcts_core_verbose
-from alphago_lee_v2_seblock import AlphaZeroTicTacToeV2 as AlphaZeroTicTacToe
-from alphago_lee import preferred_memory_format, board_to_input_array_from_numeric
+from nets import GomokuNetV2 as GomokuNet
+from board_encoding import preferred_memory_format, board_to_input_array_from_numeric
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, FILE_SUFFIX
 
 MODEL_DIR = os.path.join(HERE, "model")
@@ -52,7 +52,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def load(path):
-    m = AlphaZeroTicTacToe()
+    m = GomokuNet()
     m.load_state_dict(torch.load(path, map_location=device))
     m.to(device, memory_format=preferred_memory_format(device))
     m.eval()

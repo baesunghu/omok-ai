@@ -35,7 +35,7 @@ torch.save(p, os.path.join(OUT, "catfish_policy0.pth"))
 print("catfish opponents written from", SRC)
 # 2026-10-22 (user): Dawn (ep625, graduated 9/29) as an intact league anchor -- the cleanest value head in the
 # lineage (before the Hard-7 contamination) and it passed the graduation problems 3/3.
-DAWN = "../10x10/model/graduated_11x11/ep625_graduated_20260929.pth"
+DAWN = "../11x11_naps/model/graduated_11x11/ep625_graduated_20260929.pth"
 if os.path.exists(DAWN):
     torch.save(torch.load(DAWN, map_location="cpu"), os.path.join(OUT, "catfish_dawn.pth"))
     print("catfish_dawn written from", DAWN)

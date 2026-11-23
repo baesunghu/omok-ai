@@ -1,5 +1,8 @@
+"""Board -> network input planes (5 planes: own, opponent, empty, own fork cells, opponent fork cells),
+win/draw checks, and device / memory-format helpers. Every network in nets.py reads these planes.
+(Until 2026-11 this lived in alphago_lee.py together with the V1 network, now nets.GomokuNetV1.)
+"""
 import torch
-import torch.nn as nn
 import numpy as np
 import os
 
@@ -36,7 +39,7 @@ INPUT_SIZE = NUM_CELLS * NUM_INPUT_CHANNELS
 # independently re-verified in this session. Falls back to the pure-Python
 # implementation if the compiled extension isn't present (e.g. a different
 # machine/Python ABI) -- same try/except ImportError pattern as
-# alphazero_mcts.py's _mcts_core.
+# mcts_python.py's _mcts_core.
 try:
     import fork_mask_cpp as _fork_mask_native
 except ImportError:
@@ -207,133 +210,6 @@ if not os.path.exists('model'):
 
 
 # ============================================================
-# ResNet Block & Dual-Head Policy-Value Network
-# ============================================================
-
-class ResBlock(nn.Module):
-    def __init__(self, channels=64):
-        super(ResBlock, self).__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(channels)
-
-    def forward(self, x):
-        residual = x
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        out += residual
-        return self.relu(out)
-
-
-class AlphaZeroTicTacToe(nn.Module):
-    """
-    High-performance 2D Convolutional Policy-Value Network for 10x10 Board.
-    Supports both 4D tensors (B, NUM_INPUT_CHANNELS, 10, 10) and 2D tensors
-    (B, NUM_INPUT_CHANNELS * 100) -- 5 input planes: curr, opp, empty,
-    fork_self, fork_opp (see board_to_input_array).
-    """
-
-    def __init__(self, board_size=BOARD_SIZE, num_channels=None, num_res_blocks=None, value_hidden=None):
-        super(AlphaZeroTicTacToe, self).__init__()
-        # Scale capacity with board size so every call site (training and
-        # inference alike) gets a consistent architecture automatically --
-        # 3x3 already converges well at 64/2 (loss ~0.04), but on 5x5 that
-        # size plateaued (loss flat ~0.45 for dozens of epochs even after
-        # the replay buffer was mostly refreshed with better search targets)
-        # which points at capacity, not data quality, as the bottleneck.
-        # 10x10 (4x the cells of 5x5, WIN_LENGTH=5 needing a longer-range
-        # receptive field) reused the 5x5-sized 128/3 config with no board
-        # size big enough to fall outside board_size<=5's tier -- adding a
-        # third tier here before the same capacity plateau shows up again.
-        if board_size <= 3:
-            num_channels = num_channels or 64
-            num_res_blocks = num_res_blocks or 2
-            value_hidden = value_hidden or 64
-        elif board_size <= 5:
-            num_channels = num_channels or 128
-            num_res_blocks = num_res_blocks or 3
-            value_hidden = value_hidden or 128
-        else:
-            # Gen3 capacity bump (2026-09-08): 192/5 plateaued (Policy Loss
-            # never below 0.548 across 400+ epochs, same plateau-shape as the
-            # 5x5 tier's precedent above) -- 256/7 is ~2.5x params.
-            num_channels = num_channels or 256
-            num_res_blocks = num_res_blocks or 7
-            value_hidden = value_hidden or 256
-
-        self.board_size = board_size
-        self.num_cells = board_size * board_size
-        # Stored as an instance attribute (not read as the NUM_INPUT_CHANNELS
-        # global directly) because forward() references it under
-        # torch.jit.script -- TorchScript can close over self.* attributes
-        # but rejects closing over a plain module-level Python int global.
-        self.num_input_channels = NUM_INPUT_CHANNELS
-
-        # Common Conv Feature Extractor
-        self.conv_in = nn.Sequential(
-            nn.Conv2d(NUM_INPUT_CHANNELS, num_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(num_channels),
-            nn.ReLU(inplace=True)
-        )
-        self.res_blocks = nn.ModuleList([ResBlock(num_channels) for _ in range(num_res_blocks)])
-
-        # Policy Head (Outputs log-probabilities for BOARD_SIZE*BOARD_SIZE actions)
-        self.policy_head = nn.Sequential(
-            nn.Conv2d(num_channels, 8, kernel_size=1),
-            nn.BatchNorm2d(8),
-            nn.ReLU(inplace=True),
-            nn.Flatten(),
-            nn.Linear(8 * self.num_cells, self.num_cells),
-            nn.LogSoftmax(dim=-1)
-        )
-
-        # Value Head (Outputs state value in range [-1, 1])
-        self.value_head = nn.Sequential(
-            nn.Conv2d(num_channels, 4, kernel_size=1),
-            nn.BatchNorm2d(4),
-            nn.ReLU(inplace=True),
-            nn.Flatten(),
-            nn.Linear(4 * self.num_cells, value_hidden),
-            nn.ReLU(inplace=True),
-            nn.Linear(value_hidden, 1),
-            nn.Tanh()
-        )
-
-    def forward(self, x):
-        if x.dim() == 2:
-            x = x.view(-1, self.num_input_channels, self.board_size, self.board_size)
-        out = self.conv_in(x)
-        for block in self.res_blocks:
-            out = block(out)
-        policy = self.policy_head(out)
-        value = self.value_head(out)
-        return policy, value
-
-
-# ============================================================
-# Global Model / Device State Caching
-# ============================================================
-
-_current_model = None
-_current_device = None
-_current_model_path = None
-
-
-def _get_model_and_device_internal():
-    global _current_model
-    global _current_device
-
-    if _current_model is None or _current_device is None:
-        _current_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        _current_model = AlphaZeroTicTacToe()
-        _current_model.to(_current_device)
-
-    return _current_model, _current_device
-
-
-# ============================================================
 # Optimized Vectorized Board Utilities
 # ============================================================
 
@@ -444,65 +320,3 @@ def check_draw(board):
             if board[r][c] == ' ':
                 return False
     return True
-
-
-# ============================================================
-# AI Move Selection
-# ============================================================
-
-def _ai_make_move_with_model_internal(model, device, board_state, ai_player):
-    model_input = board_to_input_tensor(board_state, ai_player, device)
-    model.eval()
-
-    with torch.no_grad():
-        policy_logits, _ = model(model_input)
-
-    move_probabilities = torch.exp(policy_logits).squeeze().cpu().numpy()
-
-    valid_moves = []
-    for i in range(NUM_CELLS):
-        r, c = divmod(i, BOARD_SIZE)
-        if board_state[r][c] == ' ':
-            valid_moves.append((move_probabilities[i], r, c))
-
-    if not valid_moves:
-        return -1, -1
-
-    valid_moves.sort(key=lambda x: x[0], reverse=True)
-    return valid_moves[0][1], valid_moves[0][2]
-
-
-def _load_model_internal(model, path, device):
-    global _current_model_path
-    if _current_model_path == path:
-        return  # Model already loaded in memory!
-
-    try:
-        if os.path.exists(path):
-            model.load_state_dict(torch.load(path, map_location=device))
-            model.eval()
-            _current_model_path = path
-    except Exception as e:
-        print(f"AlphaGoLee Notice: Model load fallback ({e}).")
-
-
-# ============================================================
-# Public API
-# ============================================================
-
-def play(board, turn, model_name):
-    global _current_model
-    global _current_device
-
-    if _current_model is None or _current_device is None:
-        _current_model, _current_device = _get_model_and_device_internal()
-
-    model_path = os.path.join('model', model_name)
-    _load_model_internal(_current_model, model_path, _current_device)
-
-    row, col = _ai_make_move_with_model_internal(_current_model, _current_device, board, turn)
-
-    if row == -1 and col == -1:
-        return None
-
-    return (row, col)

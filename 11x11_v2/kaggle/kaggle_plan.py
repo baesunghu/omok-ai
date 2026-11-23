@@ -48,7 +48,7 @@ def sh(cmd, **kw):
 
 
 # 1) code: fresh clone (code always from GitHub), then merge earlier outputs (arm folders, results)
-if not os.path.exists(f"{W}/shared/alphago_lee.py"):   # shared/ + omok_paths.py sit next to 11x11_v2/, as in the repo
+if not os.path.exists(f"{W}/shared/board_encoding.py"):   # shared/ + omok_paths.py sit next to 11x11_v2/, as in the repo
     shutil.rmtree("/kaggle/tmp_repo", ignore_errors=True)
     sh("git clone -q --depth 1 https://github.com/baesunghu/omok-ai.git /kaggle/tmp_repo")
     shutil.copytree("/kaggle/tmp_repo/11x11_v2", V2, dirs_exist_ok=True)

@@ -18,15 +18,14 @@ OUT_PDF = os.path.join(HERE, "NAPS_핵심코드_원본.pdf")
 
 # (path relative to the repository root -- the old final/ folder, role, manual part-2 chapter)
 FILES = [
-    ("10x10/_restart_train.py", "학습 실행 설정. 모든 하이퍼파라미터가 여기서 들어간다", "부록 6.3"),
+    ("11x11_naps/_restart_train.py", "학습 실행 설정. 모든 하이퍼파라미터가 여기서 들어간다", "부록 6.3"),
     ("shared/fast_board.py", "보드 크기, 승리 판정의 가장 밑바닥", "2부 1장"),
-    ("shared/alphago_lee.py", "판을 신경망 입력(숫자)으로 바꾸기, 초기 V1 신경망", "2부 2장"),
-    ("shared/alphago_lee_v2_seblock.py", "V2 신경망: SE 블록 + GroupNorm 잔차망", "2부 3장"),
-    ("shared/alphago_lee_v3_survival.py", "V3 신경망: V2 + 생존 헤드 (지금 쓰는 구조)", "2부 3장"),
+    ("shared/board_encoding.py", "판을 신경망 입력(숫자)으로 바꾸기", "2부 2장"),
+    ("shared/nets.py", "신경망 V1, V2(SE 블록 + GroupNorm), V3(V2 + 생존 헤드, 지금 쓰는 구조)", "2부 2~3장"),
     ("cpp_mcts/mcts_core_solver.cpp", "C++ MCTS 엔진: 노드, PUCT, Solver, 강제 탐색, 트리 재사용", "2부 4~7장"),
-    ("shared/alphazero_mcts_lrfix.py", "파이썬 MCTS 래퍼: 신경망 평가를 C++ 엔진에 연결", "2부 8장"),
+    ("shared/mcts_cpp.py", "파이썬 MCTS 래퍼: 신경망 평가를 C++ 엔진에 연결", "2부 8장"),
     ("shared/selfplay_mp_unified.py", "10프로세스 통합 대국 풀: 자가대국, 리그, 게이트를 한 풀에서", "2부 9장"),
-    ("shared/alphazero_mcts_make_lrfix.py", "학습 본체: 대국 생성, 버퍼, 학습, 게이트, 리그 선택", "2부 10~12장"),
+    ("shared/naps_trainer.py", "학습 본체: 대국 생성, 버퍼, 학습, 게이트, 리그 선택", "2부 10~12장"),
     ("shared/rapfi_match.py", "Rapfi와 대국하기 (pbrain 프로토콜)", "4부 6장"),
     ("shared/rapfi_ladder.py", "Rapfi 사다리와 동등 노드 계산 (가중 직선 맞춤)", "4부 8~10장"),
     ("shared/tactical_problem_check.py", "졸업 문제 채점 (3단계 검증)", "4부 13장"),
@@ -34,7 +33,7 @@ FILES = [
 
 # 2026-10-09 (user): second group -- surrounding tools (web board, spectator, watchers, minimax baseline)
 EXTRA_FILES = [
-    ("shared/determinisic_play.py", "결정론적 미니맥스 상대의 파이썬 입구 (C++로 위임)", "0부 0.7, 4부 4장"),
+    ("shared/deterministic_play.py", "결정론적 미니맥스 상대의 파이썬 입구 (C++로 위임)", "0부 0.7, 4부 4장"),
     ("cpp_mcts/deterministic_play_core_fast_deploy.cpp", "결정론적 미니맥스 C++ 본체 (배포본, 깊이 2)", "0부 0.7, 4부 4장"),
     ("cpp_mcts/build_mcts_core_solver.bat", "C++ 엔진 빌드 스크립트 (MSVC + pybind11)", "3부 2장"),
     ("shared/watchdog_.py", "학습 프로세스 감시와 자동 재시작", "3부"),
@@ -42,14 +41,14 @@ EXTRA_FILES = [
     ("shared/rapfi_progress.py", "진행 중인 Rapfi 측정 보기", "-"),
     ("shared/hourly_status.py", "한 시간마다 상태 기록", "-"),
     ("shared/loss_trend_annotated.py", "손실 추세 그래프", "-"),
-    ("archive/10x10/value_head_reset.py", "가치망 머리만 초기화 (9/27, ep408)", "5부 8막"),
+    ("archive/11x11_naps/value_head_reset.py", "가치망 머리만 초기화 (9/27, ep408)", "5부 8막"),
     ("shared/mp_eval.py", "멀티프로세스 평가", "3부"),
     ("shared/fork_status_check.py", "포크(쌍삼) 상태 점검", "-"),
-    ("10x10/gomokuwithai_match.py", "Gomoku With AI 사이트와 자동 대국 (Playwright)", "5부 11막"),
-    ("10x10/hlt/web/server.py", "웹 분석판 서버 (모델 선택, 배치 평가)", "3부"),
-    ("10x10/hlt/web/index.html", "웹 분석판 화면", "-"),
-    ("10x10/hlt/web/spectate.py", "관전석 서버 (모델끼리 대국)", "-"),
-    ("10x10/hlt/web/spectate.html", "관전석 화면", "-"),
+    ("11x11_naps/gomokuwithai_match.py", "Gomoku With AI 사이트와 자동 대국 (Playwright)", "5부 11막"),
+    ("11x11_naps/hlt/web/server.py", "웹 분석판 서버 (모델 선택, 배치 평가)", "3부"),
+    ("11x11_naps/hlt/web/index.html", "웹 분석판 화면", "-"),
+    ("11x11_naps/hlt/web/spectate.py", "관전석 서버 (모델끼리 대국)", "-"),
+    ("11x11_naps/hlt/web/spectate.html", "관전석 화면", "-"),
 ]
 
 CSS = """
@@ -83,7 +82,7 @@ import glob
 import json
 import re
 
-TENX = os.path.join(ROOT, "10x10")
+TENX = os.path.join(ROOT, "11x11_naps")
 M = os.path.join(TENX, "model")
 
 APPENDIX_CSS = """
@@ -337,7 +336,7 @@ def main(n_spectate=60):
 졸업 문제 채점 기록(F), 기보(G), 문제집(H), 대국 기보 모음(I)을 붙였다.</p>
 <table class='toc'><tr><th>#</th><th>파일과 역할</th><th>매뉴얼</th><th>줄 수</th></tr>{''.join(rows)}
 <tr><td></td><td><b>합계</b></td><td></td><td class='n'><b>{total:,}</b></td></tr></table>
-<p>참고: 학습 중인 트레이너가 쓰는 엔진 바이너리(10x10/mcts_core.pyd)는 이 C++ 파일에서 웹 분석판용
+<p>참고: 학습 중인 트레이너가 쓰는 엔진 바이너리(11x11_naps/mcts_core.pyd)는 이 C++ 파일에서 웹 분석판용
 principal_variation 함수만 빠진 빌드다(9/28 백업 mcts_core_solver.cpp.v3_before_pv와 같은 내용).</p></section>"""
     doc = (f"<!doctype html><html lang='ko'><head><meta charset='utf-8'><style>{CSS}{APPENDIX_CSS}"
            f"{fmt.get_style_defs('.highlight')}</style></head><body>{cover}{''.join(bodies)}{appendix(n_spectate)}</body></html>")

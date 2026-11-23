@@ -21,7 +21,7 @@ import os
 import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (11x11_naps / 11x11_v2 / 15x15)
 sys.path.insert(0, HERE)
 os.chdir(HERE)
 import numpy as np
@@ -30,8 +30,8 @@ from playwright.sync_api import sync_playwright
 
 import mcts_core_solver as engine_mod
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array_from_numeric
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
+from board_encoding import board_to_input_array_from_numeric
+from nets import GomokuNetV3
 from fast_board import fast_check_win
 
 N = 11
@@ -52,7 +52,7 @@ OPENING_SAMPLE, MIN_SHARE = 8, 0.3
 SITE_TIMEOUT = 180  # seconds per site move
 
 dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = AlphaZeroTicTacToeV3()
+model = GomokuNetV3()
 model.load_state_dict(torch.load(CKPT, map_location=dev))
 model.to(dev).eval()
 

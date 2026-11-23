@@ -1,5 +1,5 @@
 """Export a v3 checkpoint to ONNX for the in-browser demo (2026-11-01, user: free hosting, model runs in the browser).
-Input: (B, 5, 11, 11) float32 planes [curr, opp, empty, fork_self, fork_opp] (alphago_lee.board_to_input_array_from_numeric).
+Input: (B, 5, 11, 11) float32 planes [curr, opp, empty, fork_self, fork_opp] (board_encoding.board_to_input_array_from_numeric).
 Outputs: policy (B, 121) log-probabilities, value (B, 1) in [-1, 1] for the side to move.
 Checks onnxruntime against PyTorch on random real-looking boards.
 Usage: python web/export_onnx.py [checkpoint] [out.onnx]   (run from 11x11_v2)
@@ -14,7 +14,7 @@ V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, V2); sys.path.insert(1, os.path.join(V2, "v3"))
 os.chdir(V2)
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array_from_numeric
+from board_encoding import board_to_input_array_from_numeric
 from net_v3 import NetV3
 
 ck = sys.argv[1] if len(sys.argv) > 1 else "v3/model/v3_latest.pth"

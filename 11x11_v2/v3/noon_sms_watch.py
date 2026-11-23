@@ -8,7 +8,7 @@ Usage: python v3/noon_sms_watch.py [--dry-run]     (run from 11x11_v2)
 """
 import os as _os, sys as _sys
 _sys.path.append(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # repository root
-from omok_paths import PROBLEMS_FILE  # noqa: E402  (10x10/tactical_problems: the 11x11 problem set, one copy)
+from omok_paths import PROBLEMS_FILE  # noqa: E402  (11x11_naps/tactical_problems: the 11x11 problem set, one copy)
 import importlib.util
 import json
 import os

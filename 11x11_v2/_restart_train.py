@@ -1,5 +1,5 @@
 """Start (or resume) the 11x11_v2 run's training: `python _restart_train.py` in this folder (watchdog_.py does the same).
-Settings: run_config.py. Code: ../shared/train_run.py and ../shared/alphazero_mcts_make_lrfix.py.
+Settings: run_config.py. Code: ../shared/train_run.py and ../shared/naps_trainer.py.
 """
 import os
 import sys

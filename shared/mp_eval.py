@@ -4,7 +4,7 @@ Multiprocessing-based formal evaluation (evaluate_vs_deterministic) for the
 
 Why this exists: evaluate_vs_deterministic's existing ThreadPoolExecutor +
 PooledEvaluator implementation caps effective CPU usage at roughly 1 of 8
-logical cores in production, because determinisic_play (the pure-Python
+logical cores in production, because deterministic_play (the pure-Python
 minimax opponent every game plays against) holds the GIL for the entirety of
 its own call and therefore fully serializes across worker threads -- the C++
 MCTS engine itself already releases the GIL correctly during its own tree
@@ -32,7 +32,7 @@ boundary instead of a thread boundary.
 Safety: evaluate_vs_deterministic_mp raises on ANY setup failure or a worker
 dying without completing its assigned games (rather than hanging or silently
 returning wrong stats), so its caller (evaluate_vs_deterministic in
-alphazero_mcts_make.py) can fall back to the existing, long-proven threaded
+legacy_trainer_mcts.py) can fall back to the existing, long-proven threaded
 implementation. On an unattended 20000-epoch job, a periodic eval call
 failing over to the slower-but-solid path is fine; a hang is not.
 
@@ -116,10 +116,11 @@ def evaluator_main(ckpt_path, request_queue, channel_specs, ready_event, stop_ev
                     target_batch=48, max_wait=0.004, error_queue=None):
     try:
         import torch
-        from alphago_lee import AlphaZeroTicTacToe, preferred_memory_format
+        from nets import GomokuNetV1 as GomokuNet
+        from board_encoding import preferred_memory_format
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = AlphaZeroTicTacToe()
+        model = GomokuNet()
         model.load_state_dict(torch.load(ckpt_path, map_location=device))
         model.to(device, memory_format=preferred_memory_format(device))
         model.eval()
@@ -225,7 +226,7 @@ def make_remote_eval_batch_fn(handle, request_queue, board_to_input_array_from_n
 
 # ============================================================
 # sims_for_state -- duplicated on purpose to keep worker processes torch-free.
-# MUST stay identical to alphazero_mcts_make.sims_for_state; that function is
+# MUST stay identical to legacy_trainer_mcts.sims_for_state; that function is
 # the source of truth if the two ever need to be reconciled.
 # ============================================================
 def sims_for_state(num_empty, base_sims, boosted_sims=None, boost_threshold=0, boost_when_narrow=False):
@@ -249,8 +250,8 @@ def worker_loop(worker_id, job_queue, result_queue, req_shm_name, probs_shm_name
                  c_puct, det_max_depth, eval_batch_size, error_queue):
     try:
         import mcts_core
-        from alphago_lee import board_to_input_array_from_numeric
-        import determinisic_play
+        from board_encoding import board_to_input_array_from_numeric
+        import deterministic_play
 
         handle = ChannelHandle(worker_id, req_shm_name, probs_shm_name, values_shm_name,
                                 response_ready_event, count_val)
@@ -296,7 +297,7 @@ def worker_loop(worker_id, job_queue, result_queue, req_shm_name, probs_shm_name
                     best = max(candidates, key=lambda c: c['visit_count'])
                     r, c = divmod(best['action_idx'], BOARD_SIZE)
                 else:
-                    r, c = determinisic_play.play(board, current_player, max_depth=det_max_depth)
+                    r, c = deterministic_play.play(board, current_player, max_depth=det_max_depth)
                     if r == -1:
                         result = 'draw'
                         break
@@ -320,7 +321,7 @@ def evaluate_vs_deterministic_mp(model, device, num_games, num_simulations, boos
                                   det_max_depth=2, all_cells=None, max_workers=None,
                                   target_batch=48, max_wait=0.004, tmp_ckpt_dir="model"):
     """
-    Drop-in alternative to alphazero_mcts_make.evaluate_vs_deterministic's
+    Drop-in alternative to legacy_trainer_mcts.evaluate_vs_deterministic's
     internals: same (win_rate, draw_rate, loss_rate) return, same opening
     assignment (game i -> all_cells[i % len(all_cells)], mcts_plays_x = i%2==0)
     so per-game outcomes are directly comparable to the threaded

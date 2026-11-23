@@ -34,8 +34,8 @@ _MEGA_EVAL = tuple(int(x) for x in __import__('os').environ.get('MEGA_EVAL', '0,
 # 2026-10-23 (user): VCF on wherever the engine has it (was off: engine default depth 0); VCF=0 turns it off
 if VCF and os.environ.get("VCF", "1") != "0":
     mcts_core.set_vcf(*VCF)
-from alphago_lee import board_to_input_array_from_numeric
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
+from board_encoding import board_to_input_array_from_numeric
+from nets import GomokuNetV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, FILE_SUFFIX
 
 N = BOARD_SIZE
@@ -136,7 +136,7 @@ def main():
         from net_v3 import NetV3
         model = NetV3()
     else:
-        model = AlphaZeroTicTacToeV3()
+        model = GomokuNetV3()
     model.load_state_dict(sd)
     model.to(dev).eval()
 

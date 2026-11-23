@@ -60,12 +60,12 @@ PROD_DIR = HERE
 if PROD_DIR not in sys.path:
     sys.path.insert(0, PROD_DIR)
 
-PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "alphazero_mcts_make_lrfix")
+PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "naps_trainer")
 
 import torch  # noqa: E402
-from alphago_lee import preferred_memory_format  # noqa: E402
-from alphago_lee_v3_survival import SURVIVAL_CAP  # noqa: E402
-from alphazero_mcts import BOARD_SIZE  # noqa: E402
+from board_encoding import preferred_memory_format  # noqa: E402
+from nets import SURVIVAL_CAP  # noqa: E402
+from mcts_python import BOARD_SIZE  # noqa: E402
 
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 
@@ -86,7 +86,7 @@ TAG_TRAIN = "train"
 TAG_BEST = "best"
 
 # Sample weights -- must match the production aggregation in
-# alphazero_mcts_make_lrfix (generate_mcts_self_play_data /
+# naps_trainer (generate_mcts_self_play_data /
 # generate_mcts_vs_deterministic_data / generate_mcts_vs_league_data).
 SELFPLAY_MOVER_WON_WEIGHT = 1.15
 VSDET_WEIGHT = 1.5
@@ -769,7 +769,7 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
     t0 = time.monotonic()
     try:
         prod = __import__(PROD_MODULE)
-        from alphago_lee_make import augment_sample
+        from legacy_trainer_basic import augment_sample
 
         workers = _resolve_workers(max_workers)
         # 2026-10-08 (user): league_model may be a LIST of opponents; league game i

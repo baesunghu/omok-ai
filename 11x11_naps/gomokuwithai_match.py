@@ -21,7 +21,7 @@ import os
 import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (11x11_naps / 11x11_v2 / 15x15)
 sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
 from omok_paths import V2_DIR, V3_DIR, find_extension  # noqa: E402
 sys.path.insert(0, HERE)
@@ -32,8 +32,8 @@ from playwright.sync_api import sync_playwright
 
 import mcts_core_solver as engine_mod
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array_from_numeric
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
+from board_encoding import board_to_input_array_from_numeric
+from nets import GomokuNetV3
 from fast_board import fast_check_win
 
 N = 11
@@ -90,7 +90,7 @@ if any(k.startswith("opp_policy_head.") for k in _sd):
     _spec.loader.exec_module(engine_mod)
     engine_mod.set_vcf(10, 3000)
 else:
-    model = AlphaZeroTicTacToeV3()
+    model = GomokuNetV3()
 model.load_state_dict(_sd)
 model.to(dev).eval()
 

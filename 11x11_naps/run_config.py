@@ -1,4 +1,4 @@
-"""Settings of the 10x10 run: 11x11 NAPS (the folder name is historical; the board is 11x11).
+"""Settings of the 11x11_naps run: 11x11 NAPS (until 2026-11 this folder was 10x10/, a name left from the 10x10-board days).
 
 Everything that differs between runs lives in this file; the code is shared (../shared/). The values are the ones
 the run ended with (NAPS-960, 2026-10-13). How they got there is in docs/NAPS_lineage.md.
@@ -11,7 +11,7 @@ ENGINE_V2 = False                    # True only for the 11x11_v2 build (VCF, ME
 VCF = None                           # (attacker-four depth, node budget) of the VCF check; v2 engine only
 MEGA_VISITS, MEGA_MIN_SIMS = (0, 0), 1000   # MEGA stage-1 root visits; v2 engine only
 
-# trainer: shared/alphazero_mcts_make_lrfix.py, started by _restart_train.py
+# trainer: shared/naps_trainer.py, started by _restart_train.py
 SELF_PLAY_GAMES = 16                 # self-play games per epoch
 GATE_LOSS_PENALTY = 0.75             # gate score = (wins + 0.5 draws - penalty x losses) / games
 GATE_OPENING_RADIUS = None           # gate openings only within this distance of the centre (None: all)

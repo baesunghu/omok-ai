@@ -31,9 +31,9 @@ except Exception:
 
 import torch
 
-from alphago_lee import AlphaZeroTicTacToe
-from alphazero_mcts import MCTS, BOARD_SIZE, fast_check_win, fast_check_draw
-from alphazero_mcts_make import sims_for_state, BEST_CHECKPOINT_PATH, _SUFFIX
+from nets import GomokuNetV1 as GomokuNet
+from mcts_python import MCTS, BOARD_SIZE, fast_check_win, fast_check_draw
+from legacy_trainer_mcts import sims_for_state, BEST_CHECKPOINT_PATH, _SUFFIX
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 NUM_SIMULATIONS = 600
@@ -66,7 +66,7 @@ def resolve_model_path(which):
 def get_model(model_path):
     global _model
     if _model is None:
-        m = AlphaZeroTicTacToe()
+        m = GomokuNet()
         m.load_state_dict(torch.load(model_path, map_location=DEVICE))
         m.to(DEVICE)
         m.eval()

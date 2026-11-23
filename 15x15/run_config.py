@@ -11,7 +11,7 @@ ENGINE_V2 = False                    # True only for the 11x11_v2 build (VCF, ME
 VCF = None                           # (attacker-four depth, node budget) of the VCF check; v2 engine only
 MEGA_VISITS, MEGA_MIN_SIMS = (0, 0), 1000   # MEGA stage-1 root visits; v2 engine only
 
-# trainer: shared/alphazero_mcts_make_lrfix.py, started by _restart_train15.py
+# trainer: shared/naps_trainer.py, started by _restart_train15.py
 SELF_PLAY_GAMES = 32                 # self-play games per epoch
 GATE_LOSS_PENALTY = 0.4              # 2026-10-16 (user, ep93): 0.75 -> 0.4 (no draws on 15x15; 11-9 passes, 10-10 does not)
 GATE_OPENING_RADIUS = 3              # 2026-10-13: canonical openings include far corners on 15x15; keep the gate near the centre

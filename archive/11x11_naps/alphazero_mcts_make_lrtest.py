@@ -1,6 +1,6 @@
 import os
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "10x10"))   # archived from 10x10/: its run folder first on sys.path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "11x11_naps"))   # archived from 11x11_naps/: its run folder first on sys.path
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,13 +14,14 @@ import re
 from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee import AlphaZeroTicTacToe, board_to_input_tensor, board_to_input_array, preferred_memory_format
-from alphazero_mcts import MCTS, BOARD_SIZE, NUM_CELLS, fast_check_win, fast_check_draw, PooledEvaluator
-from alphago_lee_make import augment_sample, logger
+from nets import GomokuNetV1 as GomokuNet
+from board_encoding import board_to_input_tensor, board_to_input_array, preferred_memory_format
+from mcts_python import MCTS, BOARD_SIZE, NUM_CELLS, fast_check_win, fast_check_draw, PooledEvaluator
+from legacy_trainer_basic import augment_sample, logger
 from fast_board import WIN_LENGTH
-import determinisic_play
+import deterministic_play
 
-model = AlphaZeroTicTacToe()
+model = GomokuNet()
 
 # Keep 3x3 and other board sizes writing to separate checkpoint/log files so
 # concurrent runs (e.g. a 3x3 job still training while a 5x5 job starts)
@@ -490,7 +491,7 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
         gen_model.load_state_dict(model.state_dict())
         return 1.0, 0.0, 0.0, True
 
-    best_model = AlphaZeroTicTacToe()
+    best_model = GomokuNet()
     try:
         best_model.load_state_dict(torch.load(BEST_CHECKPOINT_PATH, map_location=device))
     except Exception as e:
@@ -616,10 +617,10 @@ def _play_vs_deterministic(model, device, num_simulations, mcts_plays_x, boosted
                             eval_cache=None, pooled_evaluator=None):
     """
     Plays one game: the in-memory model (via fresh MCTS search, no noise,
-    greedy) against determinisic_play's minimax AI. Returns 'mcts', 'det',
+    greedy) against deterministic_play's minimax AI. Returns 'mcts', 'det',
     or 'draw'.
 
-    add_noise=False makes MCTS search deterministic, and determinisic_play is
+    add_noise=False makes MCTS search deterministic, and deterministic_play is
     deterministic too, so without `opening` every game with the same
     mcts_plays_x is an identical replay of the same line -- num_games games
     then really only cover 2 distinct positions (one per side). Passing a
@@ -654,7 +655,7 @@ def _play_vs_deterministic(model, device, num_simulations, mcts_plays_x, boosted
             best_action = max(root.children.items(), key=lambda kv: kv[1].n_visits)[0]
             r, c = divmod(best_action, BOARD_SIZE)
         else:
-            r, c = determinisic_play.play(board, current_player)
+            r, c = deterministic_play.play(board, current_player)
             if r == -1:
                 return 'draw'
 
@@ -666,14 +667,14 @@ def evaluate_vs_deterministic(model, device, num_games=10, num_simulations=50, b
                                c_puct=1.414, boost_when_narrow=False, max_workers=None, pooled_evaluator=None,
                                all_cells=None):
     """
-    Plays num_games against determinisic_play (minimax/alpha-beta), alternating
+    Plays num_games against deterministic_play (minimax/alpha-beta), alternating
     who moves first, and returns (win_rate, draw_rate, loss_rate) from the
     trained model's perspective. This is the direct metric for the research
     goal ("beat the deterministic algorithm").
 
     Tries the multiprocessing implementation (mp_eval.evaluate_vs_deterministic_mp)
     first -- each game gets a real OS process instead of a thread, which
-    matters because determinisic_play (the pure-Python minimax opponent)
+    matters because deterministic_play (the pure-Python minimax opponent)
     holds the GIL for its whole call and was found to fully serialize the
     threaded implementation down to ~1 CPU core regardless of thread count
     (the C++ MCTS engine itself already releases the GIL correctly and was
@@ -770,11 +771,11 @@ def _sample_vs_det_max_depth(epoch):
     Opponent-depth ladder for vs-Deterministic training-data generation
     ONLY (never evaluate_vs_deterministic or run_gating_check, which must
     stay a fixed, comparable depth-2 opponent forever). Samples a per-game
-    minimax search depth for determinisic_play from a schedule keyed on the
+    minimax search depth for deterministic_play from a schedule keyed on the
     current training epoch, so the model faces a weak/shallow opponent
     early on and a deeper one later instead of a fixed difficulty from
     epoch 0. Depth 0 means "skip minimax, play a uniformly random legal
-    move" (handled by the caller, not by determinisic_play itself).
+    move" (handled by the caller, not by deterministic_play itself).
 
     Deliberately capped at depth 3 for compute budget -- never sample
     beyond it (a deeper minimax is exponentially more expensive, and this
@@ -811,20 +812,20 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
                                           temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25,
                                           c_puct=1.414, eval_cache=None, boost_when_narrow=False,
                                           pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
-                                          opening=None, det_max_depth=determinisic_play.MAX_DEPTH):
+                                          opening=None, det_max_depth=deterministic_play.MAX_DEPTH):
     """
     Plays one training game between the in-memory model (MCTS with noise
     and temperature sampling -- same exploration settings as self-play) and
-    determinisic_play's minimax AI. Only the MCTS side's decisions are
+    deterministic_play's minimax AI. Only the MCTS side's decisions are
     recorded, in the same (board_3d, player_turn, target_policy_map) format
     _play_one_mcts_game produces, so callers can mix both into one buffer.
 
     Pure self-play never has to defend against or attack the specific
-    tactics determinisic_play actually uses, so the model can stay blind to
+    tactics deterministic_play actually uses, so the model can stay blind to
     patterns that opponent exploits no matter how long training runs.
     Mixing in games against it directly closes that loop.
 
-    determinisic_play is deterministic, so without `opening` every game
+    deterministic_play is deterministic, so without `opening` every game
     with the same mcts_plays_x replays the same line -- see
     _play_vs_deterministic's docstring. Passing a (row, col) `opening`
     pre-places X's first move there before normal play resumes.
@@ -903,7 +904,7 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
                     break
                 r, c = random.choice(empty_spots)
             else:
-                r, c = determinisic_play.play(board, current_player, max_depth=det_max_depth)
+                r, c = deterministic_play.play(board, current_player, max_depth=det_max_depth)
                 if r == -1:
                     outcome = 0
                     break
@@ -929,11 +930,11 @@ def generate_mcts_vs_deterministic_data(model, device, num_games=6, num_simulati
                                          epoch=0):
     """
     Same shape as generate_mcts_self_play_data, but MCTS plays against
-    determinisic_play instead of itself (alternating X/O by game index), so
+    deterministic_play instead of itself (alternating X/O by game index), so
     the replay buffer includes direct experience of the exact opponent
     evaluate_vs_deterministic measures against.
 
-    Each game cycles through _OPENING_SQUARES by game index (determinisic_play
+    Each game cycles through _OPENING_SQUARES by game index (deterministic_play
     is deterministic, so without this every game with the same side
     assignment would replay the same line -- see _play_vs_deterministic's
     docstring) and samples its own opponent search depth from the
@@ -1014,7 +1015,7 @@ def _load_league_model(path, device):
     branches (tracked-best / snapshot-pool). Returns the loaded, eval()'d
     model, or None on any load failure (caller treats None as "skip league
     games this epoch", same as the pre-existing failure behavior)."""
-    league_model = AlphaZeroTicTacToe()
+    league_model = GomokuNet()
     try:
         league_model.load_state_dict(torch.load(path, map_location=device))
     except Exception as e:
@@ -1107,7 +1108,7 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
                                    opening=None):
     """
     Like _play_one_mcts_vs_deterministic_game, but the opponent is a frozen
-    past checkpoint of this same model instead of determinisic_play. Both
+    past checkpoint of this same model instead of deterministic_play. Both
     sides' moves are recorded (the league opponent runs a real, always-full
     search -- see league_sims below -- so its visit distribution is just as
     valid a policy target as the live model's own): the live model was
@@ -2131,11 +2132,11 @@ def _mine_one_selfplay_game(model, device, sims):
     return plies, outcome
 
 
-def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=determinisic_play.MAX_DEPTH):
+def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=deterministic_play.MAX_DEPTH):
     """vs-Deterministic counterpart to _mine_one_selfplay_game -- mirrors
     mine_tactical_parallel.py's _play_one_vsdet.
 
-    2026-09-11 bugfix: this used to call determinisic_play.play(board,
+    2026-09-11 bugfix: this used to call deterministic_play.play(board,
     current_player) with no depth argument, silently mining exclusively
     against the fixed depth-2 opponent -- the same fixed opponent
     evaluate_vs_deterministic/run_gating_check hold as an untouched
@@ -2170,7 +2171,7 @@ def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=determ
             r, c = divmod(act, BOARD_SIZE)
             plies.append((board_snapshot, current_player, (r, c), True, ent_info))
         else:
-            r, c = determinisic_play.play(board, current_player, max_depth=det_max_depth)
+            r, c = deterministic_play.play(board, current_player, max_depth=det_max_depth)
             if r == -1:
                 break
             plies.append((board_snapshot, current_player, (r, c), False, None))
@@ -2185,7 +2186,7 @@ def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=determ
 def _mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x):
     """vs-League counterpart to _mine_one_vsdet_game -- the opponent is a
     frozen past checkpoint's own greedy (no-noise) search instead of
-    determinisic_play, mirroring _play_one_mcts_vs_league_game's
+    deterministic_play, mirroring _play_one_mcts_vs_league_game's
     opponent-side logic. Mining from vs-League games closes a gap the
     self-play/vs-Det mining above never reaches: whatever tactical patterns
     specifically arise when the model plays against its own past selves."""
@@ -2785,7 +2786,7 @@ def train_mcts_alpha_zero(
     # not-yet-validated weights. Synced with the tracked best via
     # run_gating_check on every promotion (including bootstrap) -- never
     # trained directly (.train() must never be called on it).
-    gen_model = AlphaZeroTicTacToe()
+    gen_model = GomokuNet()
     if os.path.exists(BEST_CHECKPOINT_PATH):
         try:
             gen_model.load_state_dict(torch.load(BEST_CHECKPOINT_PATH, map_location="cpu"))
@@ -2864,7 +2865,7 @@ def train_mcts_alpha_zero(
         # matches board_to_input_tensor's output format per device: on CUDA
         # that's contiguous_format (channels_last measured 1.4x-3.4x SLOWER
         # on this GPU -- see preferred_memory_format's docstring in
-        # alphago_lee.py), on CPU it stays channels_last as before.
+        # board_encoding.py), on CPU it stays channels_last as before.
         model.to(self_play_device, memory_format=preferred_memory_format(self_play_device))
         torch.set_num_threads(1)
         # Fresh per-epoch NN-eval cache: weights are frozen for this whole

@@ -10,7 +10,7 @@ import psutil
 # 2026-10-13 (user, clean rollback to ep960): train only once the emptied buffer holds 40k samples of the
 # new best's self-play (harmless afterwards: the buffer stays far above this).
 os.environ.setdefault("NAPS_MIN_BUFFER", "40000")
-from alphazero_mcts_make_lrfix import train_mcts_alpha_zero
+from naps_trainer import train_mcts_alpha_zero
 from run_config import SELF_PLAY_GAMES  # 16 (NAPS), 32 (11x11_v2, 15x15)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
 from omok_paths import run_dir  # noqa: E402

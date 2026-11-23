@@ -12,7 +12,7 @@ ENGINE_V2 = True                     # VCF, MEGA, extra search arguments
 VCF = (10, 3000)                     # (attacker-four depth, node budget) checked at every node expansion
 MEGA_VISITS, MEGA_MIN_SIMS = (0, 0), 1000   # 2026-10-21 15:15 (user): MEGA off (Rapfi 3000: VCF 60% vs VCF+MEGA 31%); was (30, 15)
 
-# trainer: shared/alphazero_mcts_make_lrfix.py, started by _restart_train.py
+# trainer: shared/naps_trainer.py, started by _restart_train.py
 SELF_PLAY_GAMES = 32                 # self-play games per epoch (like 15x15)
 GATE_LOSS_PENALTY = 0.75             # gate score = (wins + 0.5 draws - penalty x losses) / games
 GATE_OPENING_RADIUS = None           # gate openings only within this distance of the centre (None: all)

@@ -1,10 +1,10 @@
-# 10x10-folder 11x11 run (NAPS, ep540~) + 11x11_v2 equal points with 68/95% bands, one log y-axis (2026-10-22).
+# 11x11_naps-folder 11x11 run (NAPS, ep540~) + 11x11_v2 equal points with 68/95% bands, one log y-axis (2026-10-22).
 import json, numpy as np, matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import importlib.util
 plt.rcParams["font.family"] = "Malgun Gothic"; plt.rcParams["axes.unicode_minus"] = False
-old = json.load(open(r"..\10x10\model\ladder_ci.json"))
+old = json.load(open(r"..\11x11_naps\model\ladder_ci.json"))
 spec = importlib.util.spec_from_file_location("v2", "ladder_v2_chart.py")
 import io, contextlib
 with contextlib.redirect_stdout(io.StringIO()):
@@ -26,7 +26,7 @@ for kind, col in (("best", BEST), ("latest", LATEST)):
 a1.axvline(960, color=MUTED, ls=":", lw=1); a1.text(963, 70, "ep960 → v2 분기", color=MUTED, fontsize=9)
 for y, lab in ((959, "여명 959"), (2000, "2차 목표 2000")):
     a1.axhline(y, color=MUTED, ls="--", lw=.8); a1.text(a1.get_xlim()[0] if False else 545, y * 1.04, lab, color=MUTED, fontsize=9)
-a1.set_title("기존 11x11 (10x10 폴더, VCF 없는 엔진)", loc="left", color=INK)
+a1.set_title("기존 11x11 (11x11_naps 폴더, VCF 없는 엔진)", loc="left", color=INK)
 a1.set_xlabel("에폭"); a1.legend(loc="upper left", frameon=False)
 for i, (k, e, l95, l68, h68, h95) in enumerate(v2.res):
     col = BEST if i == 0 else V2

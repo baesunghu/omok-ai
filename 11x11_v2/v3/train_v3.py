@@ -48,7 +48,7 @@ import copy
 import mcts_core
 from net_v3 import NetV3
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee_v3_survival import SURVIVAL_CAP
+from nets import SURVIVAL_CAP
 
 assert hasattr(mcts_core.SelfPlayRunner(), "gumbel_m_full"), "wrong mcts_core (needs the v3 Gumbel build)"
 

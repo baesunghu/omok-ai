@@ -1,7 +1,7 @@
 """Is 900's (3,7) a real answer to the 13-ply problem? Force the first move, then Rapfi defends at N nodes
 against Rapfi attacking at 200k nodes for 40 plies. Same for Rapfi's own answer (8,5) and the bad move (8,9)."""
 import json, os, sys
-HERE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "10x10")   # archived from 10x10/: still works on that run folder
+HERE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "11x11_naps")   # archived from 11x11_naps/: still works on that run folder
 sys.path.insert(0, HERE); os.chdir(HERE)
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
 from rapfi_match import Rapfi

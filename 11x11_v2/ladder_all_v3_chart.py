@@ -4,7 +4,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import importlib.util, io, contextlib
 plt.rcParams["font.family"] = "Malgun Gothic"; plt.rcParams["axes.unicode_minus"] = False
-old = json.load(open(r"..\10x10\model\ladder_ci.json"))
+old = json.load(open(r"..\11x11_naps\model\ladder_ci.json"))
 spec = importlib.util.spec_from_file_location("v2", "ladder_v2_chart.py")
 with contextlib.redirect_stdout(io.StringIO()):
     v2 = importlib.util.module_from_spec(spec); spec.loader.exec_module(v2)
@@ -46,7 +46,7 @@ for kind, col in (("best", BEST), ("latest", LATEST)):
             a1.plot([c["ep"]] * 2, [clip(c["lo68"]), clip(c["hi68"])], color=col, lw=3, alpha=.4, solid_capstyle="butt")
         a1.plot(x, [c["eq"] for c in r], "o", color=col, ms=6, label="latest (승격 전 모델)")
 a1.axvline(960, color=MUTED, ls=":", lw=1); a1.text(963, 70, "ep960 → v2 분기", color=MUTED, fontsize=9)
-a1.set_title("NAPS (10x10 폴더, VCF 없는 엔진)", loc="left", color=INK)
+a1.set_title("NAPS (11x11_naps 폴더, VCF 없는 엔진)", loc="left", color=INK)
 a1.set_xlabel("에폭"); a1.legend(loc="upper left", frameon=False)
 def panel(a, res, col, title, first_col=None):
     for i, (k, e, l95, l68, h68, h95) in enumerate(res):

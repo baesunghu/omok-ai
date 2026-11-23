@@ -1,6 +1,6 @@
 """11x11_v2 (2026-10-21, user): restart the run from NAPS ep960 instead of Gen12.
 The Gen12 attempt (epoch 0 not finished) is archived, nothing is deleted. ep960 is only COPIED from the
-festival folder (10x10 stays untouched). Epochs restart at 0 (v2 ep N = NAPS lineage ep960 + N).
+festival folder (11x11_naps stays untouched). Epochs restart at 0 (v2 ep N = NAPS lineage ep960 + N).
 """
 import glob
 import os

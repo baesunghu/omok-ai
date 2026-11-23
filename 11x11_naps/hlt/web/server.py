@@ -6,7 +6,7 @@ seeing its search: a win-rate curve (left) and, on the board, the most
 visited candidate moves coloured by visit share with visits / Q shown.
 Standard library only (no Flask). One game at a time.
 
-Run:  python -u server.py   (from 10x10/hlt/web)
+Run:  python -u server.py   (from 11x11_naps/hlt/web)
 """
 import json
 import re
@@ -31,8 +31,8 @@ engine_mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(engine_mod)
 engine_mod.set_vcf(10, 3000)
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array_from_numeric
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
+from board_encoding import board_to_input_array_from_numeric
+from nets import GomokuNetV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -55,7 +55,7 @@ def _load_net(path):
         from net_v3 import NetV3
         net = NetV3()
     else:
-        net = AlphaZeroTicTacToeV3()
+        net = GomokuNetV3()
     net.load_state_dict(sd)
     return net.to(dev).eval()
 

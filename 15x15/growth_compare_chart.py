@@ -74,9 +74,9 @@ def boot(levels, n=2000, seed=0):
 
 
 # ---- 11x11 NAPS (2nd run, from Gen12 SL; ladder from ep540) ----
-h11 = epoch_hours(os.path.join(FINAL, "10x10", "model", "training_report_11x11.txt"), "2026-09-23 16:00")
+h11 = epoch_hours(os.path.join(FINAL, "11x11_naps", "model", "training_report_11x11.txt"), "2026-09-23 16:00")
 naps = []
-for r in json.load(open(os.path.join(FINAL, "10x10", "model", "ladder_ci.json"), encoding="utf-8")):
+for r in json.load(open(os.path.join(FINAL, "11x11_naps", "model", "ladder_ci.json"), encoding="utf-8")):
     if r["ep"] in h11 and r["ep"] <= 960:
         naps.append((h11[r["ep"]], r["ep"], r["eq"], r["lo95"], r["lo68"], r["hi68"], r["hi95"], r["kind"]))
 naps.sort()

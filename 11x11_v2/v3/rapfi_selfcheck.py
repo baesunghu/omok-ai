@@ -4,7 +4,7 @@ Usage: python v3/rapfi_selfcheck.py PROBLEM_ID [defender_nodes,...]   (run from 
 """
 import os as _os, sys as _sys
 _sys.path.append(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # repository root
-from omok_paths import PROBLEMS_FILE  # noqa: E402  (10x10/tactical_problems: the 11x11 problem set, one copy)
+from omok_paths import PROBLEMS_FILE  # noqa: E402  (11x11_naps/tactical_problems: the 11x11 problem set, one copy)
 import json
 import os
 import sys

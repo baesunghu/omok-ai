@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt, matplotlib.dates as md
 plt.rcParams["font.family"] = "Malgun Gothic"; plt.rcParams["axes.unicode_minus"] = False
 K = 304
 elo = lambda n: K * np.log10(max(n, 1) / 100)
-old = json.load(open(r"..\10x10\model\ladder_ci.json"))
+old = json.load(open(r"..\11x11_naps\model\ladder_ci.json"))
 with contextlib.redirect_stdout(io.StringIO()):
     spec = importlib.util.spec_from_file_location("c", "ladder_all_v3_chart.py"); c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
 T = lambda s: dt.datetime.strptime(s[:16], "%Y-%m-%d %H:%M")

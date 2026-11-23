@@ -1,5 +1,5 @@
 """Reference input planes for checking the browser feature encoder (web/site/app.js planes()) against
-alphago_lee.board_to_input_array_from_numeric. Writes web/site/feature_check.json (dev only, not needed by the demo).
+board_encoding.board_to_input_array_from_numeric. Writes web/site/feature_check.json (dev only, not needed by the demo).
 Usage: python web/make_feature_check.py   (run from 11x11_v2)
 """
 import json
@@ -12,7 +12,7 @@ V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, V2)
 os.chdir(V2)
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
-from alphago_lee import board_to_input_array_from_numeric
+from board_encoding import board_to_input_array_from_numeric
 
 rng = np.random.default_rng(1)
 cases = []

@@ -4,7 +4,7 @@ Same fair (no-noise, greedy, full-search) MCTS-vs-past-checkpoint eval as
 5x5 version (2 instead of 4) since 10x10's sims are 3x bigger (900/1800 vs
 300/600) on a 4x larger board -- each game costs much more wall-clock here.
 
-Run from inside a run folder (cd 10x10 / 11x11_v2 / 15x15):
+Run from inside a run folder (cd 11x11_naps / 11x11_v2 / 15x15):
     python ../shared/eval_league_greedy.py
 
 Appends one summary line per run to model/greedy_league_eval_10x10.txt, which
@@ -23,9 +23,9 @@ from datetime import datetime
 
 import torch
 
-from alphago_lee import AlphaZeroTicTacToe
-from alphazero_mcts import MCTS, BOARD_SIZE, fast_check_win, fast_check_draw
-from alphazero_mcts_make import sims_for_state, _SUFFIX, REPORT_LOG_PATH
+from nets import GomokuNetV1 as GomokuNet
+from mcts_python import MCTS, BOARD_SIZE, fast_check_win, fast_check_draw
+from legacy_trainer_mcts import sims_for_state, _SUFFIX, REPORT_LOG_PATH
 
 DEVICE = "cpu"  # avoid contending with the live GPU trainers
 NUM_SIMULATIONS = 900
@@ -54,7 +54,7 @@ def latest_epoch():
 
 
 def load_model(path):
-    m = AlphaZeroTicTacToe()
+    m = GomokuNet()
     m.load_state_dict(torch.load(path, map_location=DEVICE))
     m.to(DEVICE)
     m.eval()

@@ -1,3 +1,4 @@
+# (until 2026-11 this file was alphazero_mcts_lrfix.py)
 import math
 import queue
 import threading
@@ -5,10 +6,9 @@ import numpy as np
 import torch
 import os
 
-from alphago_lee import (board_to_input_tensor, board_to_input_array,
-                          boards_to_input_tensor, board_to_input_array_from_numeric, _fork_mask)
-# 2026-09-22 Gen12: V2 architecture (GroupNorm+SE), see alphago_lee_v2_seblock.py
-from alphago_lee_v3_survival import AlphaZeroTicTacToeV3 as AlphaZeroTicTacToe
+from board_encoding import (board_to_input_tensor, board_to_input_array, boards_to_input_tensor, board_to_input_array_from_numeric, _fork_mask)
+# 2026-09-22 Gen12: V2 architecture (GroupNorm+SE), see nets.py
+from nets import GomokuNetV3 as GomokuNet
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, fast_check_draw
 
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
@@ -679,7 +679,7 @@ def get_mcts_model(model_name="alphazero_mcts.pth"):
 
     if _current_mcts_model is None or _current_mcts_device is None:
         _current_mcts_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        _current_mcts_model = AlphaZeroTicTacToe()
+        _current_mcts_model = GomokuNet()
         _current_mcts_model.to(_current_mcts_device)
 
     model_path = os.path.join('model', model_name)
