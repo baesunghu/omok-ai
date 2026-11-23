@@ -15,6 +15,7 @@ V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, V2)
 os.chdir(V2)
 import mcts_core
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
 from alphago_lee import board_to_input_array_from_numeric
 from fast_board import BOARD_SIZE as N, fast_check_win
 sys.path.insert(1, os.path.join(V2, "v3"))

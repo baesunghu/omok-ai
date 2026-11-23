@@ -13,6 +13,7 @@ import torch
 V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, V2); sys.path.insert(1, os.path.join(V2, "v3"))
 os.chdir(V2)
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
 from alphago_lee import board_to_input_array_from_numeric
 from net_v3 import NetV3
 

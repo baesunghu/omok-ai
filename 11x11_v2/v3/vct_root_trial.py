@@ -5,6 +5,9 @@ each of our moves the candidates are tried in visit order and a candidate after 
 skipped (prototype vct.py, node budget per check). Usage (from 11x11_v2):
   python v3/vct_root_trial.py CKPT PROBLEM_ID [top_k] [budget]
 """
+import os as _os, sys as _sys
+_sys.path.append(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # repository root
+from omok_paths import PROBLEMS_FILE  # noqa: E402  (10x10/tactical_problems: the 11x11 problem set, one copy)
 import json
 import os
 import sys
@@ -17,6 +20,7 @@ V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, V2)
 sys.path.insert(1, os.path.join(V2, "v3"))
 import mcts_core
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
 from alphago_lee import board_to_input_array_from_numeric
 from fast_board import fast_check_win
 from net_v3 import NetV3
@@ -42,7 +46,7 @@ def ev(bs, ps):
     return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
 
 
-pr = next(p for p in json.load(open(os.path.join(V2, "tactical_problems", "web_game58_problems.json"), encoding="utf-8"))["problems"] if p["id"] == pid)
+pr = next(p for p in json.load(open(PROBLEMS_FILE, encoding="utf-8"))["problems"] if p["id"] == pid)
 ai = pr["side_to_move"]
 opp = 'O' if ai == 'X' else 'X'
 rapfi = Rapfi(30000, 1000000)

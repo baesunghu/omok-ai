@@ -4,7 +4,8 @@
 
 > 쓴 날의 계획이다. 지금 상태는 `docs/README.md`와 `docs/NAPS_lineage.md`가 기준이다.
 > `final/`은 지금의 저장소 루트다. 1~2절의 "판 크기 상수 두 곳"과 "직접 박힌 판 크기·파일 이름(`_11x11`)"은
-> 2026-11 정리에서 각 실행 폴더의 `fast_board.py` 한 곳(`BOARD_SIZE`, `FILE_SUFFIX`)으로 모았다.
+> 2026-11 정리에서 각 실행 폴더의 `run_config.py`(`BOARD_SIZE`)와 `shared/fast_board.py`(`FILE_SUFFIX`)로 모았다.
+> 코드는 지금 `shared/` 한 벌이고, 실행마다 다른 값은 `run_config.py`에 있다.
 
 ## 0. 원칙
 

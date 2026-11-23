@@ -22,6 +22,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from alphago_lee import board_to_input_array
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
 from fast_board import BOARD_SIZE as N, FILE_SUFFIX

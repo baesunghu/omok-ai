@@ -11,6 +11,7 @@ import numpy as np
 V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, V2)
 os.chdir(V2)
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
 from alphago_lee import board_to_input_array_from_numeric
 
 rng = np.random.default_rng(1)

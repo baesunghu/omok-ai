@@ -21,6 +21,7 @@ import torch
 import torch.nn.functional as F
 
 import mcts_core
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3 as Net
 from fast_board import BOARD_SIZE as N, WIN_LENGTH
 

@@ -33,6 +33,7 @@ _spec = _ilu.spec_from_file_location("mcts_core", find_extension(V2_DIR, "mcts_c
 engine_mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(engine_mod)
 engine_mod.set_vcf(10, 3000)
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "shared"))   # shared/: code common to every run
 from alphago_lee import board_to_input_array_from_numeric
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
