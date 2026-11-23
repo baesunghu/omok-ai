@@ -77,7 +77,7 @@ def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost
     ply_indices = []
     ply = 0
     outcome = 0
-    # 2026-09-28: max_plies caps the game length (plies counted from this
+    # max_plies caps the game length (plies counted from this
     # game's start position). A capped game is scored a draw, and its
     # survival labels are dropped (total_plies returned as None) since the
     # real remaining length is unknown.
@@ -217,7 +217,7 @@ def generate_mcts_self_play_data(model, device, num_games=10, num_simulations=40
             for (board_3d, player_turn, target_policy_map, q), ply_idx in zip(history, ply_indices):
                 survival = (None if total_plies is None
                             else min(total_plies - ply_idx, SURVIVAL_CAP) / SURVIVAL_CAP)
-                # Full +-1.0 scale (was 0.5 until 2026-09-10). The halved scale
+                # Full +-1.0 scale (was 0.5). The halved scale
                 # shrank Q's dynamic range against an unchanged c_puct, which
                 # doubles the effective exploration constant and quadruples the
                 # simulations needed for visit counts to overcome the prior. It

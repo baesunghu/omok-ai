@@ -73,7 +73,7 @@ def worker(wid, nw, games, sims, nodes, ckpt_name, conn, log_path, out_q):
     import numpy as np
     import mcts_core
     from run_config import VCF
-    if VCF and os.environ.get("VCF", "1") != "0":  # 2026-10-23 (user): VCF on wherever the engine has it
+    if VCF and os.environ.get("VCF", "1") != "0":  # VCF on wherever the engine has it
         mcts_core.set_vcf(*VCF)
     from board_encoding import board_to_input_array_from_numeric
     from fast_board import fast_check_win

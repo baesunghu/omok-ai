@@ -30,7 +30,7 @@ PLANS = {
     # session 3: why does catfish help/hurt -- data cost (E) and catfish strength (F), both against seed-2 A
     "p3": [("train", ["E_cf192_s2", "F_strongcat_s2"]),
            ("h2h", [("A_nocatfish_s2", "E_cf192_s2", 60), ("A_nocatfish_s2", "F_strongcat_s2", 60)])],
-    # session 4 (11-02): adaptive catfish (G) on seeds 2 and 3, each against the same seed's A; attach session 1's output
+    # session 4: adaptive catfish (G) on seeds 2 and 3, each against the same seed's A; attach session 1's output
     "p4": [("train", ["G_adaptcat_s2", "G_adaptcat_s3"]),
            ("h2h", [("A_nocatfish_s2", "G_adaptcat_s2", 60), ("A_nocatfish_s3", "G_adaptcat_s3", 60)])],
 }

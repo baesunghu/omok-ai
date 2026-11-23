@@ -25,7 +25,10 @@ from omok_paths import enter_run  # noqa: E402
 HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
 TENX = HERE
 from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
-LEVELS = [int(x) for x in os.environ.get("RAPFI_LEVELS", "1000,2000,3000,5000,10000,20000").split(",")]  # 2026-10-10 night (user): 20000 added (the 정오 bar sits around 20k)  # 2026-10-10 evening (user, option B): 300 dropped (85%+, no information), 10000 added (890 scored 62% at 5000)  # 2026-10-10 (user): 5000 added -- 860/880 still scored ~42% at 3000, so the top end was unmeasurable  # Rapfi search nodes per move (around the current equal-strength point)
+# Rapfi search nodes per move, around the current equal-strength point. 5000 was added when 860/880 still scored ~42%
+# at 3000 (the top end was unmeasurable); then 300 was dropped (85%+, no information) and 10000 added (890 scored 62% at
+# 5000); then 20000 (the 정오 bar sits around 20k).
+LEVELS = [int(x) for x in os.environ.get("RAPFI_LEVELS", "1000,2000,3000,5000,10000,20000").split(",")]
 LOG = os.path.join(TENX, "model", "rapfi_ladder_log.jsonl")
 MATCH_LOG = os.path.join(TENX, "model", "rapfi_match_log.jsonl")
 
@@ -69,7 +72,7 @@ def main():
         eq = "above max level" if results[-1]["score"] > 0.5 else (
             "below min level" if results[0]["score"] < 0.5 else None)
     crossing = eq
-    # 2026-09-29 (user decision): the official equal-strength point is a games-weighted
+    # User decision: the official equal-strength point is a games-weighted
     # least-squares line of Elo vs log10(nodes) over ALL levels, solved for Elo = 0.
     # The single-crossing rule above swung 100..1250 on 20-game noise; kept for reference.
     xs = [math.log10(r["nodes"]) for r in results]

@@ -187,7 +187,7 @@ def _sample_vs_det_max_depth(epoch):
     if epoch < 300:
         depths, weights = (0, 1, 2), (0.15, 0.35, 0.50)
     elif epoch < 1500:
-        # Small depth-0 floor (2026-09-09 diversity pass): depth>=1 minimax
+        # Small depth-0 floor (diversity pass): depth>=1 minimax
         # opponents always play structurally coherent moves, so dropping
         # depth-0 entirely here permanently loses exposure to the
         # off-book/scattered configurations only a random opponent
@@ -246,7 +246,7 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
     current_player = 'X'
     history = []
     # MCTS-side decisions made so far (full or fast) -- drives temperature;
-    # equals len(history) at full_search_prob=1.0 (2026-09-26 PCR fix, see
+    # equals len(history) at full_search_prob=1.0 (PCR fix, see
     # _play_one_mcts_game's docstring).
     mcts_decisions = 0
     outcome = 0
@@ -356,7 +356,7 @@ def generate_mcts_vs_deterministic_data(model, device, num_games=6, num_simulati
     model.eval()
     raw_samples = []
     outcome_counts = {'mcts_win': 0, 'det_win': 0, 'draw': 0}
-    # Per-depth tally (2026-09-10). The aggregate "1-3 wins per 10 games" line
+    # Per-depth tally. The aggregate "1-3 wins per 10 games" line
     # was measured to be 100% depth-0 (random opponent) wins and 0% against
     # both depth 1 and depth 2, so the aggregate was hiding a flat zero
     # against any real opponent. Split it so progress is actually visible.
@@ -384,7 +384,7 @@ def generate_mcts_vs_deterministic_data(model, device, num_games=6, num_simulati
                 outcome_counts['draw'] += 1
                 tally['d'] += 1
             for (board_3d, player_turn, target_policy_map, q) in history:
-                # Full +-1.0 scale (was 0.5 until 2026-09-10). The halved scale
+                # Full +-1.0 scale (was 0.5). The halved scale
                 # shrank Q's dynamic range against an unchanged c_puct, which
                 # doubles the effective exploration constant and quadruples the
                 # simulations needed for visit counts to overcome the prior. It

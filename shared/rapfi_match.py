@@ -29,9 +29,9 @@ import torch
 
 import mcts_core
 from run_config import ENGINE_V2, VCF  # noqa: E402
-# v2 engine: MEGA_EVAL=30,15 also applies MEGA stage 1 to these noiseless match searches (2026-10-21, user)
+# v2 engine: MEGA_EVAL=30,15 also applies MEGA stage 1 to these noiseless match searches
 _MEGA_EVAL = tuple(int(x) for x in __import__('os').environ.get('MEGA_EVAL', '0,0').split(','))
-# 2026-10-23 (user): VCF on wherever the engine has it (was off: engine default depth 0); VCF=0 turns it off
+# VCF on wherever the engine has it (was off: engine default depth 0); VCF=0 turns it off
 if VCF and os.environ.get("VCF", "1") != "0":
     mcts_core.set_vcf(*VCF)
 from board_encoding import board_to_input_array_from_numeric
@@ -41,14 +41,14 @@ from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, FILE_SUFFIX
 N = BOARD_SIZE
 # 8 openings around the centre (11x11: (5, 5), (4, 5), ...; 15x15: the same shape around (7, 7))
 OPENINGS = [(N // 2 + dr, N // 2 + dc) for dr, dc in ((0, 0), (-1, 0), (0, -1), (-1, -1), (1, -1), (-2, 0), (0, -2), (-1, 1))]
-# 2026-10-11: RAPFI_MORE_OPENINGS=1 -> all 25 cells within 2 of the centre (validation runs with >16 games,
+# RAPFI_MORE_OPENINGS=1 -> all 25 cells within 2 of the centre (validation runs with >16 games,
 # so games do not repeat; the default 8 openings keep the ladder identical to its history)
 if os.environ.get("RAPFI_MORE_OPENINGS"):
     OPENINGS = OPENINGS + [(r, c) for r in range(N // 2 - 2, N // 2 + 3) for c in range(N // 2 - 2, N // 2 + 3) if (r, c) not in OPENINGS]
 LOG = os.environ.get("RAPFI_MATCH_LOG", os.path.join(HERE, "model", "rapfi_match_log.jsonl"))
-# 2026-10-10: games are deterministic (Rapfi single-threaded + node limit, our side greedy without noise), so a
+# Games are deterministic (Rapfi single-threaded + node limit, our side greedy without noise), so a
 # level can be split across RAPFI_PAR worker processes (game g -> worker g % PAR) with identical per-game results.
-PAR = int(os.environ.get("RAPFI_PAR", "3"))  # 3 workers: 20 games at 5000 nodes in ~12 min (2026-10-10 benchmark)
+PAR = int(os.environ.get("RAPFI_PAR", "3"))  # 3 workers: 20 games at 5000 nodes in ~12 min (benchmark)
 
 
 class Rapfi:
@@ -131,7 +131,7 @@ def main():
     ckpt = sys.argv[4] if len(sys.argv) > 4 else f"model/best_mcts{FILE_SUFFIX}.pth"
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     sd = torch.load(ckpt, map_location=dev)
-    if any(k.startswith("opp_policy_head.") for k in sd):   # 2026-10-22: 11x11_v3 checkpoint (NetV3, 128x8)
+    if any(k.startswith("opp_policy_head.") for k in sd):   # 11x11_v3 checkpoint (NetV3, 128x8)
         sys.path.insert(1, V3_DIR)
         from net_v3 import NetV3
         model = NetV3()
@@ -146,7 +146,7 @@ def main():
             pl, v = model(t)
         return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
 
-    # 2026-10-10: RAPFI_THREADS > 1 plays that many games at once in this process and evaluates their
+    # RAPFI_THREADS > 1 plays that many games at once in this process and evaluates their
     # positions in ONE shared GPU batch (cross-game batching). The search itself is unchanged (1100 sims,
     # batch 16 per game), but cuDNN picks different kernels for different batch sizes, so outputs differ by
     # ~1e-5 and a near-tied move can occasionally flip: results are statistically, not bit-for-bit, equal.
@@ -250,7 +250,7 @@ def main():
         rapfi = Rapfi(ms, nodes)
         try:
             for g in mine:
-                # 2026-10-13 (15x15): Rapfi occasionally desyncs ("ERROR Unknown command") on 15x15;
+                # 15x15: Rapfi occasionally desyncs ("ERROR Unknown command") on 15x15;
                 # restart the engine and replay the same game (deterministic) instead of killing the ladder.
                 for attempt in range(4):
                     try:

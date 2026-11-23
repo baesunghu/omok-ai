@@ -75,7 +75,7 @@ class GomokuNetV1(nn.Module):
             num_res_blocks = num_res_blocks or 3
             value_hidden = value_hidden or 128
         else:
-            # Gen3 capacity bump (2026-09-08): 192/5 plateaued (Policy Loss
+            # Gen3 capacity bump: 192/5 plateaued (Policy Loss
             # never below 0.548 across 400+ epochs, same plateau-shape as the
             # 5x5 tier's precedent above) -- 256/7 is ~2.5x params.
             num_channels = num_channels or 256
@@ -217,7 +217,7 @@ def play(board, turn, model_name):
 # ======================================================================
 # V2 (until 2026-11 alphago_lee_v2_seblock.py)
 # ======================================================================
-# 2026-09-21: experimental fused-block architecture, built alongside (not
+# Experimental fused-block architecture, built alongside (not
 # replacing) alphago_lee.py's V1 network (GomokuNetV1). Imports everything except
 # the model classes from board_encoding -- fork-mask helpers, board_to_input_array,
 # board_to_input_tensor, BOARD_SIZE/NUM_CELLS/NUM_INPUT_CHANNELS -- so there is
@@ -233,7 +233,7 @@ def play(board, turn, model_name):
 #    batch-wide running statistics), so it behaves identically regardless of
 #    batch size or train()/eval() mode. This eliminates an entire bug class
 #    this project has hit more than once (the 5x5 gate-check BatchNorm
-#    train-mode bug, 2026-08-29, and others referenced in this session) at
+#    train-mode bug and others referenced in this session) at
 #    the source, rather than continuing to rely on callers remembering to
 #    call .eval() before every MCTS leaf batch.
 # 3. Squeeze-and-Excitation channel attention (KataGo uses this in its own
@@ -352,7 +352,7 @@ class GomokuNetV2(nn.Module):
             num_res_blocks = num_res_blocks or 3
             value_hidden = value_hidden or 128
         else:
-            # 2026-09-21: back to 256/7 (matching the original ResBlock
+            # Back to 256/7 (matching the original ResBlock
             # architecture's sizing) -- the 320/16 bump was sized assuming
             # depthwise-separable's compute savings, which were dropped
             # (see DSConv's docstring: measured far slower wall-clock on

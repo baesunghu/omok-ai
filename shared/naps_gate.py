@@ -30,18 +30,18 @@ from naps_openings import _OPENING_SQUARES
 # monitoring/deployment (e.g. play_vs_ai.py) independent of whatever the
 # latest raw weights happen to be doing.
 BEST_CHECKPOINT_PATH = f"model/best_mcts{_SUFFIX}.pth"
-GATE_PROMOTION_THRESHOLD = 0.35  # 2026-10-13 (user): 0.25 -> 0.35 (6-8-6, an even result, scored 0.275 and promoted ep1005). 2026-10-12: 0.50 -> 0.25. 2026-10-11: was 0.55 (AlphaGo Zero, draws 0.5)
-# 2026-10-11 (user): "a model that does not lose" -- a loss now costs points:
+GATE_PROMOTION_THRESHOLD = 0.35  # 0.55 (AlphaGo Zero, draws 0.5) -> 0.50 -> 0.25 -> 0.35 (6-8-6, an even result, scored 0.275 and promoted ep1005)
+# "a model that does not lose" -- a loss now costs points:
 # score = (wins + 0.5*draws - GATE_LOSS_PENALTY*losses) / n, promoted only if score > 0.50 (strictly).
 # With 0.75 that is exactly "wins > 2.5 x losses"; draws alone can never promote (all draws = 0.50).
 # Per-run settings (run_config.py): gate loss penalty (11x11 0.75, 15x15 0.4), gate opening radius, LR band,
 # MCTS eval batch and pooled-evaluator batch.
-# 2026-10-13 (user): two-stage promotion. The gate (vs the current best only) can pick a model that is
+# two-stage promotion. The gate (vs the current best only) can pick a model that is
 # weaker by the Rapfi ladder (ep1050 beat ep960 12-5-3 but measured 2,404 vs 4,432). A gate pass now only
 # makes a CANDIDATE: its weights go to model/gate_candidates/ and model/gate_candidate.json; the ladder
 # watcher measures it and promotes it (model/ladder_promote.json) only if it is not weaker than the best.
 GATE_CANDIDATE_MODE = True
-RECORD_LEAGUE_SIDE = False   # 2026-10-13 (user): see _play_one_mcts_vs_league_game
+RECORD_LEAGUE_SIDE = False   # See _play_one_mcts_vs_league_game
 _LAST_GATE_CANDIDATE = {"path": None}
 
 
@@ -101,7 +101,7 @@ def _play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sim
         current_player = 'O' if current_player == 'X' else 'X'
 
 
-# Gate-check speed optimization (2026-09-10): the periodic tactical-refresh
+# Gate-check speed optimization: the periodic tactical-refresh
 # epoch (every tactical_refresh_interval) was measured taking 15-25x a
 # normal epoch's wall-clock -- ~42% of total training time in a 232-epoch
 # stretch -- and the 42-game (21 openings x 2 sides) gate check was the
@@ -111,7 +111,7 @@ def _play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sim
 # _canonical_symmetry_openings happened to emit them (same principle as the
 # vs-Det opening fix). Trades some promotion-decision precision (10%-point
 # granularity instead of ~2.4%-point) for roughly half the gate-check cost.
-# 2026-10-13 (15x15): canonical openings include far corner squares; there the gate keeps squares within
+# 15x15: canonical openings include far corner squares; there the gate keeps squares within
 # Chebyshev distance GATE_OPENING_RADIUS of the centre. The 11x11 runs used every canonical square (radius None).
 _GATE_OPENING_SQUARES = [sq for sq in _OPENING_SQUARES if GATE_OPENING_RADIUS is None
                          or max(abs(sq[0] - BOARD_SIZE // 2), abs(sq[1] - BOARD_SIZE // 2)) <= GATE_OPENING_RADIUS]
@@ -165,7 +165,7 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
     # single-sample forward pass, so BatchNorm would normalize against that
     # one sample's own stats instead of the accumulated running mean/var,
     # systematically distorting every policy/value output for this model
-    # only (2026-08-29: same bug confirmed in the 5x5 sibling's gate check).
+    # only (the same bug was confirmed in the 5x5 sibling's gate check).
     model.eval()
 
     results = None

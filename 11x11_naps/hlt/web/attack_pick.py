@@ -27,7 +27,7 @@ def pick(board, me, cands, n=11):
     """-> the chosen candidate dict (same shape as the engine's)."""
     best = max(cands, key=lambda c: c["visit_count"])
     # engine 'proven' is from the opponent's side like q_value: -1 = a proven win for us, +1 = a proven loss.
-    # (2026-10-26 fix: any proven flag used to disable the pick, and far-off losing moves are almost always
+    # (Fixed: any proven flag used to disable the pick, and far-off losing moves are almost always
     # flagged, so the pick hardly ever ran.) Keep the search's move when we have a proven win; never pick a loss.
     if any(c.get("proven") == -1 for c in cands):
         return best

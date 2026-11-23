@@ -33,7 +33,7 @@ for e, p, v, g in rows[start:]:
     run[e] = (p, v)   # later duplicates (restarts) overwrite
     if g:
         gates[e] = g
-FROM = 1  # 2026-10-08 (user): show the whole NAPS run, not just ep300+
+FROM = 1  # Show the whole NAPS run, not just ep300+
 ep = sorted(e for e in run if e >= FROM)
 pol = [run[e][0] for e in ep]
 val = [run[e][1] for e in ep]
@@ -71,7 +71,7 @@ for ax, y, name, color in ((axes[0], pol, "Policy loss", "#2a6fdb"), (axes[1], v
             ax.axvline(e, color="#555", ls="--", lw=0.8)
             if ax is axes[0]:
                 ax.text(e + 1, top * (0.98 - 0.07 * (i % 4)), label, fontsize=7, color="#333", va="top")
-    # 2026-10-08 (user): reference line at Dawn's (graduated ep625) loss
+    # Reference line at Dawn's (graduated ep625) loss
     if 625 in run:
         dawn = run[625][0] if ax is axes[0] else run[625][1]
         ax.axhline(dawn, color="#7048e8", ls="-.", lw=1.2, label=f"Dawn ep625 ({dawn:.4f})")
@@ -82,7 +82,7 @@ gd = [gates[e][1] for e in ge]
 axg = axes[2]
 axg.bar(ge, gw, width=3, color="#2f9e44", label="gate win %")
 axg.bar(ge, gd, width=3, bottom=gw, color="#adb5bd", label="gate draw %")
-# 2026-10-11 (user): gate rule changed at ep911 -> draw a divider and use each era's score/threshold
+# Gate rule changed at ep911 -> draw a divider and use each era's score/threshold
 GATE_RULE_EP = 911
 lo, hi = (ge[0] - 3, ge[-1] + 3) if ge else (0, 1)
 if lo < GATE_RULE_EP:

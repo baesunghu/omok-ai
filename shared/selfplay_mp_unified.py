@@ -70,7 +70,7 @@ from mcts_python import BOARD_SIZE  # noqa: E402
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 
 from run_config import POOLED_TARGET_BATCH, CPP_SELFPLAY  # noqa: E402
-DEFAULT_TARGET_BATCH = POOLED_TARGET_BATCH   # 11x11_v2 (2026-10-21, user): 64 with 32-leaf requests; other runs 24
+DEFAULT_TARGET_BATCH = POOLED_TARGET_BATCH   # 11x11_v2: 64 with 32-leaf requests; other runs 24
 DEFAULT_MAX_WAIT = 0.015
 DEFAULT_STALL_TIMEOUT = 180.0
 MAX_STRIKES = 3
@@ -80,7 +80,7 @@ KILL_SWITCH_FILE = os.path.join(PROD_DIR, "MP_UNIFIED_OFF")
 
 TAG_GEN = "gen"
 TAG_LEAGUE = "league"
-# 2026-09-27: refresh/gate epochs -- the training model being mined with /
+# refresh/gate epochs -- the training model being mined with /
 # gated, and the tracked best checkpoint it is gated against.
 TAG_TRAIN = "train"
 TAG_BEST = "best"
@@ -170,7 +170,7 @@ def _run_task(prod, kind, spec, cfg, proxy, cache):
             return prod._play_one_mcts_vs_deterministic_game(
                 None, None, cfg["num_simulations"], mcts_plays_x, opening=opening, det_max_depth=depth, **common)
         mcts_plays_x, opening = spec[0], spec[1]
-        ltag = spec[2] if len(spec) > 2 else TAG_LEAGUE  # 2026-10-08: one tag per league opponent
+        ltag = spec[2] if len(spec) > 2 else TAG_LEAGUE  # One tag per league opponent
         return prod._play_one_mcts_vs_league_game(
             None, None, None, cfg["num_simulations"], mcts_plays_x, opening=opening,
             league_pooled_evaluator=proxy(ltag), league_eval_cache=cache(ltag),
@@ -616,7 +616,7 @@ class UnifiedGamePool:
 _POOL = None
 _STRIKES = 0
 _PERMANENTLY_DISABLED = False
-# Separate budget for the refresh/gate task runner (2026-09-27).
+# Separate budget for the refresh/gate task runner.
 _TASK_STRIKES = 0
 _TASK_DISABLED = False
 
@@ -772,7 +772,7 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
         from legacy_trainer_basic import augment_sample
 
         workers = _resolve_workers(max_workers)
-        # 2026-10-08 (user): league_model may be a LIST of opponents; league game i
+        # league_model may be a LIST of opponents; league game i
         # then plays opponent i % len(list), each under its own eval tag.
         league_list = list(league_model) if isinstance(league_model, (list, tuple)) else (
             [league_model] if league_model is not None else [])
@@ -829,7 +829,7 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
               f"(Simulations: {selfplay_cfg['num_simulations']}/move, boosted {selfplay_cfg['boosted_sims']})...",
               flush=True)
 
-        # 2026-10-21 (user): self-play + vs-League games in C++ threads with large GPU
+        # self-play + vs-League games in C++ threads with large GPU
         # batches (selfplay_cpp); the worker pool stays as the fallback and for vs-Det.
         results = None
         if CPP_SELFPLAY and not play_vsdet:
@@ -889,7 +889,7 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
 
 
 # ============================================================
-# Refresh / gate epochs (2026-09-27)
+# Refresh / gate epochs
 # ============================================================
 class UnifiedTaskRunner:
     """Runs a refresh epoch's mining games (+ per-game hard-example

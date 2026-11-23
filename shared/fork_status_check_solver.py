@@ -48,7 +48,7 @@ print("\n" + "=" * 70)
 print("Loading live checkpoint (shared by the fork checks below)...")
 print("=" * 70)
 
-import mcts_core_solver as mcts_core_verbose  # 2026-09-27 solver-engine re-measure copy
+import mcts_core_solver as mcts_core_verbose  # solver-engine re-measure copy
 from nets import GomokuNetV3 as GomokuNet
 from board_encoding import preferred_memory_format, board_to_input_array_from_numeric
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win

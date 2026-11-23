@@ -102,28 +102,28 @@ def train_mcts_alpha_zero(
     # it (backward compatible default -- every move is a full search).
     full_search_prob=1.0,
     fast_sims=None,
-    # 2026-09-26: PCR for vs-Det/vs-League games, kept separate so PCR can
+    # PCR for vs-Det/vs-League games, kept separate so PCR can
     # be applied to self-play only. None = same as full_search_prob (the
     # previous behavior, where one value was passed to all three).
     full_search_prob_other=None,
-    # 2026-09-26: play self-play + vs-Det + vs-League games in ONE
+    # Play self-play + vs-Det + vs-League games in ONE
     # multi-process pool (selfplay_mp_unified) instead of three sequential
     # phases. False = the previous sequential path (which is also the
     # automatic fallback whenever the unified pool fails).
     use_unified_game_pool=False,
-    # 2026-09-27: value target = (1-w)*z + w*q for generated games (see
+    # Value target = (1-w)*z + w*q for generated games (see
     # mixed_value_target). 0.0 = pure game result (previous behavior).
     value_target_q_weight=0.0,
-    # 2026-10-10 (user): half-life decay of the q weight. From epoch
+    # half-life decay of the q weight. From epoch
     # value_target_q_decay_start on, w(epoch) = value_target_q_weight *
     # 0.5 ** ((epoch - start) / value_target_q_halflife); below
     # value_target_q_floor it becomes exactly 0 (pure z). halflife 0 = off.
     value_target_q_halflife=0,
     value_target_q_decay_start=0,
     value_target_q_floor=0.01,
-    # 2026-09-28: cap self-play / league game length (plies); None = no cap.
+    # Cap self-play / league game length (plies); None = no cap.
     max_game_plies=None,
-    # 2026-09-28: vs-Deterministic games inside the refresh-epoch MINING pass
+    # vs-Deterministic games inside the refresh-epoch MINING pass
     # (the old hard-coded default was 16). 0 = mining uses self-play and
     # league games only.
     refresh_vsdet_games=16,
@@ -137,7 +137,7 @@ def train_mcts_alpha_zero(
     use_prioritized_replay=False,
 ):
     self_play_device, train_device = get_devices()
-    # 2026-09-21 lr-fix restart: base_lr 0.001->0.0001 and T_0 450->150.
+    # lr-fix restart: base_lr 0.001->0.0001 and T_0 450->150.
     # Weight-drift measurement (see conversation/workflow findings) showed
     # lr=0.001 drifts the post-supervised-pretrain checkpoint 1.86x farther
     # (matched-epoch comparison) than lr=0.0001, and drift never reverses
@@ -148,22 +148,22 @@ def train_mcts_alpha_zero(
     # the point its T_0=150 schedule decayed to ~1.2e-4 -- this restart
     # starts there directly instead of spending hundreds of epochs decaying
     # down to it.
-    # 2026-09-30 (user): gate stuck 15 checks (650-720) while losses kept falling ->
+    # Gate stuck 15 checks (650-720) while losses kept falling ->
     # halve the LR band (1e-4..5e-5 -> 5e-5..1e-5) to consolidate instead of drifting.
-    # 2026-10-11 (user): ep937 cooldown ended -> LR jumped 1e-5 -> 4.4e-5 and ep940 fell to ~1,092 Rapfi nodes.
+    # ep937 cooldown ended -> LR jumped 1e-5 -> 4.4e-5 and ep940 fell to ~1,092 Rapfi nodes.
     # Cosine peak 5e-5 -> 2e-5 (band 2e-5..1e-5) to polish rather than shake before the festival.
     # LR band per run (run_config.py): 11x11 NAPS 2e-5..1e-5, 11x11_v2 5e-5..1e-5, 15x15 1e-4..2e-5
-    # (2026-10-15, user: the 2e-5 polish band of the mature 11x11 net kept the young 15x15 net flat).
+    # (the 2e-5 polish band of the mature 11x11 net kept the young 15x15 net flat).
     optimizer = optim.Adam(model.parameters(), lr=LR_PEAK, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150, T_mult=1, eta_min=LR_MIN)
     start_epoch = load_start_epoch()
     for _ in range(start_epoch):
         scheduler.step()
-    # 2026-10-12 (user): restore Adam's moments across restarts. Every restart used to reset them
+    # Restore Adam's moments across restarts. Every restart used to reset them
     # (loss spikes at 905/911/913/945). Loaded only if saved right after the epoch we resume at;
     # the LR stays whatever the schedule/cooldown says now (the saved param_groups LR is discarded).
     OPT_STATE_PATH = f"model/optimizer_state{_SUFFIX}.pth"
-    # 2026-10-13: a fresh Adam moves every weight by ~LR on its first steps (bias-corrected m/sqrt(v) ~ sign(g)),
+    # A fresh Adam moves every weight by ~LR on its first steps (bias-corrected m/sqrt(v) ~ sign(g)),
     # which caused the loss spikes after every restart/rollback (ep1003 0.38, ep1047 0.41). If the moments
     # are not restored, ramp the LR over the first epochs instead.
     _fresh_opt_warmup = [0.1, 0.3, 0.6]
@@ -236,7 +236,7 @@ def train_mcts_alpha_zero(
     # Constructed once (not per-epoch): holds a reference to `gen_model`, not
     # a weight snapshot, so it keeps working correctly as run_gating_check's
     # promotions mutate those same weights in place across epochs.
-    # target_batch=24, max_wait=0.05 (2026-09-15, was 48/0.005): live stats
+    # target_batch=24, max_wait=0.05 (was 48/0.005): live stats
     # logging showed this PooledEvaluator hitting its target batch 0% of the
     # time across 300K+ flushes (avg batch ~4, timing out every single time)
     # -- PooledEvaluator._run's `timeout = self.max_wait if pending else None`
@@ -262,7 +262,7 @@ def train_mcts_alpha_zero(
     print(f"Self-play/vs-Det/vs-League simulation budget: {cur_num_simulations} "
           f"(boosted {cur_boosted_sims}) -- ramps toward {SIM_RAMP_CEILING}/{BOOST_RAMP_CEILING} on promotion")
 
-    # Noise-anneal safety valve (2026-09-10): noise_anneal_epochs was just
+    # Noise-anneal safety valve: noise_anneal_epochs was just
     # cut way down (3000->600) so dirichlet_alpha/noise_weight actually
     # finish annealing within a realistic run length instead of still being
     # ~85% un-annealed after 470+ epochs. A much faster anneal risks the
@@ -293,7 +293,7 @@ def train_mcts_alpha_zero(
             if cur_q_weight < value_target_q_floor:
                 cur_q_weight = 0.0
         print(f"  [value target] epoch {epoch}: q weight {cur_q_weight:.4f} (z weight {1 - cur_q_weight:.4f})", flush=True)
-        # 2026-10-12 (user): second promotion path -- Rapfi ladder. The gate (vs the current best only)
+        # Second promotion path -- Rapfi ladder. The gate (vs the current best only)
         # can be blocked by a matchup ("상성"); if the ladder watcher finds a measured checkpoint stronger
         # than the best with P >= 80% (bootstrap), it writes model/ladder_promote.json and the checkpoint
         # becomes the best AND the self-play generation model here, at the start of the next epoch.
@@ -455,7 +455,7 @@ def train_mcts_alpha_zero(
             replay_buffer.extend(league_samples)
         _t_gen_done = time.monotonic()
 
-        # Continuous sampling from the hard-mined pool (2026-09-11) -- the
+        # Continuous sampling from the hard-mined pool -- the
         # mining/relabeling itself stays batched on the expensive
         # tactical_refresh_interval cadence (see refresh_mined_tactical_pool),
         # but drawing from the already-mined pool costs nothing like a fresh
@@ -467,14 +467,14 @@ def train_mcts_alpha_zero(
         if hard_samples:
             replay_buffer.extend(hard_samples)
 
-        # 2026-09-22: continuous per-epoch open-three curriculum injection,
+        # Continuous per-epoch open-three curriculum injection,
         # replacing tactical_refresh()'s periodic burst (see
         # _get_open_three_injection_samples docstring for why).
         open_three_samples = _get_open_three_injection_samples(n_examples=120)
         if open_three_samples:
             replay_buffer.extend(open_three_samples)
 
-        # 2026-09-23: dedicated Hard-7 (general fork) quota, on top of
+        # Dedicated Hard-7 (general fork) quota, on top of
         # hard_samples' whole-pool draw above -- see
         # _get_fork_mistake_samples docstring (measured: without this,
         # Hard-7 got ~1-2 exposures/epoch by chance, essentially no real
@@ -506,7 +506,7 @@ def train_mcts_alpha_zero(
                            f"League-win {league_outcome_counts['league_win']} / "
                            f"Draw {league_outcome_counts['draw']}")
 
-        # 2026-10-13 (user, clean rollback to ep960): with an emptied buffer, only generate data until
+        # Clean rollback to ep960: with an emptied buffer, only generate data until
         # NAPS_MIN_BUFFER samples exist, so the first training steps do not overfit a tiny buffer.
         if len(replay_buffer) < max(batch_size, int(os.environ.get("NAPS_MIN_BUFFER", "0") or 0)):
             print(f"  Replay buffer warming up: {len(replay_buffer)}/{batch_size} samples "
@@ -540,7 +540,7 @@ def train_mcts_alpha_zero(
         # below produces -- leaving this as channels_last (inherited from the
         # self-play .to() above) made every conv convert layout on the fly.
         model.to(train_device, memory_format=torch.contiguous_format)
-        # 2026-10-14 (15x15): Adam moments restored on resume were loaded while the model sat on the CPU;
+        # 15x15: Adam moments restored on resume were loaded while the model sat on the CPU;
         # keep them on the training device or the first step fails (cuda:0 vs cpu).
         for _st in optimizer.state.values():
             for _k, _v in _st.items():
@@ -582,7 +582,7 @@ def train_mcts_alpha_zero(
             # over dim=1 to match KLDivLoss(reduction='batchmean')'s
             # per-sample contribution; value_criterion gives (B, 1).
             p_loss_per_sample = policy_criterion(pred_pol_logits, b_pol).sum(dim=1)
-            # 2026-09-26: value=None samples (policy-only hard classes) carry
+            # value=None samples (policy-only hard classes) carry
             # NaN and are masked out here. Before this they were stored as
             # 0.0 and silently trained the value head toward "draw".
             v_mask = ~torch.isnan(b_val.squeeze(-1))
@@ -670,7 +670,7 @@ def train_mcts_alpha_zero(
                 _pg['lr'] = _pg['lr'] * _f
             print(f"  [fresh optimizer] LR warm-up x{_f} this epoch ({len(_fresh_opt_warmup)} warm-up epochs left)", flush=True)
 
-        # 2026-09-22: tactical_refresh() (the periodic burst supervised
+        # tactical_refresh() (the periodic burst supervised
         # re-injection that used to run here) was REMOVED -- see
         # _get_open_three_injection_samples docstring for the measured
         # before/after evidence (immediate vs-Det win-rate drop, decays back
@@ -708,7 +708,7 @@ def train_mcts_alpha_zero(
                 boost_threshold=boost_threshold, boost_when_narrow=boost_when_narrow, c_puct=c_puct_exploit,
                 runner=_runner
             )
-            # 2026-10-11 (user): keep the weights of every gate where the OLD rule (W + D/2 >= 55%) would
+            # Keep the weights of every gate where the OLD rule (W + D/2 >= 55%) would
             # have promoted but the new loss-penalty rule did not, so the new rule's judgement can be checked
             # later (e.g. Rapfi ladder). Only these disagreements are saved (~34 MB each).
             if not promoted and gate_win + 0.5 * gate_draw >= 0.55:
@@ -763,7 +763,7 @@ def train_mcts_alpha_zero(
         # early stop never loses more than one epoch's worth of training.
         torch.save(model.state_dict(), checkpoint_path)
 
-        # 2026-09-11 bugfix: this used to be called at the TOP of the loop
+        # Bugfix: this used to be called at the TOP of the loop
         # (save_cumulative_epoch(epoch), before this epoch's own work ran) --
         # a lagging save that only confirmed epoch N complete once epoch N+1
         # had already STARTED. A manual stop anytime between epoch N's report
@@ -775,7 +775,7 @@ def train_mcts_alpha_zero(
         # Saving epoch+1 here, right after this epoch's own checkpoint write,
         # closes that window: a kill after this line correctly resumes at
         # epoch+1; a kill before it correctly redoes only epoch (never more).
-        try:   # 2026-10-12: optimizer moments for the next restart (atomic write)
+        try:   # Optimizer moments for the next restart (atomic write)
             torch.save({"next_epoch": epoch + 1, "optimizer": optimizer.state_dict()}, OPT_STATE_PATH + ".tmp")
             os.replace(OPT_STATE_PATH + ".tmp", OPT_STATE_PATH)
         except Exception as e:
@@ -807,7 +807,7 @@ def train_mcts_alpha_zero(
             print(f"  {line}")
             model.train()
 
-        # Per-stage wall-clock (2026-09-26): games = all generation games,
+        # Per-stage wall-clock: games = all generation games,
         # train = injections + the training pass, refresh+gate = mining +
         # promotion gate (every tactical_refresh_interval epochs), eval =
         # formal vs-Det eval (every eval_interval epochs).

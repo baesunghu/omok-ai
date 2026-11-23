@@ -23,7 +23,9 @@ CONF = os.path.join(os.path.expanduser("~"), ".naps_twilio.json")
 STATE = os.path.join(HERE, "model", "promotion_sms_state.json")
 LOG = os.path.join(HERE, "promotion_sms.log")
 LADDER = os.path.join(HERE, "model", "rapfi_ladder_log.jsonl")
-LADDER_ALERT = 10000   # second tier LADDER_ALERT2 = 20000 (정오 bar), same logic, added 2026-10-12 # 2026-10-12 (user): also text when a ladder run's equal point is >= 10,000 nodes
+# Also text when a ladder run's equal point is >= 10,000 nodes (a second tier at 20000, the 정오 bar, was planned with
+# the same logic but is not implemented).
+LADDER_ALERT = 10000
 GATE = re.compile(r"\[(\d{4}-\d\d-\d\d \d\d:\d\d):\d\d\] Epoch (\d+)/\d+ \| Policy Loss: ([\d.]+) \| Value Loss: ([\d.]+).*?"
                   r"Gate vs best \((\d+) games\): Win (\d+)% / Draw (\d+)% / Loss (\d+)% -> PROMOTED")
 
@@ -49,7 +51,7 @@ def promotions():
 
 
 def text_for(m):
-    if m.re is LADDER_PROMO:   # 2026-10-12: ladder promotion path
+    if m.re is LADDER_PROMO:   # Ladder promotion path
         when, ep, name, eq, beq, p = m.groups()
         return f"{LABEL} {name} 사다리 승격! 대등 {int(eq):,} vs {int(beq):,} ({when[11:]})"
     when, ep, pol, val, n, w, d, l = m.groups()
@@ -83,7 +85,7 @@ def ladder_hits():
             ep = re.search(r"ep(\d+)", r.get("checkpoint", ""))
             ep = ep.group(1) if ep else "?"
             top = max((L.get("nodes", 0) for L in r.get("levels", [])), default=0)
-            # 2026-10-12: a short ladder (e.g. 1500/3000/5000) can extrapolate far past its top level;
+            # A short ladder (e.g. 1500/3000/5000) can extrapolate far past its top level;
             # only claim a value the ladder actually reached, otherwise say "above the top level"
             if eq == "above max level" or (isinstance(eq, (int, float)) and eq > top):
                 if top >= LADDER_ALERT:

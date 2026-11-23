@@ -1,4 +1,4 @@
-# v3 CATFISH figure for the report (2026-10-23): value loss before/after catfish, and per-epoch losses to each catfish.
+# v3 CATFISH figure for the report: value loss before/after catfish, and per-epoch losses to each catfish.
 import re, matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -8,7 +8,7 @@ for l in open("training_report_v3.txt", encoding="utf-8"):
     m = re.search(r"Epoch (\d+) \| loss \S+ policy \S+ value (\S+)", l)
     if not m: continue
     E.append(int(m.group(1))); V.append(float(m.group(2)))
-    c = re.search(r"value0 (\d+)/(\d+)/(\d+), value_half (\d+)/(\d+)/(\d+), policy(?:0|_half) (\d+)/(\d+)/(\d+)", l)   # 10/24: policy0 -> policy_half at ep129
+    c = re.search(r"value0 (\d+)/(\d+)/(\d+), value_half (\d+)/(\d+)/(\d+), policy(?:0|_half) (\d+)/(\d+)/(\d+)", l)   # policy0 -> policy_half at ep129
     if c: C[int(m.group(1))] = [int(x) for x in c.groups()]
 INK, MUTED, SURF = "#1d1d1b", "#8a8780", "#fcfcfb"
 fig, (a1, a2) = plt.subplots(2, 1, figsize=(12, 8), facecolor=SURF, sharex=True, gridspec_kw={"height_ratios": [1, 1]})
@@ -18,7 +18,7 @@ a1.set_ylim(0.1, 0.3); a1.set_ylabel("가치 손실"); a1.set_title("v3 가치 �
 ep = sorted(C)
 import numpy as np
 for k, lab, col in ((0, "가치망 0 메기", "#B05A17"), (3, "가치망 절반 메기", "#8e44ad"), (6, "정책 메기 (ep129까지 0, 이후 절반)", "#2f9e6a")):
-    # 10/24: games per catfish dropped 16 -> 8 at ep139, so plot the loss RATE (10-epoch rolling mean)
+    # Games per catfish dropped 16 -> 8 at ep139, so plot the loss RATE (10-epoch rolling mean)
     r = np.array([100 * C[e][k + 1] / max(1, sum(C[e][k:k + 3])) for e in ep])
     sm = np.convolve(r, np.ones(10) / 10, mode="valid")
     a2.plot(ep, r, color=col, lw=.6, alpha=.25)

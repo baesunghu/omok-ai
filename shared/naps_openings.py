@@ -42,7 +42,7 @@ _OPENING_SQUARES = _canonical_symmetry_openings(BOARD_SIZE)
 # Cycling through every cell instead gives eval_games far more room before
 # that collision recurs.
 _ALL_CELLS = [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)]
-# Gen3 eval-diversification (2026-09-09): row-major order meant every vs-Det
+# Gen3 eval-diversification: row-major order meant every vs-Det
 # check (sliced to the first num_games) only ever sampled the top-left
 # edge/corner region of the board, every check, for the whole project's
 # history. Shuffle once with a fixed seed so a slice is a representative

@@ -1,4 +1,4 @@
-# 11x11_naps-folder 11x11 run (NAPS, ep540~) + 11x11_v2 equal points with 68/95% bands, one log y-axis (2026-10-22).
+# 11x11_naps-folder 11x11 run (NAPS, ep540~) + 11x11_v2 equal points with 68/95% bands, one log y-axis.
 import json, numpy as np, matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

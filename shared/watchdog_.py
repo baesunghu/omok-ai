@@ -23,7 +23,7 @@ from omok_paths import enter_run  # noqa: E402
 HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
 PROJECT_DIR = HERE
 from run_config import TRAIN_SCRIPT  # noqa: E402
-TRAIN_SCRIPT_MARKER = TRAIN_SCRIPT   # 15x15: "_restart_train15.py", distinct from the 11x11 trainer (2026-10-14)
+TRAIN_SCRIPT_MARKER = TRAIN_SCRIPT   # 15x15: "_restart_train15.py", distinct from the 11x11 trainer
 TRAIN_TASK_NAME = "AZ11x11_Training"
 CHECK_INTERVAL_SEC = 20 * 60
 POST_RESTART_WAIT_SEC = 20
@@ -52,7 +52,7 @@ def is_training_alive():
 
 
 def restart_training():
-    # 2026-09-23: switched OFF the Task Scheduler path. Confirmed via
+    # Switched OFF the Task Scheduler path. Confirmed via
     # Task Scheduler that "AZ11x11_Training" also carries a LogonTrigger
     # (fires on every Windows logon, independent of whether a trainer is
     # already running) -- after today's reboot this produced two

@@ -86,7 +86,7 @@ class PooledEvaluator:
         self._stop = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        # 2026-09-11 instrumentation: tracks real achieved batch sizes so a
+        # Instrumentation: tracks real achieved batch sizes so a
         # target_batch change (e.g. 48->128, see forward_pass_benchmark.py's
         # finding that bs=128 gives ~17% more throughput in a synthetic
         # single-shot benchmark) can be verified against ACTUAL concurrency
@@ -236,7 +236,7 @@ class MCTS:
         self._eval_cache = shared_cache if shared_cache is not None else {}
         self._owns_cache = shared_cache is None
         self._pooled_evaluator = pooled_evaluator
-        # Persistent C++ search-tree handle (2026-09-11, tree reuse): one
+        # Persistent C++ search-tree handle (tree reuse): one
         # MCTSEngine per MCTS Python object, matching this object's own
         # lifetime -- every game-playing call site already constructs a
         # fresh MCTS() per game (or per side), and calls .search() once per

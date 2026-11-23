@@ -1,4 +1,4 @@
-# v3 policy / value loss with key events (2026-10-23, user).
+# v3 policy / value loss with key events.
 import re, matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

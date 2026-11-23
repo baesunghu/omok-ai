@@ -17,12 +17,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIVE = os.path.join(HERE, "live_games.json")
 PORT = 8770
-WATCH_BASE = "/watch#watch="          # 2026-10-16: spectator view proxied through this (password-protected) server
+WATCH_BASE = "/watch#watch="          # Spectator view proxied through this (password-protected) server
 GAME = "http://127.0.0.1:8765"
 _A = json.load(open(os.path.join(HERE, "admin_auth.json"), encoding="utf-8"))   # local only, never committed
 AUTH = "Basic " + base64.b64encode(f"{_A['user']}:{_A['password']}".encode()).decode()
 seen = {}            # sid -> {"n": move count, "changed": epoch seconds}
-IGN = os.path.join(HERE, "dashboard_ignored.json")   # 2026-10-16 (user): sessions hidden from the dashboard
+IGN = os.path.join(HERE, "dashboard_ignored.json")   # Sessions hidden from the dashboard
 
 
 def ignored():
@@ -158,7 +158,7 @@ tick(); setInterval(tick, 2000);
 </script></body></html>"""
 
 
-# ---- 2026-10-16 (user): admin settings for the public board, written into index.html's CFG block ----
+# ---- Admin settings for the public board, written into index.html's CFG block ----
 import re as _re
 from urllib.parse import parse_qs
 INDEX = os.path.join(HERE, "index.html")
@@ -223,7 +223,7 @@ def save_settings(form):
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.headers.get("Authorization") != AUTH:          # 2026-10-16 (user): admin-only
+        if self.headers.get("Authorization") != AUTH:          # admin-only
             self.send_response(401)
             self.send_header("WWW-Authenticate", 'Basic realm="omok admin", charset="UTF-8"')
             self.end_headers()
@@ -235,7 +235,7 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/api/state":
             req = urllib.request.Request(GAME + "/api/state", headers={"X-Session": self.headers.get("X-Session", "")})
             body, ctype = urllib.request.urlopen(req, timeout=5).read(), "application/json"
-        elif self.path.split("?")[0] in ("/gwa", "/gwa/"):    # 2026-10-26 (user): watch the ep530 vs GWA4 match here too
+        elif self.path.split("?")[0] in ("/gwa", "/gwa/"):    # Watch the ep530 vs GWA4 match here too
             body, ctype = open(os.path.join(HERE, "..", "gwa_live", "index.html"), "rb").read(), "text/html; charset=utf-8"
         elif self.path.startswith("/gwa/live.json"):
             body, ctype = open(os.path.join(HERE, "..", "gwa_live", "live.json"), "rb").read(), "application/json"

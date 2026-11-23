@@ -36,7 +36,7 @@ def generate_tactical_examples():
                     for (r, c) in filled_cells:
                         board[r][c] = stone
                     if variant > 0:
-                        _tactical_clutter(board, set(cells), n_stones=random.randint(3, 36))  # 2026-09-14: was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
+                        _tactical_clutter(board, set(cells), n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
                     if board[gap_r][gap_c] != ' ':
                         continue  # clutter collided with the gap cell, skip
                     # The mover is always 'X' in these synthetic boards (see
@@ -127,7 +127,7 @@ def generate_closed_three_examples():
                 for (r, c) in three_cells:
                     board[r][c] = three_color
                 if variant > 0:
-                    _tactical_clutter(board, set(cells), n_stones=random.randint(3, 36))  # 2026-09-14: was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
+                    _tactical_clutter(board, set(cells), n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
                 tr, tc = target_cell
                 if board[tr][tc] != ' ':
                     continue  # clutter collided with the target cell, skip
@@ -189,7 +189,7 @@ def generate_fork_examples():
                     board[r][c] = stone_color
                 if variant > 0:
                     exclude = set(stone_cells) | set(open_cells) | {center}
-                    _tactical_clutter(board, exclude, n_stones=random.randint(3, 36))  # 2026-09-14: was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
+                    _tactical_clutter(board, exclude, n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
                 cr, cc = center
                 if board[cr][cc] != ' ' or any(board[r][c] != ' ' for (r, c) in open_cells):
                     continue  # clutter collided with the target or a required-open end, skip
@@ -258,7 +258,7 @@ def generate_double_four_examples():
                     board[r][c] = stone_color
                 if variant > 0:
                     exclude = set(stone_cells) | set(open_cells) | {center}
-                    _tactical_clutter(board, exclude, n_stones=random.randint(3, 36))  # 2026-09-14: was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
+                    _tactical_clutter(board, exclude, n_stones=random.randint(3, 36))  # Was (2,4) -- clustered-near-window clutter can afford more stones without spreading unrealistically thin
                 cr, cc = center
                 if board[cr][cc] != ' ' or any(board[r][c] != ' ' for (r, c) in open_cells):
                     continue  # clutter collided with the target or a required-open end, skip
@@ -271,7 +271,7 @@ def generate_double_four_examples():
 # ------------------------------------------------------------
 # Open-three curriculum
 # ------------------------------------------------------------
-# 2026-09-15 (added after re-diagnosing the HLT-loss value/MCTS blind spot --
+# (added after re-diagnosing the HLT-loss value/MCTS blind spot --
 # see scratch/multiproc_investigation/rediag_value_blindspot.py, run against
 # the live epoch443 checkpoint): a genuine OPEN three (3-in-a-row with BOTH
 # immediately-flanking cells empty) is a shape this curriculum never actually
@@ -305,7 +305,7 @@ def generate_open_three_examples():
     examples = []
     for cells in _closed_three_spans():
         end1, three_cells, end2 = cells[0], cells[1:4], cells[4]
-        # 2026-09-23: edge/corner oversampling (added earlier today, REMOVED
+        # edge/corner oversampling (added earlier today, REMOVED
         # here) -- the organic self-play open-three test
         # (open3_organic_test.py) found the model missing threats located
         # centrally while repeatedly playing near row 0 instead, matching
@@ -319,12 +319,12 @@ def generate_open_three_examples():
         n_variants = 14
         for offense in (True, False):
             three_color = 'X' if offense else 'O'
-            # 2026-09-21: 3->8 variants (1 clean + more clutter diversity) --
+            # 3->8 variants (1 clean + more clutter diversity) --
             # open-three defense is the pattern the passive open3 tracker
             # has shown persistently flat/noisy (0.2-0.7 miss rate) despite
             # training, so this deliberately over-represents it relative to
             # the other four tactical families in the combined curriculum.
-            # 2026-09-22: 8->14 -- tactical_refresh() (the periodic burst
+            # 8->14 -- tactical_refresh() (the periodic burst
             # supervised re-injection this curriculum used to feed) was
             # removed the same day: isolated testing
             # (scratch/.../tactical_refresh_destroy_test.py) measured ONE
@@ -355,7 +355,7 @@ def generate_open_three_examples():
 # ------------------------------------------------------------
 # Diagnosed-position hard-mining
 # ------------------------------------------------------------
-# 2026-09-15: Position A (epoch291 HLT loss) is a real open-three-defense
+# Position A (epoch291 HLT loss) is a real open-three-defense
 # instance whose raw POLICY prior (not just the value head/MCTS search) has
 # drifted onto the historically-wrong move after repeated self-play/HLT
 # reinforcement -- confirmed by direct re-check against the live checkpoint
@@ -364,7 +364,7 @@ def generate_open_three_examples():
 # above) teaches the general shape but has no special weight on this EXACT,
 # already-entrenched association -- unlearning it needs direct, repeated
 # counter-supervision on the specific pattern, not just broader coverage.
-# 2026-09-16: Position B (live test game, Claude vs the epoch462-promoted
+# Position B (live test game, Claude vs the epoch462-promoted
 # checkpoint) -- a DIAGONAL open-three missed in a denser, real-game-like
 # position (5 X + 4 O stones already on the board, unlike Position A's
 # emptier board) despite the model correctly blocking a near-identical
@@ -385,7 +385,7 @@ _DIAGNOSED_POSITIONS = [
          ('X', 7, 5), ('O', 6, 5), ('X', 6, 6)],
         'O', [(8, 4), (4, 8)],
     ),
-    # 2026-09-16: Positions C/D/E found by the autonomous tactical_watch.py
+    # Positions C/D/E found by the autonomous tactical_watch.py
     # loop's very first run -- randomly-generated open-three test boards
     # with dense (heavy-clutter) surrounding stones, all missed by the
     # live checkpoint (block_visit_share 2.0-6.5%) despite the widened
@@ -394,35 +394,54 @@ _DIAGNOSED_POSITIONS = [
     # are exactly the kind of busy-board misses it should start fixing
     # once the next tactical_refresh cycle actually trains on it).
     (
-        [('X', 1, 0), ('X', 1, 2), ('X', 1, 3), ('O', 2, 4), ('X', 3, 6), ('X', 4, 0), ('X', 4, 5), ('O', 4, 6), ('O', 5, 2), ('O', 5, 4), ('X', 5, 5), ('X', 5, 6), ('O', 5, 8), ('O', 6, 3), ('X', 7, 0), ('X', 7, 1), ('X', 7, 2), ('O', 7, 4), ('X', 7, 6), ('X', 7, 8), ('O', 8, 3), ('X', 8, 7), ('X', 8, 8), ('X', 9, 0), ('X', 9, 3), ('X', 9, 6), ('X', 10, 2), ('O', 10, 3), ('O', 10, 4), ('X', 10, 8)],
+        [('X', 1, 0), ('X', 1, 2), ('X', 1, 3), ('O', 2, 4), ('X', 3, 6), ('X', 4, 0), ('X', 4, 5), ('O', 4, 6),
+         ('O', 5, 2), ('O', 5, 4), ('X', 5, 5), ('X', 5, 6), ('O', 5, 8), ('O', 6, 3), ('X', 7, 0), ('X', 7, 1),
+         ('X', 7, 2), ('O', 7, 4), ('X', 7, 6), ('X', 7, 8), ('O', 8, 3), ('X', 8, 7), ('X', 8, 8), ('X', 9, 0),
+         ('X', 9, 3), ('X', 9, 6), ('X', 10, 2), ('O', 10, 3), ('O', 10, 4), ('X', 10, 8)],
         'X', [(4, 1), (8, 5)],
     ),
     (
-        [('X', 0, 2), ('O', 0, 5), ('O', 1, 2), ('O', 1, 4), ('X', 1, 5), ('O', 1, 6), ('X', 1, 7), ('X', 1, 9), ('O', 2, 3), ('O', 2, 6), ('O', 2, 7), ('O', 2, 8), ('O', 3, 2), ('O', 3, 4), ('X', 3, 6), ('O', 3, 7), ('O', 3, 9), ('O', 4, 2), ('O', 4, 3), ('O', 4, 5), ('O', 4, 9), ('X', 5, 4), ('O', 5, 8), ('O', 5, 9)],
+        [('X', 0, 2), ('O', 0, 5), ('O', 1, 2), ('O', 1, 4), ('X', 1, 5), ('O', 1, 6), ('X', 1, 7), ('X', 1, 9),
+         ('O', 2, 3), ('O', 2, 6), ('O', 2, 7), ('O', 2, 8), ('O', 3, 2), ('O', 3, 4), ('X', 3, 6), ('O', 3, 7),
+         ('O', 3, 9), ('O', 4, 2), ('O', 4, 3), ('O', 4, 5), ('O', 4, 9), ('X', 5, 4), ('O', 5, 8), ('O', 5, 9)],
         'X', [(2, 5), (2, 9)],
     ),
     (
-        [('O', 2, 2), ('X', 2, 3), ('X', 3, 1), ('X', 3, 3), ('X', 4, 4), ('O', 4, 6), ('X', 5, 0), ('X', 5, 1), ('O', 5, 5), ('O', 5, 6), ('O', 5, 7), ('X', 6, 0), ('O', 6, 3), ('O', 6, 4), ('X', 6, 5), ('X', 7, 3), ('O', 7, 4), ('X', 7, 9), ('O', 8, 2), ('O', 8, 5), ('O', 8, 9), ('O', 9, 0), ('O', 9, 1), ('O', 9, 4), ('O', 10, 1), ('O', 10, 4), ('X', 10, 5)],
+        [('O', 2, 2), ('X', 2, 3), ('X', 3, 1), ('X', 3, 3), ('X', 4, 4), ('O', 4, 6), ('X', 5, 0), ('X', 5, 1),
+         ('O', 5, 5), ('O', 5, 6), ('O', 5, 7), ('X', 6, 0), ('O', 6, 3), ('O', 6, 4), ('X', 6, 5), ('X', 7, 3),
+         ('O', 7, 4), ('X', 7, 9), ('O', 8, 2), ('O', 8, 5), ('O', 8, 9), ('O', 9, 0), ('O', 9, 1), ('O', 9, 4),
+         ('O', 10, 1), ('O', 10, 4), ('X', 10, 5)],
         'X', [(5, 2), (9, 6)],
     ),
-    # 2026-09-16: 2nd tactical_watch.py manual run (~7h after the 1st,
+    # 2nd tactical_watch.py manual run (~7h after the 1st,
     # loop wakeup chain appears to have stopped firing autonomously --
     # see chat) -- 3 more dense-board misses, block_visit_share
     # 0.0-1.2%. 2/5 tested passed this time (vs 0/3 the first run),
     # consistent with gradual, partial improvement rather than solved.
     (
-        [('X', 0, 0), ('X', 0, 1), ('O', 0, 2), ('X', 0, 3), ('X', 1, 4), ('O', 2, 2), ('X', 2, 3), ('X', 2, 5), ('O', 3, 3), ('O', 4, 3), ('O', 4, 4), ('O', 4, 5), ('X', 4, 7), ('O', 5, 1), ('O', 5, 2), ('O', 5, 4), ('O', 5, 6), ('X', 5, 7), ('O', 6, 5), ('O', 6, 7), ('X', 6, 9), ('O', 7, 0), ('X', 7, 3), ('X', 7, 4), ('O', 8, 1), ('O', 8, 3), ('X', 8, 6), ('X', 8, 7), ('X', 8, 9), ('X', 9, 5), ('X', 10, 6), ('X', 10, 7), ('O', 10, 9)],
+        [('X', 0, 0), ('X', 0, 1), ('O', 0, 2), ('X', 0, 3), ('X', 1, 4), ('O', 2, 2), ('X', 2, 3), ('X', 2, 5),
+         ('O', 3, 3), ('O', 4, 3), ('O', 4, 4), ('O', 4, 5), ('X', 4, 7), ('O', 5, 1), ('O', 5, 2), ('O', 5, 4),
+         ('O', 5, 6), ('X', 5, 7), ('O', 6, 5), ('O', 6, 7), ('X', 6, 9), ('O', 7, 0), ('X', 7, 3), ('X', 7, 4),
+         ('O', 8, 1), ('O', 8, 3), ('X', 8, 6), ('X', 8, 7), ('X', 8, 9), ('X', 9, 5), ('X', 10, 6), ('X', 10, 7),
+         ('O', 10, 9)],
         'X', [(3, 2), (7, 6)],
     ),
     (
-        [('O', 0, 1), ('X', 0, 5), ('X', 0, 6), ('X', 0, 7), ('O', 1, 2), ('O', 1, 4), ('O', 1, 7), ('X', 2, 1), ('X', 2, 2), ('O', 2, 3), ('O', 2, 4), ('O', 2, 6), ('O', 3, 1), ('X', 3, 3), ('O', 3, 4), ('O', 3, 5), ('X', 4, 2), ('O', 4, 3), ('X', 4, 5), ('X', 4, 6), ('O', 5, 1), ('X', 5, 2), ('O', 5, 3), ('X', 5, 4), ('O', 5, 5), ('O', 5, 7), ('O', 6, 1), ('X', 6, 2), ('O', 6, 3), ('X', 6, 6), ('O', 6, 7), ('O', 7, 1), ('O', 7, 2), ('X', 7, 3), ('O', 7, 6)],
+        [('O', 0, 1), ('X', 0, 5), ('X', 0, 6), ('X', 0, 7), ('O', 1, 2), ('O', 1, 4), ('O', 1, 7), ('X', 2, 1),
+         ('X', 2, 2), ('O', 2, 3), ('O', 2, 4), ('O', 2, 6), ('O', 3, 1), ('X', 3, 3), ('O', 3, 4), ('O', 3, 5),
+         ('X', 4, 2), ('O', 4, 3), ('X', 4, 5), ('X', 4, 6), ('O', 5, 1), ('X', 5, 2), ('O', 5, 3), ('X', 5, 4),
+         ('O', 5, 5), ('O', 5, 7), ('O', 6, 1), ('X', 6, 2), ('O', 6, 3), ('X', 6, 6), ('O', 6, 7), ('O', 7, 1),
+         ('O', 7, 2), ('X', 7, 3), ('O', 7, 6)],
         'X', [(0, 4), (4, 4)],
     ),
     (
-        [('X', 0, 6), ('X', 0, 10), ('X', 1, 8), ('O', 1, 10), ('X', 3, 4), ('O', 3, 6), ('O', 3, 7), ('X', 3, 8), ('X', 4, 3), ('X', 4, 4), ('O', 4, 6), ('O', 4, 9), ('X', 5, 2), ('O', 5, 5), ('O', 6, 1), ('X', 6, 3), ('X', 6, 6), ('X', 7, 2), ('X', 7, 4), ('O', 7, 5), ('O', 7, 6), ('O', 7, 8), ('O', 8, 2), ('O', 8, 3), ('X', 8, 5), ('O', 8, 6), ('O', 8, 8), ('X', 9, 1), ('O', 9, 3), ('O', 9, 6)],
+        [('X', 0, 6), ('X', 0, 10), ('X', 1, 8), ('O', 1, 10), ('X', 3, 4), ('O', 3, 6), ('O', 3, 7), ('X', 3, 8),
+         ('X', 4, 3), ('X', 4, 4), ('O', 4, 6), ('O', 4, 9), ('X', 5, 2), ('O', 5, 5), ('O', 6, 1), ('X', 6, 3),
+         ('X', 6, 6), ('X', 7, 2), ('X', 7, 4), ('O', 7, 5), ('O', 7, 6), ('O', 7, 8), ('O', 8, 2), ('O', 8, 3),
+         ('X', 8, 5), ('O', 8, 6), ('O', 8, 8), ('X', 9, 1), ('O', 9, 3), ('O', 9, 6)],
         'X', [(2, 8), (6, 4)],
     ),
-    # 2026-09-23 Position F: HLT (human) loss for Gen13/NAPS, epoch129,
+    # Position F: HLT (human) loss for Gen13/NAPS, epoch129,
     # cumulative_epoch 129 checkpoint. Root value swung to +0.977 (AI very
     # confident of winning) at move 24, then collapsed to -0.921 by move 36
     # as the human found the refutation -- see the session's HLT-analysis
@@ -493,7 +512,9 @@ def generate_diagnosed_positions_examples():
             for variant in range(DIAGNOSED_CLUTTER_VARIANTS):
                 board = [row[:] for row in base_board]
                 if variant > 0:
-                    _tactical_clutter(board, placed_cells | set(correct_transformed), n_stones=random.randint(3, 36))  # 2026-09-16: widened 2-5 -> 3-36 for consistency with the other families (see generate_open_three_examples' header comment)
+                    # Widened 2-5 -> 3-36 for consistency with the other families (see generate_open_three_examples'
+                    # header comment)
+                    _tactical_clutter(board, placed_cells | set(correct_transformed), n_stones=random.randint(3, 36))
                 if any(board[r][c] != ' ' for (r, c) in correct_transformed):
                     continue  # clutter collided with a correct response cell, skip
                 if fast_check_win(board, 'X') or fast_check_win(board, 'O'):

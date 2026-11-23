@@ -50,7 +50,7 @@ def procs():
         r = subprocess.run(["powershell", "-NoProfile", "-c",
                             "Get-CimInstance Win32_Process -Filter \"name='python.exe'\" | % { $_.CommandLine }"],
                            capture_output=True, text=True, timeout=8,
-                           encoding="utf-8", errors="replace").stdout or ""   # 2026-10-23: cp949 decode crash on Korean paths
+                           encoding="utf-8", errors="replace").stdout or ""   # cp949 decode crash on Korean paths
     except Exception:
         return "?"
     has = lambda s: "O" if s in r else "-"

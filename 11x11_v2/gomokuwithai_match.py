@@ -36,14 +36,14 @@ from fast_board import fast_check_win
 
 N = 11
 URL = "https://youngin05.github.io/gomokuwithai/"
-# 2026-10-10: GWA_CKPT selects another checkpoint (default Dawn); its games go to a log named after it.
+# GWA_CKPT selects another checkpoint (default Dawn); its games go to a log named after it.
 CKPT = os.environ.get("GWA_CKPT", os.path.join("model", "graduated_11x11", "ep625_graduated_20260929.pth"))
 LOG = os.path.join("model", "gomokuwithai_match_log.jsonl") if "GWA_CKPT" not in os.environ else \
     os.path.join("model", "gomokuwithai_match_" + os.path.splitext(os.path.basename(CKPT))[0] + "_log.jsonl")
 GAMES = int(sys.argv[1]) if len(sys.argv) > 1 else 50
 SIMS = int(sys.argv[2]) if len(sys.argv) > 2 else 1100
 LEVEL = int(sys.argv[3]) if len(sys.argv) > 3 else 3  # 3 = Hard
-# 2026-09-30: time-matched mode (SIMS = 0): Dawn searches until it has used as much
+# time-matched mode (SIMS = 0): Dawn searches until it has used as much
 # wall time as the site AI's average move time so far in this match (min 1100 sims).
 TIME_MATCH = SIMS == 0
 if TIME_MATCH:

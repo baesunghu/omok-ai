@@ -543,7 +543,7 @@ class MPGamePool:
         self.result_queue = self.ctx.Queue()
         self.ready_queue = self.ctx.Queue()
         self.error_queue = self.ctx.Queue()
-        # 2026-09-26: with more tasks than workers (now the case on the
+        # With more tasks than workers (now the case on the
         # fallback path), a failed call can leave this process's feeder
         # thread blocked on unread tasks, which multiprocessing would join
         # forever at exit. Never join these feeders; shutdown() also drains.
@@ -663,7 +663,7 @@ class MPGamePool:
         return results
 
     def shutdown(self):
-        # 2026-09-26: drop still-queued tasks first so workers reach their
+        # Drop still-queued tasks first so workers reach their
         # sentinel after their current game (see __init__ note).
         empty_polls = 0
         while empty_polls < 2:
@@ -933,7 +933,7 @@ def generate_mcts_self_play_data_mp(model, device, num_games=10, num_simulations
             # normalized) for the V3 auxiliary head -- see
             # nets.py. Self-play records both sides'
             # plies, so len(history) - index is the true plies-to-end.
-            # 2026-09-26: real ply indices (PCR skips recording fast-search
+            # Real ply indices (PCR skips recording fast-search
             # plies, so len(history) - k would undercount plies-to-end).
             for (board_3d, player_turn, target_policy_map, q), ply_idx in zip(history, ply_indices):
                 final_val = prod.mixed_value_target(float(outcome if player_turn == 'X' else -outcome), q,

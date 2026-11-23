@@ -1,4 +1,4 @@
-# ladder_all_chart.py + a third panel for 11x11_v3 (Gumbel cold start), same bootstrap as ladder_v2_chart (2026-10-22).
+# ladder_all_chart.py + a third panel for 11x11_v3 (Gumbel cold start), same bootstrap as ladder_v2_chart.
 import json, numpy as np, matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

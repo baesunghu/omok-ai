@@ -30,7 +30,7 @@ import torch
 
 import mcts_core
 from run_config import VCF  # noqa: E402
-# 2026-10-23 (user): VCF on wherever the engine has it (was off: engine default depth 0); VCF=0 turns it off
+# VCF on wherever the engine has it (was off: engine default depth 0); VCF=0 turns it off
 if VCF and os.environ.get("VCF", "1") != "0":
     mcts_core.set_vcf(*VCF)
 from board_encoding import board_to_input_array_from_numeric
@@ -44,15 +44,15 @@ LOG = os.path.join("model", "tactical_problem_log.jsonl")
 SIMS = 1100
 TRIAL_SIMS = (900, 1100, 1300)
 RAPFI_MS = 3000
-RAPFI_NODES = 1000000  # 2026-10-11: node limit replaces the time limit (see main)
+RAPFI_NODES = 1000000  # Node limit replaces the time limit (see main)
 MAX_PLIES = 40
 
 
 def main():
     ckpt = sys.argv[1] if len(sys.argv) > 1 else f"model/best_mcts{FILE_SUFFIX}.pth"
-    dev = torch.device("cuda" if torch.cuda.is_available() and not os.environ.get("FORCE_CPU") else "cpu")  # 2026-10-23: FORCE_CPU=1 keeps the training GPU free
+    dev = torch.device("cuda" if torch.cuda.is_available() and not os.environ.get("FORCE_CPU") else "cpu")  # FORCE_CPU=1 keeps the training GPU free
     sd = torch.load(ckpt, map_location=dev)
-    if any(k.startswith("opp_policy_head.") for k in sd):   # 2026-10-22: 11x11_v3 checkpoint (NetV3, 128x8)
+    if any(k.startswith("opp_policy_head.") for k in sd):   # 11x11_v3 checkpoint (NetV3, 128x8)
         sys.path.insert(1, V3_DIR)
         from net_v3 import NetV3
         model = NetV3()
@@ -67,20 +67,20 @@ def main():
             pl, v = model(t)
         return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
 
-    if PROBLEMS is None:   # 2026-10-14 (15x15): no problem set yet (researched once eq >= 1000)
+    if PROBLEMS is None:   # 15x15: no problem set yet (researched once eq >= 1000)
         print(f"no {N}x{N} problem set yet -- graduation check skipped"); return
     probs = json.load(open(PROBLEMS, encoding="utf-8"))["problems"]
-    # 2026-10-22 (user): PROBLEM_IDS=id1,id2 grades only those problems (all as tier 1, nothing logged)
+    # PROBLEM_IDS=id1,id2 grades only those problems (all as tier 1, nothing logged)
     only = [x for x in os.environ.get("PROBLEM_IDS", "").split(",") if x]
     if only:
         probs = [dict({k: v for k, v in p.items() if k != "tier"}) for p in probs if p["id"] in only]
-    # 2026-10-11 (user): node-limited opponent so a grading run gives the same result every time (the 3 s
+    # node-limited opponent so a grading run gives the same result every time (the 3 s
     # time limit made results depend on PC load; ep920 got 3/3 in one run and 1/3 in another with the same moves).
     # 1,000,000 nodes ~ what 3 s searched on an idle PC (~417k nodes/s), so difficulty stays comparable.
     rapfi = Rapfi(30000, RAPFI_NODES)
     results = []
     try:
-        # 2026-10-08 (user): 3-tier check. Problems without "tier" always run (tier 1 includes the
+        # 3-tier check. Problems without "tier" always run (tier 1 includes the
         # stage-1 graduation set). Tier 2 (5 representative loss-backtrack problems) runs only if every
         # stage-1 problem passed; tier 3 (the remaining ones) only if every tier-2 problem passed.
         stage_of = {p["id"]: p.get("stage", 1) for p in probs}
@@ -90,7 +90,7 @@ def main():
         while i < len(todo):
             pr = todo[i]
             i += 1
-            # 2026-09-28 (user, option A): 3 trials at slightly different search budgets,
+            # 3 trials at slightly different search budgets,
             # pass if >= 2 of 3 pass -- one deterministic game per problem was too noisy
             trials = []
             for sims in TRIAL_SIMS:
@@ -147,7 +147,7 @@ def main():
     finally:
         rapfi.close()
     n_pass = sum(r["passed"] for r in results)
-    # 2026-09-28: stage 1 (graduation) problems vs stage 2 (stretch goal, together with Rapfi 2000)
+    # Stage 1 (graduation) problems vs stage 2 (stretch goal, together with Rapfi 2000)
     stage = {p["id"]: p.get("stage", 1) for p in probs}
     for r in results:
         r["stage"] = stage[r["id"]]

@@ -28,7 +28,7 @@ for dn in defs:
         board[r][c] = p
     turn, winner, first = ai, None, None
     for _ in range(MAX_PLIES):
-        if first is None and FIRST:          # 2026-10-24: force the defender's first move (snap-through check)
+        if first is None and FIRST:          # Force the defender's first move (snap-through check)
             r, c = FIRST
         else:
             r, c = (defender if turn == ai else attacker).move(list(moves), turn)

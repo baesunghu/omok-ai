@@ -7,7 +7,7 @@ import torch
 import os
 
 from board_encoding import (board_to_input_tensor, board_to_input_array, boards_to_input_tensor, board_to_input_array_from_numeric, _fork_mask)
-# 2026-09-22 Gen12: V2 architecture (GroupNorm+SE), see nets.py
+# Gen12: V2 architecture (GroupNorm+SE), see nets.py
 from nets import GomokuNetV3 as GomokuNet
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, fast_check_draw
 
@@ -45,7 +45,7 @@ try:
 except ImportError:
     _mcts_core = None
 
-# ---- 11x11_v2 engine (2026-10-21, user); settings in run_config.py ----
+# ---- 11x11_v2 engine; settings in run_config.py ----
 # VCF (victory by continuous fours) checked at every node expansion in the C++ solver.
 # MEGA (Minimum Exploration Guarantee Algorithm): stage 1 tops every root candidate up to
 # MEGA_VISITS = (visits at Chebyshev distance 1, at distance 2) before the normal
@@ -136,7 +136,7 @@ class PooledEvaluator:
         self._stop = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        # 2026-09-11 instrumentation: tracks real achieved batch sizes so a
+        # Instrumentation: tracks real achieved batch sizes so a
         # target_batch change (e.g. 48->128, see forward_pass_benchmark.py's
         # finding that bs=128 gives ~17% more throughput in a synthetic
         # single-shot benchmark) can be verified against ACTUAL concurrency
@@ -286,7 +286,7 @@ class MCTS:
         self._eval_cache = shared_cache if shared_cache is not None else {}
         self._owns_cache = shared_cache is None
         self._pooled_evaluator = pooled_evaluator
-        # Persistent C++ search-tree handle (2026-09-11, tree reuse): one
+        # Persistent C++ search-tree handle (tree reuse): one
         # MCTSEngine per MCTS Python object, matching this object's own
         # lifetime -- every game-playing call site already constructs a
         # fresh MCTS() per game (or per side), and calls .search() once per
@@ -413,7 +413,7 @@ class MCTS:
         cpp_mcts/mcts_core_tree_reuse.cpp for the full design."""
         if self.eval_batch_size > 1:
             eval_batch_fn = self._cpp_eval_batch_fn(model, device)
-            # 2026-09-28: KataGo forced playouts + policy target pruning on
+            # KataGo forced playouts + policy target pruning on
             # noisy (training-data) searches only; evaluation, gate and
             # relabel searches run without noise and stay plain PUCT.
             forced_k = FORCED_PLAYOUT_K if add_noise else 0.0

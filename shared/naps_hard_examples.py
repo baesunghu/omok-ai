@@ -362,7 +362,7 @@ def _mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
 
 
 # ============================================================
-# Outcome-based hard-example mining (2026-09-11)
+# Outcome-based hard-example mining
 # ============================================================
 # Adds a second, outcome/disagreement-based mining criterion on top of the
 # pattern-only scan below (_threat_gaps mirrors that scan's own "4-of-5+gap"
@@ -373,7 +373,7 @@ def _mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
 #   Hard-3: a fork (_fork_geometries) was available/threatened and not taken/denied.
 #   Hard-5: position within the last HARD5_LOOKBACK of the mover's own plies
 #           in a game that mover actually lost.
-#   Hard-6 (2026-09-11 addition, not in the original spec): the search's own
+#   Hard-6 (an addition, not in the original spec): the search's own
 #           visit distribution came out suspicion-of-degenerate flat for its
 #           candidate count -- see entropy_complexity_probe.py's finding that
 #           ~19% of the live buffer is EXACTLY uniform over its candidate set,
@@ -388,7 +388,7 @@ def _mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
 # production budget still isn't enough.
 HARD_EXAMPLE_POOL_PATH = f"model/hard_mined_examples{_SUFFIX}.pkl"
 RELABEL_CAP = 256
-# 800 -> 1800 (2026-09-12): production's own sim budget auto-ramped past this
+# 800 -> 1800: production's own sim budget auto-ramped past this
 # (currently 1100 base) since RELABEL_SIMS was first set, so the "bigger dose
 # of search" this relabeling is supposed to provide had quietly fallen BELOW
 # production depth. Direct measurement today (live_model_tactical_check.py)
@@ -447,7 +447,7 @@ def _opponent_can_fork_next(board, opponent):
     replies x O(BOARD_SIZE^2) fast_check_win each -- only run on already-
     mined game plies at refresh_mined_tactical_pool's cadence, not in the
     self-play hot loop."""
-    # 2026-10-14 (15x15, now every run): same answer, window-based. The brute force was O(N^6) fast_check_win
+    # 15x15, now every run: same answer, window-based. The brute force was O(N^6) fast_check_win
     # calls per _fork_safe_cells and stalled the relabel step for 30+ minutes on 15x15.
     if _immediate_win_cells(board, opponent):
         return True
@@ -484,7 +484,7 @@ def _immediate_win_cells(board, color):
     already-mined game plies (a few hundred per refresh cycle), not inside
     the hot self-play loop itself.
     """
-    # 2026-10-14 (15x15, now every run): window scan instead of one fast_check_win per empty cell. A cell completes
+    # 15x15, now every run: window scan instead of one fast_check_win per empty cell. A cell completes
     # 5+ in a row iff some 5-cell window through it holds 4 `color` stones and that one empty cell.
     cells = set()
     for cells_w in _WIN_WINDOWS:
@@ -551,7 +551,7 @@ def _classify_hard_examples(games, windows, forks):
             g_o = _threat_gaps(board, other, windows)
             forked = _fork_hits(board, player, forks) + _fork_hits(board, other, forks)
 
-            # Hard-7 (2026-09-23): general, template-free fork check -- does
+            # Hard-7: general, template-free fork check -- does
             # THIS move (act) leave `other` with SOME reply that manufactures
             # an unstoppable fork (or outright win)? Must look one ply past
             # the move itself (_opponent_can_fork_next), not just inspect
@@ -656,7 +656,7 @@ def _relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, 
             policy[:] = 0.0
             policy[forced[0] * BOARD_SIZE + forced[1]] = 1.0
     elif hard_class == 7:
-        # 2026-09-24: same forcing as Hard-1/2, but the "known
+        # Same forcing as Hard-1/2, but the "known
         # correct cells" have to be computed here (not stored at
         # mining time) via _fork_safe_cells -- see that function's
         # docstring for why this was needed (the re-searched policy
@@ -671,7 +671,7 @@ def _relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, 
             policy[forced[0] * BOARD_SIZE + forced[1]] = 1.0
 
     if hard_class == 1:
-        # 2026-09-23: 1.0 -> 0.95 (label smoothing). value_overfit_check.py
+        # 1.0 -> 0.95 (label smoothing). value_overfit_check.py
         # found the live value head badly overconfident on FRESH,
         # never-trained-on self-play games (held-out MSE 1.36 --
         # worse than a constant-0 predictor; 61% of predictions
@@ -683,7 +683,7 @@ def _relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, 
         # without giving up the corrective signal's direction.
         value = 0.95
     elif hard_class == 7:
-        # 2026-09-23: unlike Hard-1/5, this is a confident NEGATIVE
+        # Unlike Hard-1/5, this is a confident NEGATIVE
         # label, not a policy-only class -- letting `other` reach an
         # unstoppable fork is a near-certain loss for `player`
         # regardless of what happens afterward (session evidence:
@@ -692,7 +692,7 @@ def _relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, 
         # needs a direct value correction, not just more search at
         # relabel time). -1.0 -> -0.95: same label-smoothing
         # rationale as Hard-1 above.
-        # 2026-09-26: REMOVED -- policy-only now (value=None). The
+        # REMOVED -- policy-only now (value=None). The
         # board stored here is the position BEFORE the defender
         # moves, where fork-safe replies exist, so "near-certain
         # loss" was the value of the position AFTER a bad reply, not
@@ -813,14 +813,14 @@ def _get_open_three_injection_samples(n_examples=120, sample_weight=1.0):
     """
     global _open_three_injection_cache
     if _open_three_injection_cache is None:
-        # 2026-09-24: generate_fork_examples() (the open-3-3 / double-open-
+        # generate_fork_examples() (the open-3-3 / double-open-
         # three geometry -- see _fork_geometries) added to this SAME
         # continuous pool. It was already implemented and already used to
         # get delivered via tactical_refresh()'s burst fine-tune, but that
         # call was removed from the main loop this session (see the
         # tactical_refresh_interval guard's comment) and nothing replaced
         # it for this specific curriculum the way open-three's own got
-        # migrated here on 2026-09-22 -- so it silently went from
+        # migrated here -- so it silently went from
         # "burst-delivered" to "never delivered". A held-out T-shape probe
         # this session (test_t_shape_33fork_realistic.py) found this
         # measurably regressing over the ~200 epochs since: raw policy
@@ -1086,7 +1086,7 @@ def tactical_refresh(model, device, epochs=3, batch_size=32):
     inputs, targets, value_targets = inputs.to(device), targets.to(device), value_targets.to(device)
     n = inputs.shape[0]
 
-    # 2026-09-21 lr-fix restart: 5e-4 -> 5e-5. This was tuned (2026-09-10)
+    # lr-fix restart: 5e-4 -> 5e-5. This was tuned
     # against the OLD main-loop lr=1e-3 (a 0.5x ratio); the main loop is now
     # 1e-4 (this restart's lr-fix), and tactical_refresh_interval dropped
     # 21->5 for denser gate-check signal, so this refresh now fires ~4.2x

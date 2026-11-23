@@ -14,7 +14,7 @@ import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
 from omok_paths import enter_run  # noqa: E402
 HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
-LEVELS = [1000, 2000, 3000, 5000, 10000, 20000]  # 2026-10-10 evening: 300 dropped, 10000 added
+LEVELS = [1000, 2000, 3000, 5000, 10000, 20000]  # 300 dropped, 10000 added
 GAMES = 20
 DAWN = {300: 55.0, 1000: 57.5, 2000: 50.0, 3000: 37.5}
 
@@ -40,7 +40,7 @@ def show(since, what):
                 rows.append(r)
     print(f"{time.strftime('%H:%M:%S')}  since {since}  {what}")
     print(f"{'nodes':>6} {'games':>6}  W  D  L  {'score':>6}  {'Dawn':>6}")
-    # 2026-10-12: group by the run's checkpoint and Rapfi node count (not by position),
+    # Group by the run's checkpoint and Rapfi node count (not by position),
     # so one-off runs with other levels (e.g. 1500/3000/5000) and cancelled runs show correctly
     if rows:
         ck = rows[-1].get("checkpoint")

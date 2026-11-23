@@ -24,7 +24,7 @@ INPUT_SIZE = NUM_CELLS * NUM_INPUT_CHANNELS
 # BOARD_SIZE=10, WIN_LENGTH=5 this is 192 windows total (60 horizontal +
 # 60 vertical + 36 diagonal "\" + 36 diagonal "/").
 
-# 2026-09-16: optional native C++/pybind11 acceleration for _fork_mask
+# Optional native C++/pybind11 acceleration for _fork_mask
 # (cpp_mcts/fork_mask_cpp.cpp, same build pattern as mcts_core/
 # deterministic_play_core -- see cpp_mcts/build_fork_mask_cpp.bat). Explored
 # via a workflow that tried 4 independent optimization strategies (numba

@@ -52,7 +52,7 @@ def show():
         print("  log:", l.strip()[:120])
 
     print("\n[문제 채점]")
-    # 2026-10-12: newest finished grading + any grading still running (one-off tactical_*.out)
+    # Newest finished grading + any grading still running (one-off tactical_*.out)
     last = None
     try:
         with open(os.path.join("model", "tactical_problem_log.jsonl"), encoding="utf-8") as f:

@@ -30,8 +30,8 @@ from naps_gate import BEST_CHECKPOINT_PATH, RECORD_LEAGUE_SIDE
 # self-play sees a diversity of strategies instead of one fixed target.
 
 
-LEAGUE_ANCHOR_PROB = 0.0   # random anchor draw (2026-09-30 first try) -- superseded by the rotation below
-LEAGUE_ANCHOR_ROTATION = True  # 2026-09-30: epoch%3 -> Dawn / ep645 / normal draw
+LEAGUE_ANCHOR_PROB = 0.0   # random anchor draw (first try) -- superseded by the rotation below
+LEAGUE_ANCHOR_ROTATION = True  # epoch%3 -> Dawn / ep645 / normal draw
 _LEAGUE_SNAPSHOT_RE = re.compile(r"model_MCTS_ep(\d+)" + re.escape(_SUFFIX) + r"\.pth$")
 
 
@@ -88,7 +88,7 @@ def _pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch
     failed, or if fewer than 2 snapshots exist yet -- too early in training
     for league play to add anything over the fixed deterministic opponent
     already in use."""
-    # 2026-09-30 (user, option A): deterministic rotation over epochs --
+    # Deterministic rotation over epochs --
     # epoch % 3 == 0 -> first anchor (Dawn ep625), == 1 -> second anchor (ep645),
     # == 2 -> the normal draw below (best / deep history / recency pool).
     anchors = sorted(glob.glob("model/league_anchors/*.pth")) if LEAGUE_ANCHOR_ROTATION else []
@@ -104,7 +104,7 @@ def _pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch
             return None
         return league_model, BEST_CHECKPOINT_PATH
 
-    # 2026-09-30 (user): fixed "anchor" opponents -- the graduated Dawn (ep625) and the
+    # Fixed "anchor" opponents -- the graduated Dawn (ep625) and the
     # long-standing best ep645 -- so league play keeps facing the strongest known models
     # while the gate is stuck. Checked right after the best-checkpoint draw.
     anchors = [p for p in sorted(glob.glob("model/league_anchors/*.pth"))] if LEAGUE_ANCHOR_PROB > 0 else []
@@ -145,7 +145,7 @@ def _pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch
     return league_model, chosen
 
 
-LEAGUE_NUM_OPPONENTS = 12  # 2026-10-08 (user): many opponents per epoch instead of one
+LEAGUE_NUM_OPPONENTS = 12  # Many opponents per epoch instead of one
 
 
 def _pick_league_opponents_multi(device, k, pool_size=40, epoch=0):
@@ -226,7 +226,7 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
     history = []
     # Decisions that record (or, for a PCR fast search, would have recorded)
     # a history entry -- drives temperature; equals len(history) at
-    # full_search_prob=1.0 (2026-09-26 PCR fix).
+    # full_search_prob=1.0 (PCR fix).
     decisions = 0
     outcome = 0
 
@@ -236,7 +236,7 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
         current_player = 'O'
 
     while True:
-        # 2026-09-28: game-length cap (stones on the board); capped = draw.
+        # game-length cap (stones on the board); capped = draw.
         if max_plies and sum(1 for row in board for cell in row if cell != ' ') >= max_plies:
             outcome = 0
             break
@@ -286,7 +286,7 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
                 board_3d = board_to_input_array(board, current_player)
                 history.append((board_3d, current_player, target_policy_map, float(root.value())))
         else:
-            # 2026-09-28: PCR on the league side too (same full_search_prob
+            # PCR on the league side too (same full_search_prob
             # as the MCTS side): a fast search only picks the move and is not
             # recorded. At full_search_prob=1.0 this is the old behavior.
             league_full = full_search_prob >= 1.0 or random.random() < full_search_prob
@@ -308,7 +308,7 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
             best_action = max(root.children.items(), key=lambda kv: kv[1].n_visits)[0]
             r, c = divmod(best_action, BOARD_SIZE)
 
-            # 2026-10-13 (user): league-side plies are no longer training targets -- the opponents are older,
+            # league-side plies are no longer training targets -- the opponents are older,
             # weaker checkpoints (some ~700-1,000 equal nodes), so their visit counts taught weaker moves.
             if league_full and RECORD_LEAGUE_SIDE:
                 board_3d = board_to_input_array(board, current_player)
@@ -365,7 +365,7 @@ def generate_mcts_vs_league_data(model, league_model, device, num_games=6, num_s
             else:
                 outcome_counts['draw'] += 1
             for (board_3d, player_turn, target_policy_map, q) in history:
-                # Full +-1.0 scale (was 0.5 until 2026-09-10). The halved scale
+                # Full +-1.0 scale (was 0.5). The halved scale
                 # shrank Q's dynamic range against an unchanged c_puct, which
                 # doubles the effective exploration constant and quadruples the
                 # simulations needed for visit counts to overcome the prior. It

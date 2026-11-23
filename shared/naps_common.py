@@ -10,15 +10,15 @@ from datetime import datetime
 
 from mcts_cpp import BOARD_SIZE, NUM_CELLS
 from nets import GomokuNetV3 as GomokuNet
-# (until 2026-11 this file was alphazero_mcts_make_lrfix.py)
+# (until 2026-11 the trainer was one file, alphazero_mcts_make_lrfix.py; see naps_trainer.py)
 
-# 2026-09-22 Gen12: swapped to the V2 architecture (GroupNorm+SE, see
+# Gen12: swapped to the V2 architecture (GroupNorm+SE, see
 # nets.py) -- aliased as GomokuNet so every
 # existing instantiation site below (model/best_model/league_model/
 # gen_model) picks it up without individual edits. NOT weight-compatible
 # with the old nets.GomokuNetV1 checkpoints -- this run
 # starts from the freshly-trained gen12_full_FINAL.pth, not an old one.
-# 2026-09-25: V3 = V2 + auxiliary survival (remaining-plies) head, see
+# V3 = V2 + auxiliary survival (remaining-plies) head, see
 # nets.py. Loads V2 checkpoints; forward() unchanged.
 SURVIVAL_LOSS_WEIGHT = 0.25
 
@@ -69,13 +69,13 @@ def compute_policy_entropy(policies_np):
 # around 1.59-1.61 instead of trending down. A persisted replay buffer fixes
 # that, and also survives across separate runs of this script.
 REPLAY_BUFFER_PATH = f"model/mcts_replay_buffer{_SUFFIX}.pkl"
-# 2026-10-08 (user): 24,000 -> 196,608 (~40 epochs of data instead of ~5). Training
+# 24,000 -> 196,608 (~40 epochs of data instead of ~5). Training
 # no longer sweeps the whole buffer: each epoch draws TRAIN_SAMPLES_PER_EPOCH at random.
 REPLAY_BUFFER_MAX_SIZE = 196_608
 TRAIN_SAMPLES_PER_EPOCH = 24_000
 # History: was 50_000, cut to 8_000 -- ~66-generation-stale MCTS targets
 # plateaued Policy Loss (see the 50k->8k comment this replaced, copied from
-# the 5x5 sibling file). 2026-08-29: raised 8_000->12_000, mirroring the
+# the 5x5 sibling file). Raised 8_000->12_000, mirroring the
 # same change just applied to 5x5 -- this board's own vs-Deterministic eval
 # has been sliding (Loss 50/100/95/75/85/80% over epochs 120-170, see
 # model/training_report_10x10.txt) since the neighbor-radius search pruning
@@ -201,7 +201,7 @@ def annealed_value(epoch, anneal_epochs, start_value, end_value):
 SIM_RAMP_PATH = f"model/sim_ramp_state{_SUFFIX}.json"
 SIM_RAMP_START = 150
 SIM_RAMP_STEP = 100
-SIM_RAMP_CEILING = 1600  # 2026-10-13 (user): 1100 -> 1600 (deeper full searches = better policy targets)
+SIM_RAMP_CEILING = 1600  # 1100 -> 1600 (deeper full searches = better policy targets)
 BOOST_RAMP_START = 300
 BOOST_RAMP_STEP = 200
 BOOST_RAMP_CEILING = 2200
@@ -210,7 +210,7 @@ BOOST_RAMP_CEILING = 2200
 # streak leaves self-play stuck at a low budget indefinitely, since normally
 # the ramp only advances on an actual promotion.
 STAGNATION_RAMP_LIMIT = 5
-# 2026-09-15: a blind calendar-based LR warm-restart (CosineAnnealingWarmRestarts
+# A blind calendar-based LR warm-restart (CosineAnnealingWarmRestarts
 # below) can land in the middle of a fresh promotion's destabilized window --
 # measured on this exact run: the epoch-273 promotion (first ever, after 252
 # straight 0%-loss gate checks) was followed by vs-Det formal win rate
@@ -301,7 +301,7 @@ def save_cumulative_epoch(n):
     # is a single filesystem-level rename): a plain open(path, "w") truncates
     # the file immediately, so a process kill between the truncate and the
     # json.dump landing (e.g. an external restart) leaves an empty/corrupt
-    # file -- 2026-09-09 this exact failure (empty train_state file ->
+    # file -- this exact failure (empty train_state file ->
     # "Expecting value: line 1 column 1" -> silently restarted the epoch
     # counter at 0 while the checkpoint/buffer were still the real ~73-epoch
     # state) actually happened live. os.replace is atomic on both Windows

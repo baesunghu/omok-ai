@@ -22,6 +22,7 @@ v3의 성과(대등점, 문제 통과, 정오)는 측정된 사실이다. 다만
 | [CATFISH_report.md](CATFISH_report.md) | 메기 리그: 방법, 기원, 통제 실험 전 사례(1~8장), 통제 실험과 결론(9~10장) | 10/23 초안, 11월 결론 갱신 | **현행** |
 | [records/value_ablation_ep960.md](records/value_ablation_ep960.md) | 가치망 제거 실험 (메기의 출발점) | 10/12 | 기록 |
 | [records/snapthrough_evidence_ep900_d13.md](records/snapthrough_evidence_ep900_d13.md) | NAPS-900의 13수 해법 (3,7) | 10/11 ~ 10/12 | 기록 |
+| [code_history.md](code_history.md) | 코드 주석에서 옮긴 날짜별 기록 (파일·함수별) | 8월 ~ 11월 | 기록 |
 | [archive/15x15_migration_plan.md](archive/15x15_migration_plan.md) | 15×15 전환 준비 목록 | 10/13 | 보관 (계획) |
 | [archive/design_balanced_openings_20260926.md](archive/design_balanced_openings_20260926.md) | 균형 시작 국면 설계안 | 9/26 | 보관 (구현 안 함) |
 | [archive/paper_handover.md](archive/paper_handover.md) | 논문 작업 인수인계 메모 | 10/12 | 보관 |
@@ -82,6 +83,8 @@ v3의 성과(대등점, 문제 통과, 정오)는 측정된 사실이다. 다만
 | `determinisic_play.py` | `shared/deterministic_play.py` |
 | `_restart_train.py`의 본문 | `shared/train_run.py` (실행 폴더의 `_restart_train.py`는 이것을 부른다) |
 | 실행 폴더마다 한 벌씩 있던 코드 | `shared/` 한 벌 + 실행 폴더의 `run_config.py` |
+
+코드 주석에 붙어 있던 날짜와 `(user)` 표시는 지우고 설명만 남겼다. 원래 주석은 [code_history.md](code_history.md)에 파일·함수별로 옮겨 두었다.
 
 체크포인트는 가중치(`state_dict`)로 저장되고 버퍼는 numpy 배열만 담으므로, 이름이 바뀌어도 예전 파일을 그대로 읽는다.
 
