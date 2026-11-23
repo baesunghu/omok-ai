@@ -16,7 +16,7 @@ ROOT = os.path.dirname(HERE)
 OUT_HTML = os.path.join(HERE, "_code_print.html")
 OUT_PDF = os.path.join(HERE, "NAPS_핵심코드_원본.pdf")
 
-# (path relative to final/, role, manual part-2 chapter)
+# (path relative to the repository root -- the old final/ folder, role, manual part-2 chapter)
 FILES = [
     ("10x10/_restart_train.py", "학습 실행 설정. 모든 하이퍼파라미터가 여기서 들어간다", "부록 6.3"),
     ("10x10/fast_board.py", "보드 크기, 승리 판정의 가장 밑바닥", "2부 1장"),

@@ -1,7 +1,9 @@
 """총괄 현황 한 번에 보기 (2026-10-10). 사용: python status_all.py   (반복: python status_all.py watch)"""
 import json, os, re, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__)); os.chdir(HERE)
-SP = r"C:\Users\MYPC~1\AppData\Local\Temp\claude\C--Users-My-PC-Desktop-final\cdf58682-cb60-4179-92b0-f3acf6965694\scratchpad"
+sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
+from omok_paths import SCRATCH_DIR as SP  # noqa: E402   (was a one-off session scratchpad)
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 
 
 def tail(path, n):
@@ -23,7 +25,7 @@ def show():
     print("=" * 70); print("총괄 현황", time.strftime("%Y-%m-%d %H:%M:%S")); print("=" * 70)
 
     print("\n[학습] 최근 에폭")
-    rep = [l for l in tail("model/training_report_11x11.txt", 400) if "] Epoch " in l]
+    rep = [l for l in tail(f"model/training_report{FILE_SUFFIX}.txt", 400) if "] Epoch " in l]
     for l in rep[-4:]:
         m = re.search(r"\[(.*?)\] Epoch (\d+)/\d+ \| Policy Loss: ([\d.]+) \| Value Loss: ([\d.]+)", l)
         g = re.search(r"Gate vs best[^|]*", l)

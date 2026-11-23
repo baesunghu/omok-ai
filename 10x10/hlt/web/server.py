@@ -15,7 +15,9 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-TENX = r"C:\Users\My PC\Desktop\final\10x10"
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))  # repo root
+from omok_paths import NAPS_DIR, V2_DIR, V3_DIR, find_extension  # noqa: E402
+TENX = NAPS_DIR
 sys.path.insert(0, TENX)
 os.chdir(TENX)
 import numpy as np
@@ -24,7 +26,7 @@ import torch
 # 2026-10-26 (user): festival board uses the 11x11_v2 engine with VCF on, same as the NOON grading and the Rapfi ladder
 # (was mcts_core_solver: vlfix + mate distance + solver, no VCF; same search_batched API)
 import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("mcts_core", r"C:\Users\My PC\Desktop\final\11x11_v2\mcts_core.pyd")
+_spec = _ilu.spec_from_file_location("mcts_core", find_extension(V2_DIR, "mcts_core"))
 engine_mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(engine_mod)
 engine_mod.set_vcf(10, 3000)
@@ -48,7 +50,7 @@ def _load_net(path):
     if isinstance(sd, dict) and "model" in sd and isinstance(sd["model"], dict):   # v3_latest holds model+opt
         sd = sd["model"]
     if any(k.startswith("opp_policy_head.") for k in sd):   # 2026-10-26: v3 NetV3 checkpoint (same loader as spectate.py)
-        sys.path.insert(1, r"C:\Users\My PC\Desktop\final\11x11_v2\v3")
+        sys.path.insert(1, V3_DIR)
         from net_v3 import NetV3
         net = NetV3()
     else:
@@ -99,7 +101,7 @@ for _ep, _note in ((880, "축제 1순위 후보, 졸업 3/3"), (890, "Rapfi 최�
                               "info": {"key": f"ep{_ep}", "name": f"NAPS-{_ep} ({_note})", "checkpoint": f"ep{_ep}.pth",
                                        "promoted_epoch": _ep, "saved": "2026-10-10"}}
 # 2026-10-26 (user): NOON model v3 ep530 (정오 충족 10/25 14:14:29), the festival pick
-_V3_530 = r"C:\Users\My PC\Desktop\final\11x11_v2\v3\model\v3_ep530.pth"
+_V3_530 = os.path.join(V3_DIR, "model", "v3_ep530.pth")
 if os.path.exists(_V3_530):
     MODELS["v3_ep530"] = {"net": _load_net(_V3_530),
                           "info": {"key": "v3_ep530", "name": "NAPS v3 ep530 (정오)", "checkpoint": "v3_ep530.pth",

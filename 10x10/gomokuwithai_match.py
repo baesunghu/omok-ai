@@ -21,8 +21,11 @@ import os
 import sys
 import time
 
-sys.path.insert(0, r"C:\Users\My PC\Desktop\final\10x10")
-os.chdir(r"C:\Users\My PC\Desktop\final\10x10")
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
+from omok_paths import V2_DIR, V3_DIR, find_extension  # noqa: E402
+sys.path.insert(0, HERE)
+os.chdir(HERE)
 import numpy as np
 import torch
 from playwright.sync_api import sync_playwright
@@ -77,11 +80,11 @@ _sd = torch.load(CKPT, map_location=dev)
 if isinstance(_sd, dict) and "model" in _sd and isinstance(_sd["model"], dict):
     _sd = _sd["model"]
 if any(k.startswith("opp_policy_head.") for k in _sd):
-    sys.path.insert(1, r"C:\Users\My PC\Desktop\final\11x11_v2\v3")
+    sys.path.insert(1, V3_DIR)
     from net_v3 import NetV3
     model = NetV3()
     import importlib.util as _ilu
-    _spec = _ilu.spec_from_file_location("mcts_core", r"C:\Users\My PC\Desktop\final\11x11_v2\mcts_core.pyd")
+    _spec = _ilu.spec_from_file_location("mcts_core", find_extension(V2_DIR, "mcts_core"))
     engine_mod = _ilu.module_from_spec(_spec)
     _spec.loader.exec_module(engine_mod)
     engine_mod.set_vcf(10, 3000)

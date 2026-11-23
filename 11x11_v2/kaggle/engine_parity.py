@@ -11,7 +11,9 @@ import torch
 
 V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 eng_dir = os.path.abspath(sys.argv[1])
-spec = importlib.util.spec_from_file_location("mcts_core", os.path.join(eng_dir, "mcts_core.pyd"))
+sys.path.append(os.path.dirname(V2))                 # repository root -> omok_paths
+from omok_paths import find_extension  # noqa: E402
+spec = importlib.util.spec_from_file_location("mcts_core", find_extension(eng_dir, "mcts_core"))
 mc = importlib.util.module_from_spec(spec); spec.loader.exec_module(mc)
 sys.modules["mcts_core"] = mc
 sys.path.insert(0, V2); sys.path.insert(1, os.path.join(V2, "v3"))

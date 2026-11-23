@@ -1,7 +1,7 @@
 """Policy probability of the Rapfi answer on failed tier-2/3 problems, per checkpoint (2026-10-23, user).
 Usage: python v3/policy_probe.py name=path [name=path ...]   (run from 11x11_v2). Raw net outputs, no search."""
-import json, re, sys, numpy as np, torch
-sys.path.insert(1, "v3")
+import json, os, re, sys, numpy as np, torch
+sys.path.insert(1, os.path.dirname(os.path.abspath(__file__)))   # v3/ (net_v3), whatever the cwd
 from net_v3 import NetV3
 from alphago_lee import board_to_input_array_from_numeric
 IDS = ["gwa_loss_0929_2341_p35", "gwa_loss_0929_2351_p50", "gwa_loss_0930_0106_p16", "gwa_loss_0930_0109_p27", "gwa_loss_0930_0220_p4",

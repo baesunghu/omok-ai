@@ -6,7 +6,7 @@ move, does the opponent have a VCT? If so the candidate loses and the next one i
 
 AND/OR search with a node budget; "False" means "no VCT found within budget", not a proof that none exists.
 """
-N = 11
+from fast_board import BOARD_SIZE as N  # 11x11_v2/ is on sys.path wherever vct is imported
 DIRS = ((0, 1), (1, 0), (1, 1), (1, -1))
 
 

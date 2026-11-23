@@ -11,7 +11,12 @@
 One epoch = GAMES self-play games -> 8-fold dihedral augmentation -> replay window ->
 STEPS_PER_NEW x (new rows / BATCH) optimizer steps. Self-play only (no league, gate or
 outside opponent); strength is measured separately on the Rapfi ladder.
-Stop: create the file STOP next to this script (the epoch in progress finishes first).
+Stop: create the file STOP in the working folder (the epoch in progress finishes first).
+
+Arms of the CATFISH controlled experiment (v3/arms.py) run with the same file:
+    python train_v3.py                  v3 main run, working folder v3/
+    python train_v3.py B_catfish_s2     arm B_catfish_s2, working folder v3/ab_scratch/B_catfish_s2/
+                                        (NAPS_ARM=B_catfish_s2 does the same)
 """
 import json
 import math
@@ -23,7 +28,16 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "cpp"))       # v3 mcts_core (Gumbel) before v2's
 sys.path.insert(1, os.path.dirname(HERE))
-os.chdir(HERE)
+sys.path.insert(2, HERE)                            # net_v3, arms (also when the working folder is an arm folder)
+from arms import ARMS  # noqa: E402
+
+ARM = (sys.argv[1] if __name__ == "__main__" and len(sys.argv) > 1 else None) or os.environ.get("NAPS_ARM") or None
+if ARM is not None and ARM not in ARMS:
+    raise SystemExit(f"unknown arm {ARM!r}; arms: {', '.join(ARMS)}")
+SPEC = ARMS.get(ARM, {})
+WORK = os.path.join(HERE, "ab_scratch", ARM) if ARM else HERE
+os.makedirs(os.path.join(WORK, "model"), exist_ok=True)
+os.chdir(WORK)
 
 import numpy as np
 import torch
@@ -37,11 +51,11 @@ from alphago_lee_v3_survival import SURVIVAL_CAP
 
 assert hasattr(mcts_core.SelfPlayRunner(), "gumbel_m_full"), "wrong mcts_core (needs the v3 Gumbel build)"
 
-N = 11
+from fast_board import BOARD_SIZE as N  # noqa: E402  (11 in 11x11_v2/)
 NC = N * N
 mcts_core.set_vcf(10, 3000)
 
-GAMES = 192              # self-play games per epoch
+GAMES = SPEC.get("games", 192)   # games per epoch (self-play + catfish)
 # 2026-10-22 21:00 (user): CATFISH league -- crippled copies of the CURRENT net, rebuilt every epoch:
 # value0 (last value Linear zeroed), value_half (x0.5), policy0 (uniform prior). The catfish side
 # searches with plain PUCT and its moves are not recorded; only the main net's full-search moves are.
@@ -49,7 +63,15 @@ GAMES = 192              # self-play games per epoch
 # tier-3 failures at ep120 were policy blind spots, not value overconfidence.
 # Same time (user): policy0 dropped -- the main net beat it 95-97% (ep79-128), too weak to teach anything.
 # 3 x 16 = 48 league games, 144 self-play (same split as before).
-CATFISH = ("value0", "value_half", "policy_half")
+# {kind: scale}: "value*" scales the last value Linear, "policy*" the last policy Linear, 0 = switched off.
+CATFISH_SCALE = dict(SPEC["catfish"]) if ARM else {"value0": 0.0, "value_half": 0.5, "policy_half": 0.5}
+CATFISH = tuple(CATFISH_SCALE)
+# G arms (arms.py, 2026-11-02): after every epoch the main net's score vs each catfish (EMA) is pushed toward ~65%:
+# above HI the catfish gets stronger (scale + STEP), below LO weaker. Scales live in v3_latest.pth for a resume.
+ADAPTIVE = SPEC.get("adaptive", False)
+SCALE_MAX, SCALE_STEP = 0.95, 0.1
+TARGET, LO, HI, EMA = 0.65, 0.55, 0.75, 0.3   # catfish scores ~35% against the main net
+CATFISH_SCORE = {k: None for k in CATFISH}
 LEAGUE_GAMES = 8         # 2026-10-23 03:xx (user): 16 -> 8 per catfish (league 25% -> 12.5%); ep120 lost to ep100 40% (4/8/8), suspected catfish over-fit
 SELF_GAMES = GAMES - LEAGUE_GAMES * len(CATFISH)
 SIMS_FULL = 400          # Gumbel full search (recorded). 2026-10-23 03h (user): 200 -> 400, stronger policy targets to win back the policy
@@ -88,17 +110,26 @@ def make_catfish(model):
     out = []
     for kind in CATFISH:
         c = copy.deepcopy(model).eval()
+        layer = c.value_head[6] if kind.startswith("value") else c.policy_head[4]
+        scale = CATFISH_SCALE[kind]
         with torch.no_grad():
-            if kind == "value0":
-                c.value_head[6].weight.zero_(); c.value_head[6].bias.zero_()
-            elif kind == "value_half":
-                c.value_head[6].weight.mul_(0.5); c.value_head[6].bias.mul_(0.5)
-            elif kind == "policy_half":
-                c.policy_head[4].weight.mul_(0.5); c.policy_head[4].bias.mul_(0.5)
-            else:
-                c.policy_head[4].weight.zero_(); c.policy_head[4].bias.zero_()
+            if scale == 0.0 and not ADAPTIVE:    # switched off: value 0 everywhere / uniform prior
+                layer.weight.zero_(); layer.bias.zero_()
+            else:                                # adaptive arms always multiply, as their trainer copies did
+                layer.weight.mul_(scale); layer.bias.mul_(scale)
         out.append(c)
     return out
+
+
+def adapt_catfish(tally):
+    """G arms: move each catfish's scale toward a ~65% score for the main net (for the next epoch)."""
+    for k, (w, l, d) in tally.items():
+        sc = (w + 0.5 * d) / max(1, w + l + d)
+        CATFISH_SCORE[k] = sc if CATFISH_SCORE[k] is None else (1 - EMA) * CATFISH_SCORE[k] + EMA * sc
+        if CATFISH_SCORE[k] > HI:
+            CATFISH_SCALE[k] = min(SCALE_MAX, CATFISH_SCALE[k] + SCALE_STEP)
+        elif CATFISH_SCORE[k] < LO:
+            CATFISH_SCALE[k] = max(0.0, CATFISH_SCALE[k] - SCALE_STEP)
 
 
 def selfplay(model):
@@ -250,6 +281,8 @@ def train(model, opt, buf, n_new):
 
 
 def main():
+    if "seed" in SPEC:   # arm replicate: same init in both arms of this seed
+        torch.manual_seed(SPEC["seed"]); random.seed(SPEC["seed"]); np.random.seed(SPEC["seed"])
     model = NetV3().to(DEV)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
     buf = Buffer()
@@ -261,6 +294,8 @@ def main():
         for g in opt.param_groups:      # the saved optimizer state carries the old lr; LR above wins
             g["lr"] = LR
         epoch = ck["epoch"]
+        if ADAPTIVE:
+            CATFISH_SCALE.update(ck.get("catfish_scale", {})); CATFISH_SCORE.update(ck.get("catfish_score", {}))
         if os.path.exists("model/v3_buffer.npz"):
             buf.load("model/v3_buffer.npz")
         log(f"resumed at epoch {epoch}, buffer {len(buf)}")
@@ -277,8 +312,13 @@ def main():
             f"surv {L[5]:.4f} | target entropy {ent:.3f} | games {SELF_GAMES}: X {wins[0]} O {wins[1]} D {wins[2]}, "
             f"avg len {np.mean(lengths):.1f} | rows +{len(rows['v'])} buffer {len(buf)} steps {steps} | "
             f"selfplay {st['secs']:.0f}s, GPU rows {st['rows']} in {st['batches']} batches, cache {st['cache']} | "
-            f"catfish W/L/D " + ", ".join(f"{k} {w}/{l}/{d}" for k, (w, l, d) in st["tally"].items()))
-        torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "epoch": epoch}, "model/v3_latest.pth")
+            f"catfish W/L/D " + ", ".join(f"{k} {w}/{l}/{d}" for k, (w, l, d) in st["tally"].items())
+            + (" | scale " + ", ".join(f"{k} {CATFISH_SCALE[k]:.2f}" for k in CATFISH) if ADAPTIVE else ""))
+        ck = {"model": model.state_dict(), "opt": opt.state_dict(), "epoch": epoch}
+        if ADAPTIVE:
+            adapt_catfish(st["tally"])
+            ck.update(catfish_scale=dict(CATFISH_SCALE), catfish_score=dict(CATFISH_SCORE))
+        torch.save(ck, "model/v3_latest.pth")
         if epoch % SAVE_EVERY == 0 or epoch % 25 == 0:   # 10/25 (user): ladder every 25 epochs needs ep575 etc.
             torch.save(model.state_dict(), f"model/v3_ep{epoch}.pth")
             buf.save("model/v3_buffer.npz")

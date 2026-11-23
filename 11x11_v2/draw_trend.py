@@ -4,9 +4,10 @@ Output: model/draw_trend.png"""
 import re, sys
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 FROM = int(sys.argv[1]) if len(sys.argv) > 1 else 850
 sp, lg, gt = {}, {}, {}
-for l in open("model/training_report_11x11.txt", encoding="utf-8", errors="ignore"):
+for l in open(f"model/training_report{FILE_SUFFIX}.txt", encoding="utf-8", errors="ignore"):
     m = re.search(r"Epoch (\d+)/\d+", l)
     if not m: continue
     e = int(m[1])

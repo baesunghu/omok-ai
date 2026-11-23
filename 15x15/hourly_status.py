@@ -5,7 +5,9 @@ graduation-problem results, GPU temperature, web server and tunnel status.
 Run:  python -u hourly_status.py
 """
 import json, os, subprocess, time, urllib.request
-TENX = r"C:\Users\My PC\Desktop\final\15x15"
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+TENX = HERE
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 M = os.path.join(TENX, "model")
 OUT = os.path.join(M, "hourly_status.log")
 TUNNEL = "https://calls-berkeley-consequently-utc.trycloudflare.com/api/stats"
@@ -30,7 +32,8 @@ def ok(url):
 def check():
     out = [time.strftime("[%Y-%m-%d %H:%M]")]
     try:
-        out.append(f"epoch {json.load(open(os.path.join(M, 'train_state_11x11.json')))['cumulative_epoch']}")
+        state = json.load(open(os.path.join(M, f"train_state{FILE_SUFFIX}.json")))
+        out.append(f"epoch {state['cumulative_epoch']}")
     except Exception as e:
         out.append(f"epoch ? ({e})")
     try:

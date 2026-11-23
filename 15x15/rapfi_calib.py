@@ -11,7 +11,7 @@ import time
 
 import sl_rapfi_data as S
 
-N = 15
+N = S.N
 
 
 class R(S.Rapfi):

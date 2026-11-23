@@ -81,10 +81,7 @@ def left():
 
 def train(arms):
     for arm in arms:
-        d = f"{V3}/ab_scratch/{arm}"
-        os.makedirs(d, exist_ok=True)
-        if not os.path.exists(f"{d}/train_v3.py"):
-            shutil.copy(f"{V2}/kaggle/train_{arm}.py", f"{d}/train_v3.py")
+        os.makedirs(f"{V3}/ab_scratch/{arm}", exist_ok=True)   # run_seed_kaggle.sh runs v3/train_v3.py <arm> there
     p = subprocess.Popen(["bash", f"{V2}/kaggle/run_seed_kaggle.sh", "0", "60", f"{max(0.1, left() - 0.3):.2f}"],
                          env=dict(os.environ, W=W, ARMS=" ".join(arms)), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     for line in p.stdout:

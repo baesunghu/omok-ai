@@ -2,8 +2,10 @@ import json, matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 plt.rcParams["font.family"] = "Malgun Gothic"; plt.rcParams["axes.unicode_minus"] = False
-SP = r"C:\Users\My PC\Desktop\final\11x11_v2\model"  # ladder_hist.json / ladder_ci.json live here
-rows = [r for r in json.load(open(SP + r"\ladder_hist.json")) if not r["dup"] and r["eq"]]
+import os
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+SP = os.path.join(HERE, "model")  # ladder_hist.json / ladder_ci.json live here
+rows = [r for r in json.load(open(os.path.join(SP, "ladder_hist.json"))) if not r["dup"] and r["eq"]]
 INK, INK2, MUTED, GRID, SURF = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#fcfcfb"
 BEST, LATEST = "#2a78d6", "#eb6834"
 fig, ax = plt.subplots(figsize=(13, 7), facecolor=SURF); ax.set_facecolor(SURF)
@@ -12,7 +14,7 @@ for y, lab, ls in ((1000, "1차 졸업 기준 1000", ":"), (2000, "2차 목표 2
     below = ls == "--"   # Dawn sits just under the 1000 line: put her label below her line
     ax.text(533, y * (0.97 if below else 1.03), lab, color=INK2, fontsize=9, ha="left", va="top" if below else "bottom")
 b = [r for r in rows if r["kind"] == "best"]; l = [r for r in rows if r["kind"] == "latest"]
-CI = {(c["ep"], c["kind"]): c for c in json.load(open(SP + r"\ladder_ci.json"))}
+CI = {(c["ep"], c["kind"]): c for c in json.load(open(os.path.join(SP, "ladder_ci.json")))}
 for r in rows:   # use the refit (5 levels where a 5000-node run exists)
     c = CI.get((r["ep"], r["kind"]))
     if c: r["eq"] = c["eq"]
@@ -57,5 +59,5 @@ h = [Line2D([], [], color=BEST, marker="o", lw=2, ms=8, label="best 체크포인
 ax.legend(handles=h, loc="lower right", fontsize=9, frameon=False, labelcolor=INK2)
 ax.set_title("Rapfi 대등 노드와 오차 범위 (실제 대국 결과 부트스트랩 4,000회) — ep1050까지 (960 이후 기록은 롤백 전 측정)", color=INK, fontsize=12, loc="left")
 fig.tight_layout()
-fig.savefig(r"C:\Users\My PC\Desktop\final\11x11_v2\model\rapfi_ladder_history_ci.png", dpi=120, facecolor=SURF)
+fig.savefig(os.path.join(HERE, "model", "rapfi_ladder_history_ci.png"), dpi=120, facecolor=SURF)
 print("saved")

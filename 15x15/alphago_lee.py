@@ -7,8 +7,7 @@ import os
 # GAME SETTINGS
 # ============================================================
 
-BOARD_SIZE = 15  # 2026-10-13: 15x15 run (must match fast_board.BOARD_SIZE)
-WIN_LENGTH = 5
+from fast_board import BOARD_SIZE, WIN_LENGTH  # noqa: E402  one source for the board size: fast_board.py
 
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 NUM_INPUT_CHANNELS = 5

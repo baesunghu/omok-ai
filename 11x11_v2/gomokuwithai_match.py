@@ -21,8 +21,9 @@ import os
 import sys
 import time
 
-sys.path.insert(0, r"C:\Users\My PC\Desktop\final\11x11_v2")
-os.chdir(r"C:\Users\My PC\Desktop\final\11x11_v2")
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.insert(0, HERE)
+os.chdir(HERE)
 import numpy as np
 import torch
 from playwright.sync_api import sync_playwright

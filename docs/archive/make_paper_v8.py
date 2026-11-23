@@ -3,12 +3,14 @@ Reads Downloads/국문_한글_HWP_202608_v7.docx, writes Downloads/국문_한글
 New text is put into copies of v7's own paragraphs and tables, so the look stays the same."""
 import copy
 import os
+import sys
 
 import docx
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
-DL = r"C:\Users\My PC\Downloads"
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))  # repo root
+from omok_paths import DOWNLOADS_DIR as DL  # noqa: E402   (~/Downloads, or OMOK_DOWNLOADS)
 SRC = os.path.join(DL, "국문_한글_HWP_202608_v7.docx")
 DST = os.path.join(DL, "국문_한글_HWP_202608_v8.docx")
 

@@ -6,7 +6,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-REPORT = r"C:\Users\My PC\Desktop\final\10x10\model\training_report_11x11.txt"
+import os
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
+REPORT = os.path.join(HERE, "model", f"training_report{FILE_SUFFIX}.txt")
 PAT = re.compile(r"Epoch (\d+)/\d+ \| Policy Loss: ([\d.]+) \| Value Loss: ([\d.]+)")
 GATE = re.compile(r"Gate vs best \(\d+ games\): Win (\d+)% / Draw (\d+)% / Loss (\d+)% -> (\w+)")
 rows = []
@@ -106,5 +109,5 @@ axes[2].set_xlabel("epoch")
 fig.suptitle("NAPS run: losses with pipeline changes marked (loss drops after target changes are NOT strength gains)",
              fontsize=11)
 fig.tight_layout()
-fig.savefig(r"C:\Users\My PC\Desktop\final\10x10\model\loss_trend_annotated.png", dpi=110)
+fig.savefig(os.path.join(HERE, "model", "loss_trend_annotated.png"), dpi=110)
 print("saved", len(ep), "epochs", ep[0], "-", ep[-1])

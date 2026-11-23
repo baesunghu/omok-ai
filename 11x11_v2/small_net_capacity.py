@@ -22,8 +22,9 @@ import torch.nn.functional as F
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3 as Net
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 EPOCHS = int(sys.argv[1]) if len(sys.argv) > 1 else 15
-TEACHER = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, "model", "best_mcts_11x11.pth")
+TEACHER = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, "model", f"best_mcts{FILE_SUFFIX}.pth")
 BUFFER = os.path.join(HERE, "..", "10x10", "model", "mcts_replay_buffer_11x11.pkl")
 SIZES = [(64, 6), (96, 6), (128, 6), (128, 10), (192, 7)]
 if os.environ.get("CAP_SIZES"):   # e.g. CAP_SIZES=64x16,96x14 (thin-and-deep variants)

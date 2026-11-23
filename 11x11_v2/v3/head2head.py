@@ -16,11 +16,10 @@ sys.path.insert(0, V2)
 os.chdir(V2)
 import mcts_core
 from alphago_lee import board_to_input_array_from_numeric
-from fast_board import fast_check_win
+from fast_board import BOARD_SIZE as N, fast_check_win
 sys.path.insert(1, os.path.join(V2, "v3"))
 from net_v3 import NetV3
 
-N = 11
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 OPENINGS = [((5, 5), (4, 4)), ((5, 5), (4, 5)), ((5, 5), (6, 4)), ((5, 5), (3, 3)), ((5, 5), (5, 3)),
             ((4, 5), (5, 5)), ((5, 4), (4, 6)), ((4, 4), (6, 6)), ((5, 6), (4, 4)), ((6, 5), (5, 3))]

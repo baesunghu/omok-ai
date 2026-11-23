@@ -7,13 +7,17 @@
 !/10x10/
 !/cpp_mcts/
 !/manual/
+# 2026-11: one docs tree and one path config for every run folder
+!/docs/
+!/omok_paths.py
+/docs/**/*.pdf
+**/__pycache__/
 
 # --- 10x10: source, docs, problems, web board only ---
 /10x10/**
 !/10x10/**/
 !/10x10/*.py
 !/10x10/*.md
-!/10x10/docs/**
 !/10x10/hlt/web/*.py
 !/10x10/hlt/web/*.html
 !/10x10/tactical_problems/*.json
@@ -76,7 +80,6 @@
 *.reverted_*
 /10x10/hlt/web/games_viewer.html
 /10x10/hlt/web/watch_list.html
-/10x10/docs/*.pdf
 # 2026-11-01: Kaggle runner for the CATFISH seed replicates
 !/11x11_v2/kaggle/
 /11x11_v2/kaggle/*

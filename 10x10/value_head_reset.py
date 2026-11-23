@@ -34,16 +34,18 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-sys.path.insert(0, r"C:\Users\My PC\Desktop\final\10x10")
-os.chdir(r"C:\Users\My PC\Desktop\final\10x10")
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.insert(0, HERE)
+os.chdir(HERE)
 
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3  # noqa: E402
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 
-BEST = r"model\best_mcts_11x11.pth"
-TRAIN_CKPT = r"model\alphazero_mcts_11x11.pth"
-BUFFER = r"model\mcts_replay_buffer_11x11.pkl"
+BEST = os.path.join("model", f"best_mcts{FILE_SUFFIX}.pth")
+TRAIN_CKPT = os.path.join("model", f"alphazero_mcts{FILE_SUFFIX}.pth")
+BUFFER = os.path.join("model", f"mcts_replay_buffer{FILE_SUFFIX}.pkl")
 REPORT = r"model\value_head_reset_20260927.json"
-HARD_POOL = r"model\hard_mined_examples_11x11.pkl"
+HARD_POOL = os.path.join("model", f"hard_mined_examples{FILE_SUFFIX}.pkl")
 
 SEED = 20260927
 BATCH = 256

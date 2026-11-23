@@ -7,7 +7,7 @@ without a live Claude session.
 
 Usage (from a PowerShell prompt):
 
-    cd "C:\\Users\\My PC\\Desktop\\final\\10x10"
+    cd 15x15      (from the repository root)
     python fork_status_check.py
 
 Read-only everywhere: reads the live checkpoint, the hard-mined pool, and
@@ -19,19 +19,23 @@ import random
 import pickle
 import subprocess
 
-sys.path.insert(0, r"C:\Users\My PC\Desktop\final\15x15")
-sys.path.append(r"C:\Users\My PC\Desktop\final\cpp_mcts")
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
+from omok_paths import CPP_MCTS_DIR, ROOT, SCRATCH_DIR  # noqa: E402
+sys.path.insert(0, HERE)
+sys.path.append(CPP_MCTS_DIR)
 
 import torch
 import numpy as np
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 
 print("=" * 70)
 print("1) GENERAL TRAINING STATUS (status_check.py)")
 print("=" * 70)
 try:
     result = subprocess.run(
-        [sys.executable, "status_check.py", "10x10/model/training_report_11x11.txt"],
-        cwd=r"C:\Users\My PC\Desktop\final",
+        [sys.executable, "status_check.py", os.path.join(os.path.basename(HERE), "model", f"training_report{FILE_SUFFIX}.txt")],
+        cwd=ROOT,
         capture_output=True, text=True, timeout=120,
     )
     print(result.stdout)
@@ -51,7 +55,7 @@ from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
 import alphazero_mcts_make_lrfix as amk
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-CKPT = r"C:\Users\My PC\Desktop\final\15x15\model\best_mcts_11x11.pth"
+CKPT = os.path.join(HERE, "model", f"best_mcts{FILE_SUFFIX}.pth")
 model = AlphaZeroTicTacToe()
 model.load_state_dict(torch.load(CKPT, map_location=device))
 model.to(device, memory_format=preferred_memory_format(device))
@@ -135,7 +139,7 @@ print("=" * 70)
 print("2) HARD-7 (double-four fork) ADAPTATION RATE -- real mined pool")
 print("=" * 70)
 try:
-    with open(r"C:\Users\My PC\Desktop\final\15x15\model\hard_mined_examples_11x11.pkl", "rb") as f:
+    with open(os.path.join(HERE, "model", f"hard_mined_examples{FILE_SUFFIX}.pkl"), "rb") as f:
         pool = pickle.load(f)
     h7 = [item for item in pool if item[4] == 7]
     print(f"Hard-7 pool size: {len(h7)}")
@@ -173,7 +177,7 @@ print("\n" + "=" * 70)
 print("3) OPEN-THREE organic-miss trend (from track_open3_progress.py's own log)")
 print("=" * 70)
 try:
-    log_path = r"C:\Users\My PC\Desktop\final\scratch\multiproc_investigation_multilabel_v1\open3_progress_log.jsonl"
+    log_path = os.path.join(SCRATCH_DIR, "multiproc_investigation_multilabel_v1", "open3_progress_log.jsonl")
     with open(log_path, encoding="utf-8") as f:
         lines = f.readlines()[-8:]
     import json as _json

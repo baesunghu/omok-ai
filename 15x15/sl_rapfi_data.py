@@ -15,11 +15,12 @@ import re
 import subprocess
 import sys
 
-N = 15
+from fast_board import BOARD_SIZE as N  # noqa: E402  (15 in this folder)
 NODES = int(os.environ.get("SL_NODES", "100"))   # 2026-10-16 (user): 10 for a deliberately weak epoch 0
 EPS = 0.08
-RAPFI_DIR = r"C:\Users\My PC\Desktop\final\engines\rapfi"
-RAPFI_EXE = os.path.join(RAPFI_DIR, "pbrain-rapfi-windows-avx2.exe")
+HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
+from omok_paths import RAPFI_DIR, RAPFI_EXE  # noqa: E402
 EVAL_RE = re.compile(r"Eval (\S+)")
 
 

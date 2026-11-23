@@ -17,11 +17,18 @@ setlocal
 set "OUT_NAME=%~1"
 if "%OUT_NAME%"=="" set "OUT_NAME=mcts_core_solver"
 
+REM Python and pybind11 paths are read from the python on PATH (set PYTHON=<path\to\python.exe> to pick another).
+REM VCVARS defaults to VS 2022 Build Tools in its standard location; set VCVARS=... to override.
+if not defined PYTHON set "PYTHON=python"
 set "VSWHERE_DIR=C:\Program Files (x86)\Microsoft Visual Studio\Installer"
-set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-set "PY_INCLUDE=C:\Users\My PC\AppData\Local\Programs\Python\Python311\Include"
-set "PY_LIBS=C:\Users\My PC\AppData\Local\Programs\Python\Python311\libs"
-set "PYBIND_INCLUDE=C:\Users\My PC\AppData\Local\Programs\Python\Python311\Lib\site-packages\pybind11\include"
+if not defined VCVARS set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+for /f "usebackq delims=" %%i in (`%PYTHON% -c "import sysconfig; print(sysconfig.get_paths()['include'])"`) do set "PY_INCLUDE=%%i"
+for /f "usebackq delims=" %%i in (`%PYTHON% -c "import os, sys; print(os.path.join(sys.base_prefix, 'libs'))"`) do set "PY_LIBS=%%i"
+for /f "usebackq delims=" %%i in (`%PYTHON% -c "import pybind11; print(pybind11.get_include())"`) do set "PYBIND_INCLUDE=%%i"
+if not defined PYBIND_INCLUDE (
+    echo ERROR: pybind11 not found for %PYTHON% -- run: %PYTHON% -m pip install pybind11
+    exit /b 1
+)
 set "SRC_DIR=%~dp0"
 
 set "PATH=%VSWHERE_DIR%;%PATH%"

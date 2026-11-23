@@ -13,8 +13,9 @@ Usage: python make_catfish.py   (re-run after a promotion to rebase them on the 
 """
 import os
 import torch
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 
-SRC = "model/best_mcts_11x11.pth"
+SRC = f"model/best_mcts{FILE_SUFFIX}.pth"
 OUT = "model/league_anchors"
 os.makedirs(OUT, exist_ok=True)
 sd = torch.load(SRC, map_location="cpu")

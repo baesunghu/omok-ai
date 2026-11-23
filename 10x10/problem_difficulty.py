@@ -14,8 +14,7 @@ Usage: python problem_difficulty.py
 import json, os, sys, threading
 HERE = os.path.dirname(os.path.abspath(__file__)); os.chdir(HERE); sys.path.insert(0, HERE)
 from rapfi_match import Rapfi
-from fast_board import fast_check_win
-N = 11
+from fast_board import BOARD_SIZE as N, fast_check_win
 OPP_NODES = 200000
 LEVELS = [100, 200, 500, 1000, 2000, 3000, 5000, 10000, 20000, 50000, 100000]
 OUT = os.path.join("model", "problem_difficulty.json")

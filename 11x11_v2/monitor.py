@@ -9,6 +9,7 @@ import re
 import subprocess
 import time
 from collections import defaultdict
+from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 
 D = os.path.dirname(os.path.abspath(__file__))
 P = lambda *a: os.path.join(D, *a)
@@ -73,7 +74,7 @@ while True:
         last_gpu, last_proc, t_slow = gpu(), procs(), time.time()
     out = [f"=== 11x11_v2 모니터  {time.strftime('%m-%d %H:%M:%S')}   GPU(°C,%) {last_gpu} ===", f"프로세스: {last_proc}", ""]
     out.append("[학습 최근 에포크]")
-    for l in tail(P("model", "training_report_11x11.txt"), 6):
+    for l in tail(P("model", f"training_report{FILE_SUFFIX}.txt"), 6):
         m = re.search(r"\[(\S+ \S+)\] Epoch (\d+)/\d+ \| (.*?)\| Buffer Size: (\d+)", l)
         g = re.search(r"Gate vs best.*", l)
         if m:
