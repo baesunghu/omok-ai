@@ -49,6 +49,7 @@ print("Loading live checkpoint (shared by the fork checks below)...")
 print("=" * 70)
 
 import mcts_core_solver as mcts_core_verbose  # 2026-09-27 solver-engine re-measure copy
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3 as AlphaZeroTicTacToe
 from alphago_lee import preferred_memory_format, board_to_input_array_from_numeric
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win

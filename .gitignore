@@ -10,6 +10,12 @@
 # 2026-11: one docs tree and one path config for every run folder
 !/docs/
 !/omok_paths.py
+# shared/: code identical in every run folder (one copy); archive/: one-off scripts kept for the record
+!/shared/
+/shared/*
+!/shared/*.py
+!/shared/README.md
+!/archive/
 /docs/**/*.pdf
 **/__pycache__/
 

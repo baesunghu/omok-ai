@@ -11,6 +11,8 @@ import re
 import time
 from datetime import datetime
 
+import sys
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from alphago_lee import board_to_input_tensor, board_to_input_array, preferred_memory_format
 # 2026-09-22 Gen12: swapped to the V2 architecture (GroupNorm+SE, see
 # alphago_lee_v2_seblock.py) -- aliased as AlphaZeroTicTacToe so every

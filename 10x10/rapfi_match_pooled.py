@@ -22,6 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TARGET, MAX_WAIT = 48, 0.004
 
 
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 def coordinator(ckpt, conns, ready, stats_q):
     sys.path.insert(0, HERE); os.chdir(HERE)
     import numpy as np, torch

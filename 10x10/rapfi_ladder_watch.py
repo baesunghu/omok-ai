@@ -10,6 +10,7 @@ Run detached:  python -u rapfi_ladder_watch.py
 import json, os, shutil, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
 TENX = HERE
+LADDER = os.path.join(os.path.dirname(TENX), "shared", "rapfi_ladder.py")   # runs with cwd=TENX
 from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 STATE = os.path.join(TENX, "model", f"train_state{FILE_SUFFIX}.json")
 BEST = os.path.join(TENX, "model", f"best_mcts{FILE_SUFFIX}.pth")
@@ -60,7 +61,7 @@ def main():
             snap3 = os.path.join(TENX, "model", "_rapfi_" + os.path.basename(cand["ckpt"]))
             shutil.copy2(os.path.join(TENX, cand["ckpt"]), snap3)
             log(f"gate candidate {cand['ckpt']} (score {cand.get('gate_score')}): running ladder")
-            r = subprocess.run([sys.executable, "-u", "rapfi_ladder.py", str(GAMES), "1100", snap3],
+            r = subprocess.run([sys.executable, "-u", LADDER, str(GAMES), "1100", snap3],
                                cwd=TENX, capture_output=True, text=True, **RUN_KW)
             log((r.stdout or '').strip()[-600:] or (r.stderr or '').strip()[-500:])
             r2 = subprocess.run([sys.executable, "-u", "tactical_problem_check.py", snap3],
@@ -92,7 +93,7 @@ def main():
                 log(f"epoch {e}: best = ladder reference {_ref['name']} (already measured); best ladder skipped")
             else:
                 log(f"epoch {e}: running ladder on best checkpoint snapshot")
-                r = subprocess.run([sys.executable, "-u", "rapfi_ladder.py", str(GAMES), "1100", SNAP],
+                r = subprocess.run([sys.executable, "-u", LADDER, str(GAMES), "1100", SNAP],
                                    cwd=TENX, capture_output=True, text=True, **RUN_KW)
                 log((r.stdout or '').strip() or (r.stderr or '').strip()[-500:])
                 # 11x11 graduation problems (end criterion 2), same snapshot
@@ -112,7 +113,7 @@ def main():
                 snap2 = os.path.join(TENX, "model", f"_rapfi_latest_ep{next_at}.pth")
                 shutil.copy2(latest, snap2)
                 log(f"running ladder on latest checkpoint ep{next_at}")
-                r = subprocess.run([sys.executable, "-u", "rapfi_ladder.py", str(GAMES), "1100", snap2],
+                r = subprocess.run([sys.executable, "-u", LADDER, str(GAMES), "1100", snap2],
                                    cwd=TENX, capture_output=True, text=True, **RUN_KW)
                 log((r.stdout or '').strip() or (r.stderr or '').strip()[-500:])
                 r2 = subprocess.run([sys.executable, "-u", "tactical_problem_check.py", snap2],

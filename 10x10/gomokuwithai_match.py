@@ -31,6 +31,7 @@ import torch
 from playwright.sync_api import sync_playwright
 
 import mcts_core_solver as engine_mod
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from alphago_lee import board_to_input_array_from_numeric
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
 from fast_board import fast_check_win

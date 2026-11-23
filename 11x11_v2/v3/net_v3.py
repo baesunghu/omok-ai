@@ -14,6 +14,7 @@ import sys
 import torch.nn as nn
 
 sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 11x11_v2 modules
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
 from alphago_lee_v2_seblock import _group_norm
 

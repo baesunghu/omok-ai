@@ -60,7 +60,7 @@ while not os.path.exists(os.path.join(HERE, "STOP_LADDER")):
     log(f"ladder v3 ep{ep}: levels {lv}, {GAMES} games each")
     env = dict(os.environ, RAPFI_LEVELS=",".join(map(str, lv)), PYTHONIOENCODING="utf-8")
     n0 = sum(1 for _ in open(LOG, encoding="utf-8")) if os.path.exists(LOG) else 0
-    r = subprocess.run([sys.executable, "-u", "rapfi_ladder.py", str(GAMES), str(SIMS), ck], cwd=V2, env=env,
+    r = subprocess.run([sys.executable, "-u", os.path.join(os.path.dirname(V2), "shared", "rapfi_ladder.py"), str(GAMES), str(SIMS), ck], cwd=V2, env=env,
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     print(r.stdout[-1500:], flush=True)
     rows = [json.loads(l) for l in open(LOG, encoding="utf-8").readlines()[n0:]] if os.path.exists(LOG) else []

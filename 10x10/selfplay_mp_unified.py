@@ -61,6 +61,7 @@ if PROD_DIR not in sys.path:
 PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "alphazero_mcts_make_lrfix")
 
 import torch  # noqa: E402
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from alphago_lee import preferred_memory_format  # noqa: E402
 from alphago_lee_v3_survival import SURVIVAL_CAP  # noqa: E402
 from alphazero_mcts import BOARD_SIZE  # noqa: E402

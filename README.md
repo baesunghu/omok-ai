@@ -158,14 +158,16 @@
 |---|---|
 | [`docs/`](docs/README.md) | **모든 문서**: 결론, 모델 계보(`NAPS_lineage.md`), 메기 보고서(`CATFISH_report.md`), 실험 기록, 보관 문서, 용어 |
 | `omok_paths.py` | 경로 설정 한 곳 (저장소 루트, Rapfi·scratch 위치는 환경 변수로 변경) |
-| `10x10/` | 11x11 본 프로젝트(폴더 이름은 역사적 이유). 학습기, MCTS, 자가대국 풀, 측정 도구, 웹 대국판 |
+| [`shared/`](shared/README.md) | **모든 실행에 공통인 코드 한 벌**: 신경망, MCTS, 자가대국, 래더 측정과 분석 도구. 세 실행 폴더에 똑같이 복사되어 있던 파일을 모음 |
+| `10x10/` | 11x11 NAPS 실행 폴더(이름은 역사적 이유). 이 실행만의 학습 본체·학습 실행·감시·채점, 웹 대국판 |
 | `10x10/hlt/web/` | 웹 대국판 · 관전판 · 운영 대시보드 |
 | `10x10/tactical_problems/` | 졸업 · 2단계 문제 (측정 전용, 학습에 쓰지 않음) |
 | `11x11_v2/` | VCF 엔진 + MEGA + 메기 리그 실험 |
 | `11x11_v2/v3/` | **v3: 검벨 알파제로 + 메기, 콜드 스타트** (`train_v3.py`, `net_v3.py`, C++ 엔진), 통제 실험 팔 설정 `arms.py` |
 | `11x11_v2/kaggle/` | 통제 실험을 Kaggle GPU에서 돌린 실행기 |
 | `11x11_v2/web/` | 브라우저 대국판 (`site/`) 과 ONNX 내보내기 스크립트 |
-| `15x15/` | 15x15 확장 실험 |
+| `15x15/` | 15x15 확장 실험 (실행 폴더) |
+| [`archive/`](archive/README.md) | 한 번 쓰고 끝난 스크립트 (기록용) |
 | `cpp_mcts/` | C++ MCTS 엔진과 depth-2 minimax 기준선 |
 | `festival/` | 축제 영상 소스(HTML)와 렌더링 스크립트 |
 
@@ -178,7 +180,8 @@
 ```text
 학습 (v3)      11x11_v2/v3/train_v3.py              통제 실험 팔: 11x11_v2/v3/train_v3.py B_catfish_s2
 엔진 빌드      11x11_v2/v3/cpp/build_mcts_core_solver.bat   (MSVC + pybind11, PATH의 python 사용)
-측정           10x10/rapfi_ladder.py · 10x10/tactical_problem_check.py
+측정           cd 10x10 && python ../shared/rapfi_ladder.py   (shared/의 도구는 다룰 실행 폴더 안에서 실행)
+채점           10x10/tactical_problem_check.py
 웹 대국판      10x10/hlt/web/server.py      관전판  10x10/hlt/web/spectate.py
 축제 영상      festival/render_summary.py   (Playwright로 프레임 단위 렌더링)
 경로 설정      omok_paths.py                (Rapfi: OMOK_RAPFI_DIR, 기본값 engines/rapfi/)
