@@ -3,6 +3,7 @@ against Rapfi attacking at 200k nodes for 40 plies. Same for Rapfi's own answer 
 import json, os, sys
 HERE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "10x10")   # archived from 10x10/: still works on that run folder
 sys.path.insert(0, HERE); os.chdir(HERE)
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
 from rapfi_match import Rapfi
 from fast_board import fast_check_win
 N = 11

@@ -1,5 +1,8 @@
 """Policy probability of the Rapfi answer on failed tier-2/3 problems, per checkpoint (2026-10-23, user).
 Usage: python v3/policy_probe.py name=path [name=path ...]   (run from 11x11_v2). Raw net outputs, no search."""
+import os as _os, sys as _sys
+_sys.path.append(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # repository root
+from omok_paths import PROBLEMS_FILE  # noqa: E402  (10x10/tactical_problems: the 11x11 problem set, one copy)
 import json, os, re, sys, numpy as np, torch
 sys.path.insert(1, os.path.dirname(os.path.abspath(__file__)))   # v3/ (net_v3), whatever the cwd
 from net_v3 import NetV3
@@ -7,7 +10,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 from alphago_lee import board_to_input_array_from_numeric
 IDS = ["gwa_loss_0929_2341_p35", "gwa_loss_0929_2351_p50", "gwa_loss_0930_0106_p16", "gwa_loss_0930_0109_p27", "gwa_loss_0930_0220_p4",
        "gwa_loss_0930_0257_p13", "gwa_loss_0930_0259_p22", "gwa_loss_0930_0303_p6", "gwa_loss_0930_1048_p14", "gwa_loss_0930_0004_p43"]
-ps = {p["id"]: p for p in json.load(open("tactical_problems/web_game58_problems.json", encoding="utf-8"))["problems"]}
+ps = {p["id"]: p for p in json.load(open(PROBLEMS_FILE, encoding="utf-8"))["problems"]}
 ms = {}
 for a in sys.argv[1:]:
     k, p = a.split("=", 1); m = NetV3(); sd = torch.load(p, map_location="cpu"); m.load_state_dict(sd.get("model", sd)); m.eval(); ms[k] = m

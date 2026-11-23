@@ -8,7 +8,7 @@ via the same detached-process pattern used manually throughout this project
 survives independently of this watchdog, this terminal, or any session.
 
 Launch this itself detached so it keeps running unattended:
-    powershell -Command "Start-Process -FilePath python -ArgumentList '-u watchdog_.py' -WorkingDirectory '<repo>\\10x10' -WindowStyle Hidden"
+    powershell -Command "Start-Process -FilePath python -ArgumentList '-u ..\\shared\\watchdog_.py' -WorkingDirectory '<repo>\\<run folder>' -WindowStyle Hidden"
 """
 import os
 import subprocess
@@ -17,9 +17,13 @@ from datetime import datetime
 
 import psutil
 
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import enter_run  # noqa: E402
+HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
 PROJECT_DIR = HERE
-TRAIN_SCRIPT_MARKER = "_restart_train.py"
+from run_config import TRAIN_SCRIPT  # noqa: E402
+TRAIN_SCRIPT_MARKER = TRAIN_SCRIPT   # 15x15: "_restart_train15.py", distinct from the 11x11 trainer (2026-10-14)
 TRAIN_TASK_NAME = "AZ11x11_Training"
 CHECK_INTERVAL_SEC = 20 * 60
 POST_RESTART_WAIT_SEC = 20
@@ -67,7 +71,7 @@ def restart_training():
     # inside an unattended restart path.
     subprocess.run(
         ["powershell", "-NoProfile", "-Command",
-         f"Start-Process -FilePath python -ArgumentList '-u _restart_train.py' "
+         f"Start-Process -FilePath python -ArgumentList '-u {TRAIN_SCRIPT_MARKER}' "
          f"-WorkingDirectory '{PROJECT_DIR}' -WindowStyle Hidden"],
         cwd=PROJECT_DIR,
         check=False,

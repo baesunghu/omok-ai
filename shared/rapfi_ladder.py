@@ -44,7 +44,7 @@ def main():
     for nodes in LEVELS:
         start = sum(1 for _ in open(MATCH_LOG, encoding="utf-8")) if os.path.exists(MATCH_LOG) else 0
         t0 = time.time()
-        subprocess.run([sys.executable, "-u", "rapfi_match.py", str(games), str(sims), f"n{nodes}", ckpt],
+        subprocess.run([sys.executable, "-u", os.path.join(os.path.dirname(os.path.abspath(__file__)), "rapfi_match.py"), str(games), str(sims), f"n{nodes}", ckpt],
                        cwd=TENX, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with open(MATCH_LOG, encoding="utf-8") as f:
             rows = [json.loads(l) for l in f.readlines()[start:]]

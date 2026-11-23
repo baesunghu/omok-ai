@@ -3,9 +3,12 @@
 NOON (user, 10/23-24; all-or-nothing, no "quasi"):
   every tier-1 problem passed (all 5, incl. the observation one) + every tier-2 problem (5/5) + tier 3 >= 15/18.
 Watches model/tactical_problem_log.jsonl every 60 s; one SMS per checkpoint, only for full official runs.
-SMS goes through 10x10/promotion_sms.py send() (Twilio credentials in %USERPROFILE%\\.naps_twilio.json).
+SMS goes through shared/promotion_sms.py send() (Twilio credentials in %USERPROFILE%\\.naps_twilio.json).
 Usage: python v3/noon_sms_watch.py [--dry-run]     (run from 11x11_v2)
 """
+import os as _os, sys as _sys
+_sys.path.append(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # repository root
+from omok_paths import PROBLEMS_FILE  # noqa: E402  (10x10/tactical_problems: the 11x11 problem set, one copy)
 import importlib.util
 import json
 import os
@@ -15,9 +18,10 @@ import time
 
 V2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TLOG = os.path.join(V2, "model", "tactical_problem_log.jsonl")
-PROBS = os.path.join(V2, "tactical_problems", "web_game58_problems.json")
+PROBS = PROBLEMS_FILE
 STATE = os.path.join(V2, "v3", "noon_sms_state.json")
-spec = importlib.util.spec_from_file_location("psms", os.path.join(os.path.dirname(V2), "10x10", "promotion_sms.py"))
+sys.path.insert(0, V2)   # run folder (run_config.py) for the shared modules
+spec = importlib.util.spec_from_file_location("psms", os.path.join(os.path.dirname(V2), "shared", "promotion_sms.py"))
 psms = importlib.util.module_from_spec(spec); spec.loader.exec_module(psms)
 tier = {p["id"]: p.get("tier", 1) for p in json.load(open(PROBS, encoding="utf-8"))["problems"]}
 DRY = "--dry-run" in sys.argv

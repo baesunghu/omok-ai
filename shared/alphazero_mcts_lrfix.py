@@ -5,8 +5,6 @@ import numpy as np
 import torch
 import os
 
-import sys
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from alphago_lee import (board_to_input_tensor, board_to_input_array,
                           boards_to_input_tensor, board_to_input_array_from_numeric, _fork_mask)
 # 2026-09-22 Gen12: V2 architecture (GroupNorm+SE), see alphago_lee_v2_seblock.py
@@ -42,22 +40,28 @@ def _board_to_input_array_batch_from_numeric(boards_list, players_list):
         out.append(np.stack([curr_planes[i], opp_planes[i], empty_planes[i], fork_self, fork_opp]))
     return out
 
-# ---- 11x11_v2 (2026-10-21, user) ----
+try:
+    import mcts_core as _mcts_core
+except ImportError:
+    _mcts_core = None
+
+# ---- 11x11_v2 engine (2026-10-21, user); settings in run_config.py ----
+# VCF (victory by continuous fours) checked at every node expansion in the C++ solver.
 # MEGA (Minimum Exploration Guarantee Algorithm): stage 1 tops every root candidate up to
 # MEGA_VISITS = (visits at Chebyshev distance 1, at distance 2) before the normal
 # search; only on full (noisy, num_simulations >= MEGA_MIN_SIMS) training searches.
 # Stage-1 visits stay in the tree but are removed from the policy target (C++ side).
-MEGA_VISITS = (0, 0)   # 2026-10-21 15:15 (user): MEGA off -- Rapfi 3000: VCF only 60% vs VCF+MEGA 31%; was (30, 15)
-MEGA_MIN_SIMS = 1000
-# VCF (victory by continuous fours) checked at every node expansion in the C++ solver.
-VCF_DEPTH = 10
-VCF_BUDGET = 3000
-try:
-    import mcts_core as _mcts_core
-    # 11x11_v2 (2026-10-21, user): VCF at every node expansion (depth = attacker fours, node budget per call)
+from run_config import ENGINE_V2, VCF, MEGA_VISITS, MEGA_MIN_SIMS  # noqa: E402
+VCF_DEPTH, VCF_BUDGET = VCF if VCF else (0, 0)
+if ENGINE_V2 and VCF and _mcts_core is not None:
     _mcts_core.set_vcf(VCF_DEPTH, VCF_BUDGET)
-except ImportError:
-    _mcts_core = None
+
+
+def _mega_args(add_noise, num_simulations):
+    """Extra search arguments of the v2 engine: MEGA stage-1 visits (0, 0 = off). None for other engines."""
+    if not ENGINE_V2:
+        return ()
+    return MEGA_VISITS if (add_noise and num_simulations >= MEGA_MIN_SIMS) else (0, 0)
 
 # KataGo forced-playout constant k (n_forced = sqrt(k * P * N)); see
 # cpp_mcts/mcts_core_solver.cpp. 0 disables.
@@ -413,20 +417,17 @@ class MCTS:
             # noisy (training-data) searches only; evaluation, gate and
             # relabel searches run without noise and stay plain PUCT.
             forced_k = FORCED_PLAYOUT_K if add_noise else 0.0
-            # 11x11_v2 (2026-10-21, user): MEGA stage 1 on full training searches only
-            mega = MEGA_VISITS if (add_noise and num_simulations >= MEGA_MIN_SIMS) else (0, 0)
             target_policy, root_value, candidates = self._cpp_engine.search_batched(
                 root_board, current_player, eval_batch_fn, num_simulations, self.c_puct,
                 add_noise, dirichlet_alpha, noise_weight, BOARD_SIZE, WIN_LENGTH, self.eval_batch_size,
-                forced_k, mega[0], mega[1]
+                forced_k, *_mega_args(add_noise, num_simulations)
             )
         else:
             eval_fn = self._cpp_eval_fn(model, device)
-            mega = MEGA_VISITS if (add_noise and num_simulations >= MEGA_MIN_SIMS) else (0, 0)
             target_policy, root_value, candidates = self._cpp_engine.search(
                 root_board, current_player, eval_fn, num_simulations, self.c_puct,
                 add_noise, dirichlet_alpha, noise_weight, BOARD_SIZE, WIN_LENGTH,
-                0.0, mega[0], mega[1]
+                *((0.0, *_mega_args(add_noise, num_simulations)) if ENGINE_V2 else ())
             )
 
         next_player = 'O' if current_player == 'X' else 'X'

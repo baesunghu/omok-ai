@@ -14,7 +14,7 @@ sims, no noise; opponent = Rapfi at 3 s/move, i.e. near-perfect play here):
   defense: the model, playing O from the position, does not play (8,9)
            and is not lost within 40 plies.
 
-Usage: python tactical_problem_check.py [checkpoint]
+Usage: python ../shared/tactical_problem_check.py [checkpoint]
 Appends one line to model/tactical_problem_log.jsonl.
 """
 import json
@@ -22,21 +22,24 @@ import os
 import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
-sys.path.insert(0, HERE)
-os.chdir(HERE)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import enter_run, PROBLEMS_FILE, V3_DIR  # noqa: E402
+HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
 import numpy as np
 import torch
 
 import mcts_core
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
+from run_config import VCF  # noqa: E402
+# 2026-10-23 (user): VCF on wherever the engine has it (was off: engine default depth 0); VCF=0 turns it off
+if VCF and os.environ.get("VCF", "1") != "0":
+    mcts_core.set_vcf(*VCF)
 from alphago_lee import board_to_input_array_from_numeric
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, FILE_SUFFIX
 from rapfi_match import Rapfi
 
 N = BOARD_SIZE
-PROBLEMS = os.path.join("tactical_problems", "web_game58_problems.json")
+PROBLEMS = PROBLEMS_FILE if N == 11 else None   # the problem set (10x10/tactical_problems) is 11x11 only
 LOG = os.path.join("model", "tactical_problem_log.jsonl")
 SIMS = 1100
 TRIAL_SIMS = (900, 1100, 1300)
@@ -47,9 +50,15 @@ MAX_PLIES = 40
 
 def main():
     ckpt = sys.argv[1] if len(sys.argv) > 1 else f"model/best_mcts{FILE_SUFFIX}.pth"
-    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = AlphaZeroTicTacToeV3()
-    model.load_state_dict(torch.load(ckpt, map_location=dev))
+    dev = torch.device("cuda" if torch.cuda.is_available() and not os.environ.get("FORCE_CPU") else "cpu")  # 2026-10-23: FORCE_CPU=1 keeps the training GPU free
+    sd = torch.load(ckpt, map_location=dev)
+    if any(k.startswith("opp_policy_head.") for k in sd):   # 2026-10-22: 11x11_v3 checkpoint (NetV3, 128x8)
+        sys.path.insert(1, V3_DIR)
+        from net_v3 import NetV3
+        model = NetV3()
+    else:
+        model = AlphaZeroTicTacToeV3()
+    model.load_state_dict(sd)
     model.to(dev).eval()
 
     def ev(bs, ps):
@@ -58,7 +67,13 @@ def main():
             pl, v = model(t)
         return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
 
+    if PROBLEMS is None:   # 2026-10-14 (15x15): no problem set yet (researched once eq >= 1000)
+        print(f"no {N}x{N} problem set yet -- graduation check skipped"); return
     probs = json.load(open(PROBLEMS, encoding="utf-8"))["problems"]
+    # 2026-10-22 (user): PROBLEM_IDS=id1,id2 grades only those problems (all as tier 1, nothing logged)
+    only = [x for x in os.environ.get("PROBLEM_IDS", "").split(",") if x]
+    if only:
+        probs = [dict({k: v for k, v in p.items() if k != "tier"}) for p in probs if p["id"] in only]
     # 2026-10-11 (user): node-limited opponent so a grading run gives the same result every time (the 3 s
     # time limit made results depend on PC load; ep920 got 3/3 in one run and 1/3 in another with the same moves).
     # 1,000,000 nodes ~ what 3 s searched on an idle PC (~417k nodes/s), so difficulty stays comparable.
@@ -148,6 +163,8 @@ def main():
     tier_txt = " | ".join(f"tier {k}: {v[0]}/{v[1]}" for k, v in sorted(tiers.items()))
     print(f"\n{n_pass}/{len(results)} problems passed | graduation (stage 1): {g_pass}/{len(g)}"
           + (f" | {tier_txt}" if tier_txt else ""))
+    if only:
+        return
     with open(LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "checkpoint": os.path.basename(ckpt),
                             "passed": n_pass, "total": len(results), "grad_passed": g_pass, "grad_total": len(g),

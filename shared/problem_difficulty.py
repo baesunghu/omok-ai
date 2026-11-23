@@ -13,7 +13,7 @@ Usage: python ../shared/problem_difficulty.py
 """
 import json, os, sys, threading
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
-from omok_paths import enter_run  # noqa: E402
+from omok_paths import enter_run, PROBLEMS_FILE  # noqa: E402
 HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
 from rapfi_match import Rapfi
 from fast_board import BOARD_SIZE as N, fast_check_win
@@ -73,7 +73,9 @@ def trial_guarded(p, n, holder):
 
 
 def main():
-    probs = json.load(open(os.path.join("tactical_problems", "web_game58_problems.json"), encoding="utf-8"))["problems"]
+    if N != 11:
+        sys.exit(f"the problem set is 11x11; this run is {N}x{N} (no {N}x{N} problems yet)")
+    probs = json.load(open(PROBLEMS_FILE, encoding="utf-8"))["problems"]
     res = json.load(open(OUT)) if os.path.exists(OUT) else {}
     holder = {"opp": Rapfi(30000, OPP_NODES)}
     try:

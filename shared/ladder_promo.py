@@ -7,7 +7,7 @@ probability that it is stronger is >= P_MIN, write model/ladder_promote.json; th
 the start of its next epoch (best checkpoint + self-play generation model) and logs "PROMOTED (ladder)".
 
 Usage:
-    python ladder_promo.py <checkpoint_basename_in_ladder_log> <path_to_weights> [--dry-run]
+    python ../shared/ladder_promo.py <checkpoint_basename_in_ladder_log> <path_to_weights> [--dry-run]
 """
 import json
 import math
@@ -16,7 +16,9 @@ import random
 import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import enter_run  # noqa: E402
+HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
 LOG = os.path.join(HERE, "model", "rapfi_ladder_log.jsonl")
 REF = os.path.join(HERE, "model", "ladder_best_ref.json")
 FLAG = os.path.join(HERE, "model", "ladder_promote.json")

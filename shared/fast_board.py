@@ -6,7 +6,7 @@ try:
 except ImportError:
     HAS_NUMBA = False
 
-BOARD_SIZE = 15  # 2026-10-13: 15x15 run (copied from 10x10/, where it is 11)
+from run_config import BOARD_SIZE  # noqa: E402  (each run folder's run_config.py; 11 or 15)
 WIN_LENGTH = 5
 # every model / report / state file of a run carries this suffix (best_mcts_11x11.pth, training_report_11x11.txt)
 FILE_SUFFIX = "" if BOARD_SIZE == 3 else f"_{BOARD_SIZE}x{BOARD_SIZE}"

@@ -74,7 +74,7 @@ while not os.path.exists(os.path.join(HERE, "STOP_LADDER")):
     log(f"problems v3 ep{ep}")
     # 2026-10-22 23:55 (user): stream to the log as it runs -- tier 1 prints first, so it can be read before the rest
     with open(os.path.join(HERE, f"grad_check_ep{ep}.log"), "w", encoding="utf-8") as f:
-        subprocess.run([sys.executable, "-u", "tactical_problem_check.py", ck], cwd=V2,
+        subprocess.run([sys.executable, "-u", os.path.join(os.path.dirname(V2), "shared", "tactical_problem_check.py"), ck], cwd=V2,
                        env=dict(os.environ, PYTHONIOENCODING="utf-8"), stdout=f, stderr=subprocess.STDOUT)
     try:
         last = json.loads(open(TLOG, encoding="utf-8").readlines()[-1])

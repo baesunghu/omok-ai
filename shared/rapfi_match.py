@@ -10,7 +10,7 @@ moves. Our side: the tracked best checkpoint + the production engine
 Each game starts from a fixed opening stone for X (cycling through a
 spread-out list) so games differ; colors alternate game by game.
 
-Usage: python rapfi_match.py [games] [our_sims] [rapfi_limit] [checkpoint]
+Usage: python ../shared/rapfi_match.py [games] [our_sims] [rapfi_limit] [checkpoint]
   rapfi_limit: "2000" = 2000 ms per move, or "n10000" = 10,000 search nodes
   per move (machine-independent; the time cap is then 30 s as a safety net).
 """
@@ -20,26 +20,31 @@ import sys
 import time
 import json
 
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
-sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
-from omok_paths import RAPFI_DIR, RAPFI_EXE  # noqa: E402
-sys.path.insert(0, HERE)
-os.chdir(HERE)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import enter_run  # noqa: E402
+HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
+from omok_paths import RAPFI_DIR, RAPFI_EXE, V3_DIR  # noqa: E402
 import numpy as np
 import torch
 
 import mcts_core
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
+from run_config import ENGINE_V2, VCF  # noqa: E402
+# v2 engine: MEGA_EVAL=30,15 also applies MEGA stage 1 to these noiseless match searches (2026-10-21, user)
+_MEGA_EVAL = tuple(int(x) for x in __import__('os').environ.get('MEGA_EVAL', '0,0').split(','))
+# 2026-10-23 (user): VCF on wherever the engine has it (was off: engine default depth 0); VCF=0 turns it off
+if VCF and os.environ.get("VCF", "1") != "0":
+    mcts_core.set_vcf(*VCF)
 from alphago_lee import board_to_input_array_from_numeric
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, FILE_SUFFIX
 
 N = BOARD_SIZE
-OPENINGS = [(7, 7), (6, 7), (7, 6), (6, 6), (8, 6), (5, 7), (7, 5), (6, 8)]  # 2026-10-13: 15x15 centre (11x11 list shifted by +2)
+# 8 openings around the centre (11x11: (5, 5), (4, 5), ...; 15x15: the same shape around (7, 7))
+OPENINGS = [(N // 2 + dr, N // 2 + dc) for dr, dc in ((0, 0), (-1, 0), (0, -1), (-1, -1), (1, -1), (-2, 0), (0, -2), (-1, 1))]
 # 2026-10-11: RAPFI_MORE_OPENINGS=1 -> all 25 cells within 2 of the centre (validation runs with >16 games,
 # so games do not repeat; the default 8 openings keep the ladder identical to its history)
 if os.environ.get("RAPFI_MORE_OPENINGS"):
-    OPENINGS = OPENINGS + [(r, c) for r in range(5, 10) for c in range(5, 10) if (r, c) not in OPENINGS]
+    OPENINGS = OPENINGS + [(r, c) for r in range(N // 2 - 2, N // 2 + 3) for c in range(N // 2 - 2, N // 2 + 3) if (r, c) not in OPENINGS]
 LOG = os.environ.get("RAPFI_MATCH_LOG", os.path.join(HERE, "model", "rapfi_match_log.jsonl"))
 # 2026-10-10: games are deterministic (Rapfi single-threaded + node limit, our side greedy without noise), so a
 # level can be split across RAPFI_PAR worker processes (game g -> worker g % PAR) with identical per-game results.
@@ -125,8 +130,14 @@ def main():
     ms = 30000 if nodes else int(lim)
     ckpt = sys.argv[4] if len(sys.argv) > 4 else f"model/best_mcts{FILE_SUFFIX}.pth"
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = AlphaZeroTicTacToeV3()
-    model.load_state_dict(torch.load(ckpt, map_location=dev))
+    sd = torch.load(ckpt, map_location=dev)
+    if any(k.startswith("opp_policy_head.") for k in sd):   # 2026-10-22: 11x11_v3 checkpoint (NetV3, 128x8)
+        sys.path.insert(1, V3_DIR)
+        from net_v3 import NetV3
+        model = NetV3()
+    else:
+        model = AlphaZeroTicTacToeV3()
+    model.load_state_dict(sd)
     model.to(dev).eval()
 
     def ev(bs, ps):
@@ -208,7 +219,8 @@ def main():
                 result = "draw"
                 break
             if turn == ai:
-                _, rv, cands = engine.search_batched(board, turn, evf, sims, 1.414, False, 0.3, 0.25, N, WIN_LENGTH, 16)
+                _, rv, cands = engine.search_batched(board, turn, evf, sims, 1.414, False, 0.3, 0.25, N, WIN_LENGTH, 16,
+                                                     *((0.0, *_MEGA_EVAL) if ENGINE_V2 else ()))
                 r, c = max(cands, key=lambda x: x['visit_count'])['move']
             else:
                 r, c = rapfi.move(moves, turn)

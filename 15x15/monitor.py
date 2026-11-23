@@ -9,6 +9,8 @@ import re
 import subprocess
 import time
 from collections import defaultdict
+import sys
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 
 D = os.path.dirname(os.path.abspath(__file__))

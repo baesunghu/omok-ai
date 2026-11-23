@@ -7,8 +7,8 @@ without a live Claude session.
 
 Usage (from a PowerShell prompt):
 
-    cd 11x11_v2      (from the repository root)
-    python fork_status_check.py
+    cd 10x10      (or 11x11_v2 / 15x15)
+    python ../shared/fork_status_check.py
 
 Read-only everywhere: reads the live checkpoint, the hard-mined pool, and
 the open-three progress log; writes nothing.
@@ -19,10 +19,10 @@ import random
 import pickle
 import subprocess
 
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
-sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import enter_run  # noqa: E402
+HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
 from omok_paths import CPP_MCTS_DIR, ROOT, SCRATCH_DIR  # noqa: E402
-sys.path.insert(0, HERE)
 sys.path.append(CPP_MCTS_DIR)
 
 import torch
@@ -48,8 +48,7 @@ print("\n" + "=" * 70)
 print("Loading live checkpoint (shared by the fork checks below)...")
 print("=" * 70)
 
-import mcts_core_solver as mcts_core_verbose  # 2026-09-27 solver-engine re-measure copy
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
+import mcts_core as mcts_core_verbose  # production engine (virtual-loss fix + mate distance)
 from alphago_lee_v3_survival import AlphaZeroTicTacToeV3 as AlphaZeroTicTacToe
 from alphago_lee import preferred_memory_format, board_to_input_array_from_numeric
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win

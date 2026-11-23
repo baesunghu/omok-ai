@@ -10,13 +10,13 @@ on the same ruler used for the models (equal-strength nodes).
 Reference: Rapfi at REF_NODES nodes. Levels: Rapfi at LEVELS nodes. All node-limited, single thread:
 deterministic. Results are cached in model/human_rapfi_cache.json so the run can resume.
 
-Usage: python human_rapfi_rating.py [max_games]
+Usage: python ../shared/human_rapfi_rating.py [max_games]
 """
 import ast, json, math, os, random, re, subprocess, sys, time
-HERE = os.path.dirname(os.path.abspath(__file__)); os.chdir(HERE)
-sys.path.insert(0, HERE)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import enter_run, WEB_GAMES_LOG  # noqa: E402
+HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
 from fast_board import BOARD_SIZE as N, fast_check_win
-sys.path.append(os.path.dirname(HERE))                # repository root -> omok_paths
 from omok_paths import RAPFI_DIR, RAPFI_EXE  # noqa: E402
 REF_NODES = 100000
 LEVELS = [5, 10, 15, 20, 30, 100, 300, 1000]   # 2026-10-10 (user): low end. Rapfi plays identically at 1/3/5 nodes (no search: only forced blocks, else (1,1)), so 5 stands for all three; 15/20 added for resolution; 3000/10000 dropped
@@ -87,8 +87,13 @@ def other(p):
 
 def main():
     max_games = int(sys.argv[1]) if len(sys.argv) > 1 else 10 ** 9
-    games = [json.loads(l) for l in open(os.path.join("hlt", "web", "games.jsonl"), encoding="utf-8")]
+    games = [json.loads(l) for l in open(WEB_GAMES_LOG, encoding="utf-8")]
     games = [g for g in games if not g["time"].startswith(EXCLUDE_TIMES)][:max_games]
+    # 2026-10-23 (user): DATES=2026-10-17,2026-10-18 rates only those days (festival); TAG names the output json
+    dates = [d for d in os.environ.get("DATES", "").split(",") if d]
+    if dates:
+        games = [g for g in games if g["time"][:10] in dates]
+    print(f"{len(games)} games", flush=True)
     cache = json.load(open(CACHE)) if os.path.exists(CACHE) else {}
     eng = {"ref": Rapfi(REF_NODES), **{n: Rapfi(n) for n in LEVELS}}
     crashes = []
@@ -191,7 +196,7 @@ def main():
     print(f"\nhumans ~ Rapfi {est:,.0f} nodes  (95% by resampling games: {bs[25]:,.0f} ~ {bs[974]:,.0f})")
     json.dump({"summary": s, "estimate": est, "ci95": [bs[25], bs[974]], "games": len(per_game),
                "ref_nodes": REF_NODES, "levels": LEVELS, "K": K},
-              open(os.path.join("model", "human_rapfi_rating.json"), "w"), indent=1)
+              open(os.path.join("model", f"human_rapfi_rating{os.environ.get('TAG', '')}.json"), "w"), indent=1)
 
 
 if __name__ == "__main__":

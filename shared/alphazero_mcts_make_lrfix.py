@@ -11,8 +11,6 @@ import re
 import time
 from datetime import datetime
 
-import sys
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from alphago_lee import board_to_input_tensor, board_to_input_array, preferred_memory_format
 # 2026-09-22 Gen12: swapped to the V2 architecture (GroupNorm+SE, see
 # alphago_lee_v2_seblock.py) -- aliased as AlphaZeroTicTacToe so every
@@ -247,7 +245,7 @@ def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost
         exist to play strong moves cheaply, not to explore -- they are never
         recorded as training targets).
     """
-    mcts = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     if start_board is not None:
         board = [row[:] for row in start_board]
         current_player = start_player
@@ -480,7 +478,10 @@ GATE_PROMOTION_THRESHOLD = 0.35  # 2026-10-13 (user): 0.25 -> 0.35 (6-8-6, an ev
 # 2026-10-11 (user): "a model that does not lose" -- a loss now costs points:
 # score = (wins + 0.5*draws - GATE_LOSS_PENALTY*losses) / n, promoted only if score > 0.50 (strictly).
 # With 0.75 that is exactly "wins > 2.5 x losses"; draws alone can never promote (all draws = 0.50).
-GATE_LOSS_PENALTY = 0.4  # 2026-10-16 (user, 15x15 ep93): 0.75 -> 0.4 (no draws on 15x15; 11-9 now passes, 10-10 does not)
+# Per-run settings (run_config.py): gate loss penalty (11x11 0.75, 15x15 0.4), gate opening radius, LR band,
+# MCTS eval batch and pooled-evaluator batch.
+from run_config import (GATE_LOSS_PENALTY, GATE_OPENING_RADIUS, LR_PEAK, LR_MIN,  # noqa: E402
+                        EVAL_BATCH, POOLED_TARGET_BATCH)
 # 2026-10-13 (user): two-stage promotion. The gate (vs the current best only) can pick a model that is
 # weaker by the Rapfi ladder (ep1050 beat ep960 12-5-3 but measured 2,404 vs 4,432). A gate pass now only
 # makes a CANDIDATE: its weights go to model/gate_candidates/ and model/gate_candidate.json; the ladder
@@ -517,8 +518,8 @@ def _play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sim
     a_player = 'X' if a_plays_x else 'O'
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
-    mcts_a = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache_a, pooled_evaluator=pooled_evaluator_a)
-    mcts_b = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache_b, pooled_evaluator=pooled_evaluator_b)
+    mcts_a = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache_a, pooled_evaluator=pooled_evaluator_a)
+    mcts_b = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache_b, pooled_evaluator=pooled_evaluator_b)
 
     if opening is not None:
         r0, c0 = opening
@@ -556,9 +557,10 @@ def _play_gate_match_game(model_a, model_b, device, num_simulations, boosted_sim
 # _canonical_symmetry_openings happened to emit them (same principle as the
 # vs-Det opening fix). Trades some promotion-decision precision (10%-point
 # granularity instead of ~2.4%-point) for roughly half the gate-check cost.
-# 2026-10-13 (15x15): canonical openings now include far corner squares; keep the gate on squares within
-# Chebyshev distance 3 of the centre (on 11x11 every square is near enough, on 15x15 corners are not).
-_GATE_OPENING_SQUARES = [sq for sq in _OPENING_SQUARES if max(abs(sq[0] - BOARD_SIZE // 2), abs(sq[1] - BOARD_SIZE // 2)) <= 3]
+# 2026-10-13 (15x15): canonical openings include far corner squares; there the gate keeps squares within
+# Chebyshev distance GATE_OPENING_RADIUS of the centre. The 11x11 runs used every canonical square (radius None).
+_GATE_OPENING_SQUARES = [sq for sq in _OPENING_SQUARES if GATE_OPENING_RADIUS is None
+                         or max(abs(sq[0] - BOARD_SIZE // 2), abs(sq[1] - BOARD_SIZE // 2)) <= GATE_OPENING_RADIUS]
 random.Random(910).shuffle(_GATE_OPENING_SQUARES)
 _GATE_OPENING_SQUARES = _GATE_OPENING_SQUARES[:10]
 
@@ -641,8 +643,8 @@ def run_gating_check(model, gen_model, device, num_simulations, boosted_sims=Non
     eval_cache_model = {}
     eval_cache_best = {}
     owns_pooled = device.type == "cuda"
-    pooled_model = PooledEvaluator(model, device, target_batch=24, max_wait=0.05) if owns_pooled else None
-    pooled_best = PooledEvaluator(best_model, device, target_batch=24, max_wait=0.05) if owns_pooled else None
+    pooled_model = PooledEvaluator(model, device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) if owns_pooled else None
+    pooled_best = PooledEvaluator(best_model, device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) if owns_pooled else None
 
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -762,7 +764,7 @@ def _play_vs_deterministic(model, device, num_simulations, mcts_plays_x, boosted
     mcts_player = 'X' if mcts_plays_x else 'O'
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
-    mcts_engine = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    mcts_engine = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
 
     if opening is not None:
         r0, c0 = opening
@@ -872,7 +874,7 @@ def _evaluate_vs_deterministic_threaded(model, device, num_games=10, num_simulat
     eval_cache = {}
     owns_pooled_evaluator = pooled_evaluator is None and device.type == "cuda"
     if owns_pooled_evaluator:
-        pooled_evaluator = PooledEvaluator(model, device, target_batch=24, max_wait=0.05)
+        pooled_evaluator = PooledEvaluator(model, device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05)
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = []
@@ -971,7 +973,7 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
     'mcts'/'det'/'draw' from the trained model's perspective.
     """
     mcts_player = 'X' if mcts_plays_x else 'O'
-    mcts = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
     history = []
@@ -1335,8 +1337,8 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
     'mcts'/'league'/'draw' from the live model's perspective.
     """
     mcts_player = 'X' if mcts_plays_x else 'O'
-    mcts = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
-    league_mcts = MCTS(c_puct=c_puct, eval_batch_size=16, shared_cache=league_eval_cache,
+    mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    league_mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=league_eval_cache,
                        pooled_evaluator=league_pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
@@ -2392,7 +2394,7 @@ def _mine_one_selfplay_game(model, device, sims, pooled_evaluator=None, eval_cac
 
     pooled_evaluator/eval_cache (2026-09-27, unified MP pool): optional
     routing for the leaf evaluations; None keeps the original behavior."""
-    mcts = MCTS(c_puct=3.2, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = random.choice(['X', 'O'])
     plies = []
@@ -2440,7 +2442,7 @@ def _mine_one_vsdet_game(model, device, sims, mcts_plays_x, det_max_depth=determ
 
     pooled_evaluator/eval_cache: see _mine_one_selfplay_game."""
     mcts_player = 'X' if mcts_plays_x else 'O'
-    mcts = MCTS(c_puct=3.2, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
     plies = []
@@ -2492,8 +2494,8 @@ def _mine_one_vsleague_game(model, league_model, device, sims, mcts_plays_x,
     pooled_evaluator/eval_cache route the model side, league_* the league
     side (see _mine_one_selfplay_game); all None = original behavior."""
     mcts_player = 'X' if mcts_plays_x else 'O'
-    mcts = MCTS(c_puct=3.2, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
-    league_mcts = MCTS(c_puct=1.6, eval_batch_size=16, shared_cache=league_eval_cache,
+    mcts = MCTS(c_puct=3.2, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    league_mcts = MCTS(c_puct=1.6, eval_batch_size=EVAL_BATCH, shared_cache=league_eval_cache,
                        pooled_evaluator=league_pooled_evaluator)
     board = [[' ' for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
     current_player = 'X'
@@ -2619,7 +2621,7 @@ def _opponent_can_fork_next(board, opponent):
     replies x O(BOARD_SIZE^2) fast_check_win each -- only run on already-
     mined game plies at refresh_mined_tactical_pool's cadence, not in the
     self-play hot loop."""
-    # 2026-10-14 (15x15): same answer, window-based. The brute force was O(N^6) fast_check_win
+    # 2026-10-14 (15x15, now every run): same answer, window-based. The brute force was O(N^6) fast_check_win
     # calls per _fork_safe_cells and stalled the relabel step for 30+ minutes on 15x15.
     if _immediate_win_cells(board, opponent):
         return True
@@ -2656,7 +2658,7 @@ def _immediate_win_cells(board, color):
     already-mined game plies (a few hundred per refresh cycle), not inside
     the hot self-play loop itself.
     """
-    # 2026-10-14 (15x15): window scan instead of one fast_check_win per empty cell. A cell completes
+    # 2026-10-14 (15x15, now every run): window scan instead of one fast_check_win per empty cell. A cell completes
     # 5+ in a row iff some 5-cell window through it holds 4 `color` stones and that one empty cell.
     cells = set()
     for cells_w in _WIN_WINDOWS:
@@ -2811,7 +2813,7 @@ def _relabel_one(item, model, device, sims=RELABEL_SIMS, pooled_evaluator=None, 
     run relabels in parallel worker processes (pooled_evaluator/eval_cache
     route the leaf evaluations there); None/None = original behavior."""
     board, player, hard_class, outcome_for_player, g_p, g_o = item
-    mcts = MCTS(c_puct=1.6, eval_batch_size=16, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
+    mcts = MCTS(c_puct=1.6, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     root = mcts.search(board, player, model, device, num_simulations=sims, add_noise=False)
     if not root.children:
         return None
@@ -3392,10 +3394,10 @@ def train_mcts_alpha_zero(
     # halve the LR band (1e-4..5e-5 -> 5e-5..1e-5) to consolidate instead of drifting.
     # 2026-10-11 (user): ep937 cooldown ended -> LR jumped 1e-5 -> 4.4e-5 and ep940 fell to ~1,092 Rapfi nodes.
     # Cosine peak 5e-5 -> 2e-5 (band 2e-5..1e-5) to polish rather than shake before the festival.
-    # 2026-10-15 (user, 15x15): the 2e-5 polish band was inherited from the mature 11x11 net; the young 15x15
-    # net stayed flat for 45 epochs (Elo +145 -> +155) -> band 1e-4..2e-5.
-    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150, T_mult=1, eta_min=2e-5)
+    # LR band per run (run_config.py): 11x11 NAPS 2e-5..1e-5, 11x11_v2 5e-5..1e-5, 15x15 1e-4..2e-5
+    # (2026-10-15, user: the 2e-5 polish band of the mature 11x11 net kept the young 15x15 net flat).
+    optimizer = optim.Adam(model.parameters(), lr=LR_PEAK, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150, T_mult=1, eta_min=LR_MIN)
     start_epoch = load_start_epoch()
     for _ in range(start_epoch):
         scheduler.step()
@@ -3491,7 +3493,7 @@ def train_mcts_alpha_zero(
     # wall-clock, so this is a real but modest gain, not a step-change. Kept
     # consistent with evaluate_vs_deterministic / run_gating_check's own
     # scoped PooledEvaluators below, which use the same values.
-    pooled_evaluator = PooledEvaluator(gen_model, self_play_device, target_batch=24, max_wait=0.05) \
+    pooled_evaluator = PooledEvaluator(gen_model, self_play_device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) \
         if self_play_device.type == "cuda" else None
 
     cur_num_simulations, cur_boosted_sims, cur_stagnation_count, cur_lr_cooldown = load_sim_budget()

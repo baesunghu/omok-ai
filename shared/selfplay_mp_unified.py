@@ -53,7 +53,9 @@ import time
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import run_dir  # noqa: E402
+HERE = run_dir()   # the run folder of the script that imported this module
 PROD_DIR = HERE
 if PROD_DIR not in sys.path:
     sys.path.insert(0, PROD_DIR)
@@ -61,14 +63,14 @@ if PROD_DIR not in sys.path:
 PROD_MODULE = os.environ.get("MP_SELFPLAY_PROD_MODULE", "alphazero_mcts_make_lrfix")
 
 import torch  # noqa: E402
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from alphago_lee import preferred_memory_format  # noqa: E402
 from alphago_lee_v3_survival import SURVIVAL_CAP  # noqa: E402
 from alphazero_mcts import BOARD_SIZE  # noqa: E402
 
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 
-DEFAULT_TARGET_BATCH = 24
+from run_config import POOLED_TARGET_BATCH, CPP_SELFPLAY  # noqa: E402
+DEFAULT_TARGET_BATCH = POOLED_TARGET_BATCH   # 11x11_v2 (2026-10-21, user): 64 with 32-leaf requests; other runs 24
 DEFAULT_MAX_WAIT = 0.015
 DEFAULT_STALL_TIMEOUT = 180.0
 MAX_STRIKES = 3
@@ -827,7 +829,20 @@ def generate_epoch_games_unified(gen_model, device, *, epoch, max_workers,
               f"(Simulations: {selfplay_cfg['num_simulations']}/move, boosted {selfplay_cfg['boosted_sims']})...",
               flush=True)
 
-        results = pool.run_tasks(tasks, stall_timeout=stall_timeout)
+        # 2026-10-21 (user): self-play + vs-League games in C++ threads with large GPU
+        # batches (selfplay_cpp); the worker pool stays as the fallback and for vs-Det.
+        results = None
+        if CPP_SELFPLAY and not play_vsdet:
+            try:
+                import selfplay_cpp
+                if selfplay_cpp.enabled():
+                    results = selfplay_cpp.run_tasks(tasks, models, device, prod, TAG_GEN)
+                    print(f"  [C++ self-play] {len(tasks)} games: {selfplay_cpp.LAST_STATS}", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"  [C++ self-play] FAILED ({e!r}) -- playing this epoch in the worker pool", flush=True)
+                results = None
+        if results is None:
+            results = pool.run_tasks(tasks, stall_timeout=stall_timeout)
 
         mix = prod.mixed_value_target
         sp_samples, sp_counts, opening_rows = _aggregate_selfplay([results[t] for t in self_ids], augment_sample,

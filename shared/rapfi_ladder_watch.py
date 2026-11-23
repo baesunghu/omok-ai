@@ -1,22 +1,26 @@
 """
 Runs rapfi_ladder.py automatically every EVERY epochs of the live run
-(2026-09-28). Checks train_state_15x15.json once a minute; when the
+(2026-09-28). Checks the run's train_state<suffix>.json once a minute; when the
 cumulative epoch reaches the next multiple of EVERY, it snapshots the
 tracked best checkpoint and runs the ladder against that snapshot (so a
 promotion mid-ladder cannot change the model being measured).
 Results accumulate in model/rapfi_ladder_log.jsonl.
-Run detached:  python -u rapfi_ladder_watch.py
+Run detached:  python -u ../shared/rapfi_ladder_watch.py
 """
 import json, os, shutil, subprocess, sys, time
-HERE = os.path.dirname(os.path.abspath(__file__))   # this run folder (10x10 / 11x11_v2 / 15x15)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import enter_run  # noqa: E402
+HERE = enter_run()   # the run folder this works on: the current directory, or $OMOK_RUN
 TENX = HERE
-LADDER = os.path.join(os.path.dirname(TENX), "shared", "rapfi_ladder.py")   # runs with cwd=TENX
+SHARED = os.path.dirname(os.path.abspath(__file__))   # the tools below run from shared/ with cwd=TENX
+LADDER = os.path.join(SHARED, "rapfi_ladder.py")
 from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 STATE = os.path.join(TENX, "model", f"train_state{FILE_SUFFIX}.json")
 BEST = os.path.join(TENX, "model", f"best_mcts{FILE_SUFFIX}.pth")
 SNAP = os.path.join(TENX, "model", "_rapfi_ladder_snapshot.pth")
 EVERY = 20
-GAMES = 40  # 2026-10-14 (user): 20 -> 40 per level for a tighter Elo estimate.  per ladder level (2026-09-28: 10 -> 20 for a tighter graduation verdict)
+from run_config import LADDER_GAMES, LADDER_LEVELS  # noqa: E402
+GAMES = LADDER_GAMES  # per ladder level (2026-09-28: 10 -> 20; 11x11_v2 and 15x15: 40)
 
 
 def epoch():
@@ -28,9 +32,22 @@ def epoch():
 
 # 2026-10-09: the ep820 run died after the problem check -- on Windows, a child output that the
 # parent cannot decode with the locale codec leaves r.stdout as None. Force UTF-8 both ways.
-RUN_KW = {"encoding": "utf-8", "errors": "replace", "env": dict(os.environ, PYTHONIOENCODING="utf-8",
-          # 2026-10-13: 25 distinct openings (games of a level no longer share openings), 5 levels
-          RAPFI_MORE_OPENINGS="1", RAPFI_LEVELS="30,100,300,1000,3000")}  # 2026-10-14: 15x15 (epoch 0 = ~766). 2026-10-16: run 3 starts from a Rapfi-10 epoch 0 -> 30..3000)}
+def run_kw():
+    """Rapfi levels: run_config.LADDER_LEVELS, or with "adaptive" (11x11_v2, 2026-10-21) levels that follow the
+    current best -- the run starts near ~10 Rapfi nodes (Gen12) and should end in the thousands, so fixed levels
+    would be all-0% or all-100% most of the time. Adaptive levels = best equal-node point x (1/3, 1, 3, 10), at
+    least 10 nodes, from model/ladder_best_ref.json. Fixed levels: 25 distinct openings (2026-10-13)."""
+    if LADDER_LEVELS != "adaptive":
+        return {"encoding": "utf-8", "errors": "replace", "env": dict(os.environ, PYTHONIOENCODING="utf-8",
+                RAPFI_MORE_OPENINGS="1", RAPFI_LEVELS=LADDER_LEVELS)}
+    eq = 30
+    try:
+        eq = max(10, int(json.load(open(os.path.join(TENX, "model", "ladder_best_ref.json"), encoding="utf-8"))["eq"]))
+    except Exception:
+        pass
+    levels = sorted({max(10, int(round(eq * f, -1 if eq * f >= 100 else 0))) for f in (1 / 3, 1, 3, 10)})
+    return {"encoding": "utf-8", "errors": "replace", "env": dict(os.environ, PYTHONIOENCODING="utf-8",
+            RAPFI_MORE_OPENINGS="1", RAPFI_LEVELS=",".join(map(str, levels)))}
 
 
 def same_weights(a, b):
@@ -49,7 +66,7 @@ def log(msg):
 def main():
     e = epoch() or 0
     next_at = (e // EVERY + 1) * EVERY
-    if len(sys.argv) > 1:   # 2026-10-14: resume a missed run, e.g. "python rapfi_ladder_watch.py 20"
+    if len(sys.argv) > 1:   # 2026-10-14: resume a missed run, e.g. "python ../shared/rapfi_ladder_watch.py 20"
         next_at = int(sys.argv[1])
     log(f"rapfi ladder watcher started at epoch {e}; next run at epoch {next_at}")
     while True:
@@ -64,13 +81,13 @@ def main():
             shutil.copy2(os.path.join(TENX, cand["ckpt"]), snap3)
             log(f"gate candidate {cand['ckpt']} (score {cand.get('gate_score')}): running ladder")
             r = subprocess.run([sys.executable, "-u", LADDER, str(GAMES), "1100", snap3],
-                               cwd=TENX, capture_output=True, text=True, **RUN_KW)
+                               cwd=TENX, capture_output=True, text=True, **run_kw())
             log((r.stdout or '').strip()[-600:] or (r.stderr or '').strip()[-500:])
-            r2 = subprocess.run([sys.executable, "-u", "tactical_problem_check.py", snap3],
-                                cwd=TENX, capture_output=True, text=True, **RUN_KW)
+            r2 = subprocess.run([sys.executable, "-u", os.path.join(SHARED, "tactical_problem_check.py"), snap3],
+                                cwd=TENX, capture_output=True, text=True, **run_kw())
             log(chr(10).join(l for l in (r2.stdout or '').splitlines() if not l.startswith("MESSAGE")) or (r2.stderr or '').strip()[-500:])
-            r3 = subprocess.run([sys.executable, "-u", "ladder_promo.py", os.path.basename(snap3),
-                                 os.path.relpath(snap3, TENX), "--candidate"], cwd=TENX, capture_output=True, text=True, **RUN_KW)
+            r3 = subprocess.run([sys.executable, "-u", os.path.join(SHARED, "ladder_promo.py"), os.path.basename(snap3),
+                                 os.path.relpath(snap3, TENX), "--candidate"], cwd=TENX, capture_output=True, text=True, **run_kw())
             verdict = (r3.stdout or '').strip() or (r3.stderr or '').strip()[-300:]
             log("candidate promotion check: " + verdict)
             cand["status"] = "promoted" if "FLAG WRITTEN" in verdict else "rejected"
@@ -96,15 +113,15 @@ def main():
             else:
                 log(f"epoch {e}: running ladder on best checkpoint snapshot")
                 r = subprocess.run([sys.executable, "-u", LADDER, str(GAMES), "1100", SNAP],
-                                   cwd=TENX, capture_output=True, text=True, **RUN_KW)
+                                   cwd=TENX, capture_output=True, text=True, **run_kw())
                 log((r.stdout or '').strip() or (r.stderr or '').strip()[-500:])
                 # 11x11 graduation problems (end criterion 2), same snapshot
-                r2 = subprocess.run([sys.executable, "-u", "tactical_problem_check.py", SNAP],
-                                    cwd=TENX, capture_output=True, text=True, **RUN_KW)
+                r2 = subprocess.run([sys.executable, "-u", os.path.join(SHARED, "tactical_problem_check.py"), SNAP],
+                                    cwd=TENX, capture_output=True, text=True, **run_kw())
                 log(chr(10).join(l for l in (r2.stdout or '').splitlines() if not l.startswith("MESSAGE")) or (r2.stderr or '').strip()[-500:])
             # 2026-09-28: also measure the newest training checkpoint (not just the gated best),
             # so progress is visible even while the gate keeps rejecting candidates
-            latest = os.path.join(TENX, "model", f"model_MCTS_ep{next_at}{FILE_SUFFIX}.pth")  # 2026-10-14: was the 11x11 name (ep20 latest never found)
+            latest = os.path.join(TENX, "model", f"model_MCTS_ep{next_at}{FILE_SUFFIX}.pth")
             for _ in range(30):
                 if os.path.exists(latest):
                     break
@@ -116,14 +133,14 @@ def main():
                 shutil.copy2(latest, snap2)
                 log(f"running ladder on latest checkpoint ep{next_at}")
                 r = subprocess.run([sys.executable, "-u", LADDER, str(GAMES), "1100", snap2],
-                                   cwd=TENX, capture_output=True, text=True, **RUN_KW)
+                                   cwd=TENX, capture_output=True, text=True, **run_kw())
                 log((r.stdout or '').strip() or (r.stderr or '').strip()[-500:])
-                r2 = subprocess.run([sys.executable, "-u", "tactical_problem_check.py", snap2],
-                                    cwd=TENX, capture_output=True, text=True, **RUN_KW)
+                r2 = subprocess.run([sys.executable, "-u", os.path.join(SHARED, "tactical_problem_check.py"), snap2],
+                                    cwd=TENX, capture_output=True, text=True, **run_kw())
                 log(chr(10).join(l for l in (r2.stdout or '').splitlines() if not l.startswith("MESSAGE")) or (r2.stderr or '').strip()[-500:])
                 # 2026-10-12 (user): Rapfi-ladder promotion path (P >= 80% stronger than the best)
-                r3 = subprocess.run([sys.executable, "-u", "ladder_promo.py", os.path.basename(snap2),
-                                     os.path.relpath(snap2, TENX)], cwd=TENX, capture_output=True, text=True, **RUN_KW)
+                r3 = subprocess.run([sys.executable, "-u", os.path.join(SHARED, "ladder_promo.py"), os.path.basename(snap2),
+                                     os.path.relpath(snap2, TENX)], cwd=TENX, capture_output=True, text=True, **run_kw())
                 log("ladder promotion check: " + ((r3.stdout or '').strip() or (r3.stderr or '').strip()[-300:]))
             else:
                 log(f"latest checkpoint ep{next_at} not found; skipped")

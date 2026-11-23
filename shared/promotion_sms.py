@@ -1,19 +1,22 @@
 """Text the user's phone when a gate PROMOTES a new best (2026-10-11, user request).
 
-Watches model/training_report_11x11.txt every 60 s. When a new "-> PROMOTED" gate line appears, it sends ONE SMS
+Watches model/training_report<suffix>.txt of the run folder every 60 s. When a new "-> PROMOTED" gate line appears, it sends ONE SMS
 through Twilio's REST API (no extra packages). Only promotions are sent -- nothing else.
 
 Credentials are NOT in this repo. Put them in %USERPROFILE%\\.naps_twilio.json :
     {"account_sid": "AC...", "auth_token": "...", "from": "+1...", "to": "+8210..."}
 
 Usage:
-    python promotion_sms.py --dry-run    print what would be sent for the latest promotion, send nothing
-    python promotion_sms.py --test       send one test message now (to check delivery)
-    python promotion_sms.py              watch forever (starts from the current report, no backlog)
+    python ../shared/promotion_sms.py --dry-run    print what would be sent for the latest promotion, send nothing
+    python ../shared/promotion_sms.py --test       send one test message now (to check delivery)
+    python ../shared/promotion_sms.py              watch forever (starts from the current report, no backlog)
 """
 import base64, json, os, re, sys, time, urllib.parse, urllib.request
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import run_dir  # noqa: E402
+HERE = run_dir()   # the run folder: current directory, $OMOK_RUN, or the importer's run folder
+from run_config import LABEL  # noqa: E402  (NAPS / 15x15)
 from fast_board import FILE_SUFFIX  # noqa: E402  ('_11x11' / '_15x15', from the board size)
 REPORT = os.path.join(HERE, "model", f"training_report{FILE_SUFFIX}.txt")
 CONF = os.path.join(os.path.expanduser("~"), ".naps_twilio.json")
@@ -48,10 +51,10 @@ def promotions():
 def text_for(m):
     if m.re is LADDER_PROMO:   # 2026-10-12: ladder promotion path
         when, ep, name, eq, beq, p = m.groups()
-        return f"NAPS {name} 사다리 승격! 대등 {int(eq):,} vs {int(beq):,} ({when[11:]})"
+        return f"{LABEL} {name} 사다리 승격! 대등 {int(eq):,} vs {int(beq):,} ({when[11:]})"
     when, ep, pol, val, n, w, d, l = m.groups()
     n = int(n); W, D, L = (round(int(x) * n / 100) for x in (w, d, l))
-    return f"NAPS ep{ep} 승격! {W}승{D}무{L}패 ({when[11:]})"   # short: one segment even with the trial prefix
+    return f"{LABEL} ep{ep} 승격! {W}승{D}무{L}패 ({when[11:]})"   # short: one segment even with the trial prefix
 
 
 def send(body):

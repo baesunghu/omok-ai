@@ -11,8 +11,8 @@ The repository root is the laptop's old `final/` folder, so the layout is the sa
     <ROOT>/engines/rapfi/  Rapfi engine -- NOT in the repository, download it separately
     <ROOT>/scratch/        throwaway outputs -- NOT in the repository
 
-A run folder holds only what is its own (board size in fast_board.py, its trainer, its watchers); everything that
-was identical in every run folder lives once in shared/. A run-folder script makes shared/ importable with
+A run folder holds only its settings (run_config.py: board size, gate, LR, engine, watchers) and its own scripts;
+all shared logic lives once in shared/. A run-folder script makes shared/ importable with
 
     sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shared"))
 
@@ -50,9 +50,13 @@ RAPFI_EXE = os.path.join(RAPFI_DIR, os.environ.get("OMOK_RAPFI_EXE") or "pbrain-
 SCRATCH_DIR = _env_dir("OMOK_SCRATCH_DIR", os.path.join(ROOT, "scratch"))
 DOWNLOADS_DIR = _env_dir("OMOK_DOWNLOADS", os.path.join("~", "Downloads"))
 
+# Data with one copy in the repository, used by every 11x11 run (10x10, 11x11_v2, v3):
+PROBLEMS_FILE = os.path.join(NAPS_DIR, "tactical_problems", "web_game58_problems.json")   # 28 problems, 11x11 only
+WEB_GAMES_LOG = os.path.join(NAPS_DIR, "hlt", "web", "games.jsonl")   # visitors' games on the web board (not in the repo)
+
 
 def _is_run(d):
-    return os.path.isfile(os.path.join(d, "fast_board.py"))   # every run folder has its own fast_board.py
+    return os.path.isfile(os.path.join(d, "run_config.py"))   # every run folder has its own run_config.py
 
 
 def run_dir():
@@ -64,7 +68,7 @@ def run_dir():
     if os.environ.get("OMOK_RUN"):
         d = _env_dir("OMOK_RUN", "")
         if not _is_run(d):
-            sys.exit(f"OMOK_RUN={d} is not a run folder (no fast_board.py)")
+            sys.exit(f"OMOK_RUN={d} is not a run folder (no run_config.py)")
         return d
     if _is_run(os.getcwd()):
         return os.path.abspath(os.getcwd())
@@ -76,7 +80,7 @@ def run_dir():
 
 def enter_run():
     """For a shared tool run as a script: pick the run folder (run_dir), make it the working directory and put it
-    first on sys.path (its fast_board.py, trainer and built engines), and return it."""
+    first on sys.path (its run_config.py and built engines), and return it."""
     d = run_dir()
     if d not in sys.path:
         sys.path.insert(0, d)

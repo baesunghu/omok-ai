@@ -2,18 +2,22 @@
 The defender is also Rapfi; if even Rapfi loses as the defender, the position is lost and the problem cannot be passed.
 Usage: python v3/rapfi_selfcheck.py PROBLEM_ID [defender_nodes,...]   (run from 11x11_v2)
 """
+import os as _os, sys as _sys
+_sys.path.append(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # repository root
+from omok_paths import PROBLEMS_FILE  # noqa: E402  (10x10/tactical_problems: the 11x11 problem set, one copy)
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared"))   # shared/: code common to every run
 from rapfi_match import Rapfi
 from fast_board import fast_check_win
 
 N, MAX_PLIES, ATTACK_NODES = 11, 40, 1000000
 pid = sys.argv[1]
 defs = [int(x) for x in (sys.argv[2] if len(sys.argv) > 2 else "1000000,30000").split(",")]
-pr = next(p for p in json.load(open("tactical_problems/web_game58_problems.json", encoding="utf-8"))["problems"] if p["id"] == pid)
+pr = next(p for p in json.load(open(PROBLEMS_FILE, encoding="utf-8"))["problems"] if p["id"] == pid)
 ai = pr["side_to_move"]
 FIRST = tuple(int(x) for x in os.environ["FIRST"].split(",")) if os.environ.get("FIRST") else None
 for dn in defs:

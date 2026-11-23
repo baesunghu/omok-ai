@@ -11,18 +11,19 @@ training self-play pool (selfplay_mp_unified.py):
 Batch composition changes the cuDNN kernel, so outputs can differ by ~1e-5 from rapfi_match.py:
 results are statistically, not bit-for-bit, the same.
 
-Usage: python rapfi_match_pooled.py games sims n<nodes> checkpoint [workers]
+Usage: python ../shared/rapfi_match_pooled.py games sims n<nodes> checkpoint [workers]
 Env:   RAPFI_MATCH_LOG (default model/rapfi_match_log.jsonl)
 """
 import json, os, sys, time
 import multiprocessing as mp
 from multiprocessing.connection import wait as conn_wait
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import run_dir  # noqa: E402
+HERE = run_dir()   # the run folder of the script that imported this module
 TARGET, MAX_WAIT = 48, 0.004
 
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 def coordinator(ckpt, conns, ready, stats_q):
     sys.path.insert(0, HERE); os.chdir(HERE)
     import numpy as np, torch
@@ -71,8 +72,9 @@ def worker(wid, nw, games, sims, nodes, ckpt_name, conn, log_path, out_q):
     sys.path.insert(0, HERE); os.chdir(HERE)
     import numpy as np
     import mcts_core
-    if os.environ.get("VCF", "1") != "0":  # 2026-10-23 (user): VCF on everywhere
-        mcts_core.set_vcf(10, 3000)
+    from run_config import VCF
+    if VCF and os.environ.get("VCF", "1") != "0":  # 2026-10-23 (user): VCF on wherever the engine has it
+        mcts_core.set_vcf(*VCF)
     from alphago_lee import board_to_input_array_from_numeric
     from fast_board import fast_check_win
     from rapfi_match import Rapfi, OPENINGS, N, WIN_LENGTH

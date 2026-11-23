@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
 from fast_board import BOARD_SIZE as N  # noqa: E402  (15 in this folder)
 NODES = int(os.environ.get("SL_NODES", "100"))   # 2026-10-16 (user): 10 for a deliberately weak epoch 0
 EPS = 0.08

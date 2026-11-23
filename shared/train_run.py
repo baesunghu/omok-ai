@@ -1,3 +1,8 @@
+"""Start (or resume) a run's training: called by the run folder's launcher (_restart_train.py, 15x15: _restart_train15.py).
+
+The settings that differ between runs come from the run folder's run_config.py; the shared hyperparameters are below.
+A second launch while a trainer is alive exits at once (train.lock in the run folder).
+"""
 import os
 import sys
 import psutil
@@ -6,6 +11,9 @@ import psutil
 # new best's self-play (harmless afterwards: the buffer stays far above this).
 os.environ.setdefault("NAPS_MIN_BUFFER", "40000")
 from alphazero_mcts_make_lrfix import train_mcts_alpha_zero
+from run_config import SELF_PLAY_GAMES  # 16 (NAPS), 32 (11x11_v2, 15x15)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repository root -> omok_paths
+from omok_paths import run_dir  # noqa: E402
 
 # Single-instance lock (2026-09-24): the AZ11x11_Training scheduled task's
 # LogonTrigger fired again at 2026-09-23 14:26 (not from a reboot -- some
@@ -20,7 +28,7 @@ from alphazero_mcts_make_lrfix import train_mcts_alpha_zero
 # train.lock names a PID that's still alive, exit immediately instead of
 # racing it. This makes ANY duplicate launch (the scheduled task, a manual
 # double-start, anything) a harmless no-op rather than silent corruption.
-LOCK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "train.lock")
+LOCK_PATH = os.path.join(run_dir(), "train.lock")
 
 
 def _acquire_single_instance_lock():
@@ -49,7 +57,7 @@ def _acquire_single_instance_lock():
 # timeout -- it was busy re-running this whole call instead. The lock
 # acquire must live inside this same guard for the same reason -- otherwise
 # every spawned child would also try (and fail) to acquire it.
-if __name__ == "__main__":
+def main():
     _acquire_single_instance_lock()
     # 2026-09-10 intervention. Measured root cause: at 250 sims over ~45
     # radius-2 candidates the search gets ~5 visits/child, below what a 2-ply
@@ -64,7 +72,7 @@ if __name__ == "__main__":
     # 2026-10-12 17:3x (user): temperature_moves reverted 6 -> 4 (ep980/1000 ladder fell). Earlier: 4 -> 6 (more varied midgames, quiet-threat exposure); workers 10 -> 8 (GPU 92-96C)
     # 2026-10-13 (user): fast_sims 150 -> 300 (less noisy game outcomes = cleaner value targets)
     # 2026-10-13 (user): q weight fixed at 0.2 (value target = 0.8 z + 0.2 q); half-life decay off (halflife=0)
-    train_mcts_alpha_zero(num_epochs=20000, num_self_play_games=16, num_simulations=900, batch_size=128, self_play_workers=8, eval_interval=0, eval_games=5, eval_simulations=600, num_vs_deterministic_games=0, temperature_moves=4, noise_weight=0.25, dirichlet_alpha=0.3, c_puct=1.6, c_puct_exploit=1.6, vs_det_noise_weight=0.15, vs_det_dirichlet_alpha=0.3, tactical_refresh_interval=5, tactical_refresh_epochs=8, boosted_sims=1800, boost_threshold=5, boost_when_narrow=True, num_curriculum_games=4,
+    train_mcts_alpha_zero(num_epochs=20000, num_self_play_games=SELF_PLAY_GAMES, num_simulations=900, batch_size=128, self_play_workers=8, eval_interval=0, eval_games=5, eval_simulations=600, num_vs_deterministic_games=0, temperature_moves=4, noise_weight=0.25, dirichlet_alpha=0.3, c_puct=1.6, c_puct_exploit=1.6, vs_det_noise_weight=0.15, vs_det_dirichlet_alpha=0.3, tactical_refresh_interval=5, tactical_refresh_epochs=8, boosted_sims=1800, boost_threshold=5, boost_when_narrow=True, num_curriculum_games=4,
                            num_opening_games=2,
                            num_league_games=12, league_pool_size=40, league_best_checkpoint_prob=0.28,
                            full_search_prob=0.5, fast_sims=300,
