@@ -30,7 +30,7 @@ from playwright.sync_api import sync_playwright
 
 import mcts_core_solver as engine_mod
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared"))   # shared/: code common to every run
-from board_encoding import board_to_input_array_from_numeric
+from board_encoding import make_ev
 from nets import GomokuNetV3
 from fast_board import fast_check_win
 
@@ -57,12 +57,7 @@ model.load_state_dict(torch.load(CKPT, map_location=dev))
 model.to(dev).eval()
 
 
-def ev(bs, ps):
-    t = torch.from_numpy(np.stack([board_to_input_array_from_numeric(b, p) for b, p in zip(bs, ps)])).float().to(dev)
-    with torch.inference_mode():
-        pl, v = model(t)
-    return (torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1),
-            v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1))
+ev = make_ev(model, dev)
 
 
 rng = np.random.default_rng(20260929)

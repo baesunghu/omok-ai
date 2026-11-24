@@ -1,17 +1,17 @@
 """Games against the deterministic minimax opponent (deterministic_play): evaluation and training data.
 """
 import deterministic_play
-import numpy as np
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor
 
+from fast_board import sims_for_state
 from mcts_cpp import BOARD_SIZE, MCTS, PooledEvaluator, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH, POOLED_TARGET_BATCH
-from legacy_trainer_basic import augment_sample
-from board_encoding import board_to_input_array
-from naps_common import mixed_value_target, sims_for_state
-from naps_openings import _ALL_CELLS, _OPENING_SQUARES
+from board_encoding import augment_sample, board_to_input_array
+from naps_common import mixed_value_target
+from naps_selfplay import pick_training_move
+from naps_openings import ALL_CELLS, OPENING_SQUARES
 
 
 def _play_vs_deterministic(model, device, num_simulations, mcts_plays_x, boosted_sims=None, boost_threshold=0,
@@ -69,32 +69,16 @@ def evaluate_vs_deterministic(model, device, num_games=10, num_simulations=50, b
                                c_puct=1.414, boost_when_narrow=False, max_workers=None, pooled_evaluator=None,
                                all_cells=None):
     """
-    Plays num_games against deterministic_play (minimax/alpha-beta), alternating
-    who moves first, and returns (win_rate, draw_rate, loss_rate) from the
-    trained model's perspective. This is the direct metric for the research
-    goal ("beat the deterministic algorithm").
+    num_games against deterministic_play (alternating who starts); returns (win, draw, loss) rates for the model --
+    the direct measure of "beat the deterministic algorithm".
 
-    Tries the multiprocessing implementation (mp_eval.evaluate_vs_deterministic_mp)
-    first -- each game gets a real OS process instead of a thread, which
-    matters because deterministic_play (the pure-Python minimax opponent)
-    holds the GIL for its whole call and was found to fully serialize the
-    threaded implementation down to ~1 CPU core regardless of thread count
-    (the C++ MCTS engine itself already releases the GIL correctly and was
-    not the bottleneck). Verified against the threaded path at the real
-    production shape (20 games, 600/1350 sims, live checkpoint): identical
-    win/draw/loss rates (deterministic/no-noise/greedy + fixed openings is a
-    pure function of model weights, so crossing a process boundary changes
-    no numeric value), 2.35x wall-clock speedup. Falls back to the original
-    threaded implementation on ANY exception from the mp path (process spawn
-    failure, a worker dying mid-game, GPU OOM in the evaluator process,
-    etc.) so a transient multiprocessing hiccup degrades this call to
-    "slower" rather than crashing or hanging an unattended training run.
-
-    pooled_evaluator is only used by the threaded fallback path; the mp path
-    has no equivalent parameter (see _evaluate_vs_deterministic_threaded).
+    Tries mp_eval.evaluate_vs_deterministic_mp first (one process per game: the minimax opponent held the GIL and
+    reduced the threaded version to about one core; checked identical results, 2.35x faster) and falls back to the
+    threaded version on any exception, so a multiprocessing problem makes the call slower, never crashes the run.
+    pooled_evaluator is used only by the threaded version.
     """
     model.eval()
-    all_cells = all_cells if all_cells is not None else _ALL_CELLS
+    all_cells = all_cells if all_cells is not None else ALL_CELLS
     try:
         from mp_eval import evaluate_vs_deterministic_mp
         return evaluate_vs_deterministic_mp(
@@ -116,28 +100,15 @@ def _evaluate_vs_deterministic_threaded(model, device, num_games=10, num_simulat
                                          boost_threshold=0, c_puct=1.414, boost_when_narrow=False,
                                          max_workers=None, pooled_evaluator=None, all_cells=None):
     """
-    Original ThreadPoolExecutor + PooledEvaluator implementation, kept as the
-    safety-net fallback for evaluate_vs_deterministic (see its docstring).
+    The threaded evaluate_vs_deterministic (the fallback). Games share one eval_cache and one PooledEvaluator; that
+    changes only speed, because a no-noise game against minimax is a pure function of weights, opening and settings
+    and the cache only memoizes it.
 
-    Games run concurrently across a ThreadPoolExecutor with a shared
-    eval_cache and PooledEvaluator, the same pattern
-    generate_mcts_vs_deterministic_data already uses (see its docstring) --
-    this is behavior-preserving for game OUTCOMES: no-noise/greedy MCTS vs
-    deterministic minimax is a pure function of (model weights, opening,
-    settings), and eval_cache only memoizes that pure function (a cache hit
-    returns the exact same value a fresh compute would have) -- only
-    wall-clock time changes.
-
-    pooled_evaluator: reuse a caller-owned PooledEvaluator wrapping this
-    exact `model` object if the caller already has one running; when
-    omitted (the default), a fresh one scoped to just this call is
-    constructed and torn down before returning, so this function stays
-    usable standalone. NOTE: the training loop's own pooled_evaluator is
-    scoped to gen_model, not model, so the existing call site cannot reuse
-    it.
+    pooled_evaluator: a caller's PooledEvaluator for this exact model; by default one is made for this call and
+    stopped before returning. (The training loop's own evaluator wraps gen_model, not model, so it cannot be reused.)
     """
     model.eval()
-    all_cells = all_cells if all_cells is not None else _ALL_CELLS
+    all_cells = all_cells if all_cells is not None else ALL_CELLS
     max_workers = max_workers or max(1, min(num_games, os.cpu_count() or 1))
     eval_cache = {}
     owns_pooled_evaluator = pooled_evaluator is None and device.type == "cuda"
@@ -168,7 +139,7 @@ def _evaluate_vs_deterministic_threaded(model, device, num_games=10, num_simulat
     return wins / n, draws / n, losses / n
 
 
-def _sample_vs_det_max_depth(epoch):
+def sample_vs_det_max_depth(epoch):
     """
     Opponent-depth ladder for vs-Deterministic training-data generation
     ONLY (never evaluate_vs_deterministic or run_gating_check, which must
@@ -209,36 +180,23 @@ def format_by_depth(by_depth):
                       for d, t in sorted(by_depth.items()))
 
 
-def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_plays_x,
+def play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_plays_x,
                                           boosted_sims=None, boost_threshold=0,
                                           temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25,
                                           c_puct=1.414, eval_cache=None, boost_when_narrow=False,
                                           pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
                                           opening=None, det_max_depth=deterministic_play.MAX_DEPTH):
     """
-    Plays one training game between the in-memory model (MCTS with noise
-    and temperature sampling -- same exploration settings as self-play) and
-    deterministic_play's minimax AI. Only the MCTS side's decisions are
-    recorded, in the same (board_3d, player_turn, target_policy_map) format
-    _play_one_mcts_game produces, so callers can mix both into one buffer.
+    One training game: the model (with self-play's noise and temperature) against deterministic_play's minimax.
+    Only the model's moves are recorded, in play_one_mcts_game's format, so both can share a buffer. Self-play
+    alone never meets the tactics this opponent uses, so the model could stay blind to them.
 
-    Pure self-play never has to defend against or attack the specific
-    tactics deterministic_play actually uses, so the model can stay blind to
-    patterns that opponent exploits no matter how long training runs.
-    Mixing in games against it directly closes that loop.
+    opening (row, col): X's first stone is placed there first -- the opponent is deterministic, so without it every
+    game with the same side would replay one line. det_max_depth (see sample_vs_det_max_depth) is the opponent's
+    search depth; 0 means a uniformly random legal move.
 
-    deterministic_play is deterministic, so without `opening` every game
-    with the same mcts_plays_x replays the same line -- see
-    _play_vs_deterministic's docstring. Passing a (row, col) `opening`
-    pre-places X's first move there before normal play resumes.
-
-    det_max_depth (see _sample_vs_det_max_depth) sets the deterministic
-    opponent's minimax search depth for this game; 0 means it plays a
-    uniformly random legal move instead of calling minimax at all.
-
-    Returns (history, outcome, mcts_result): outcome uses the same
-    X=1/O=-1/draw=0 convention as self-play; mcts_result is
-    'mcts'/'det'/'draw' from the trained model's perspective.
+    Returns (history, outcome, result): outcome X=1 / O=-1 / draw=0 as in self-play; result is 'mcts' / 'det' /
+    'draw' from the model's side.
     """
     mcts_player = 'X' if mcts_plays_x else 'O'
     mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
@@ -247,7 +205,7 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
     history = []
     # MCTS-side decisions made so far (full or fast) -- drives temperature;
     # equals len(history) at full_search_prob=1.0 (PCR fix, see
-    # _play_one_mcts_game's docstring).
+    # play_one_mcts_game's docstring).
     mcts_decisions = 0
     outcome = 0
 
@@ -268,35 +226,13 @@ def _play_one_mcts_vs_deterministic_game(model, device, num_simulations, mcts_pl
             break
 
         if current_player == mcts_player:
-            num_empty = sum(1 for row in board for cell in row if cell == ' ')
-            is_full_search = full_search_prob >= 1.0 or random.random() < full_search_prob
-            if is_full_search:
-                sims_this_move = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
-            else:
-                sims_this_move = fast_sims or max(1, num_simulations // 6)
-            root = mcts.search(board, current_player, model, device,
-                                num_simulations=sims_this_move, add_noise=is_full_search,
-                                dirichlet_alpha=dirichlet_alpha, noise_weight=noise_weight)
-
-            if not root.children:
+            move = pick_training_move(mcts, board, current_player, model, device, mcts_decisions, num_simulations,
+                                      boosted_sims, boost_threshold, boost_when_narrow, full_search_prob, fast_sims,
+                                      temperature_moves, dirichlet_alpha, noise_weight)
+            if move is None:
                 outcome = 0
                 break
-
-            total_visits = sum(child.n_visits for child in root.children.values())
-            target_policy_map = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
-            for act, child in root.children.items():
-                r, c = divmod(act, BOARD_SIZE)
-                target_policy_map[r, c] = child.n_visits / total_visits if total_visits > 0 else 0.0
-
-            move_count = mcts_decisions
-            actions = list(root.children.keys())
-            visits = np.array([root.children[a].n_visits for a in actions], dtype=np.float32)
-            if move_count < temperature_moves:
-                probs = visits / visits.sum()
-                chosen_act = np.random.choice(actions, p=probs)
-            else:
-                chosen_act = actions[np.argmax(visits)]
-            r, c = divmod(chosen_act, BOARD_SIZE)
+            r, c, is_full_search, target_policy_map, root = move
             mcts_decisions += 1
 
             if is_full_search:
@@ -341,11 +277,11 @@ def generate_mcts_vs_deterministic_data(model, device, num_games=6, num_simulati
     the replay buffer includes direct experience of the exact opponent
     evaluate_vs_deterministic measures against.
 
-    Each game cycles through _OPENING_SQUARES by game index (deterministic_play
+    Each game cycles through OPENING_SQUARES by game index (deterministic_play
     is deterministic, so without this every game with the same side
     assignment would replay the same line -- see _play_vs_deterministic's
     docstring) and samples its own opponent search depth from the
-    epoch-keyed ladder in _sample_vs_det_max_depth -- evaluate_vs_deterministic
+    epoch-keyed ladder in sample_vs_det_max_depth -- evaluate_vs_deterministic
     and run_gating_check are untouched by this and always keep the fixed
     depth-2 opponent.
     """
@@ -361,14 +297,14 @@ def generate_mcts_vs_deterministic_data(model, device, num_games=6, num_simulati
     # both depth 1 and depth 2, so the aggregate was hiding a flat zero
     # against any real opponent. Split it so progress is actually visible.
     by_depth = {}
-    game_depths = [_sample_vs_det_max_depth(epoch) for _ in range(num_games)]
+    game_depths = [sample_vs_det_max_depth(epoch) for _ in range(num_games)]
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [pool.submit(_play_one_mcts_vs_deterministic_game, model, device, num_simulations,
+        futures = [pool.submit(play_one_mcts_vs_deterministic_game, model, device, num_simulations,
                                 i % 2 == 0, boosted_sims, boost_threshold,
                                 temperature_moves, dirichlet_alpha, noise_weight, c_puct, eval_cache,
                                 boost_when_narrow, pooled_evaluator, full_search_prob, fast_sims,
-                                _OPENING_SQUARES[(i + epoch) % len(_OPENING_SQUARES)],
+                                OPENING_SQUARES[(i + epoch) % len(OPENING_SQUARES)],
                                 game_depths[i])
                    for i in range(num_games)]
         for depth, future in zip(game_depths, futures):

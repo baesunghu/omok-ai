@@ -1,48 +1,20 @@
-"""
-Multiprocessing-based formal evaluation (evaluate_vs_deterministic) for the
-11x11 hybrid MCTS pipeline.
+"""evaluate_vs_deterministic in worker processes. naps_vsdet.evaluate_vs_deterministic tries this first and falls
+back to its threaded version if anything here raises.
 
-Why this exists: evaluate_vs_deterministic's existing ThreadPoolExecutor +
-PooledEvaluator implementation caps effective CPU usage at roughly 1 of 8
-logical cores in production, because deterministic_play (the pure-Python
-minimax opponent every game plays against) holds the GIL for the entirety of
-its own call and therefore fully serializes across worker threads -- the C++
-MCTS engine itself already releases the GIL correctly during its own tree
-search (verified directly against the deployed mcts_core.pyd source), so that
-part was never the bottleneck. Giving each concurrent game a real OS process
-instead of a thread routes around the GIL entirely for the part that was
-actually serializing. Measured on this hardware (GTX 1050, 8 logical cores):
-~2.5x wall-clock speedup on a realistic vs-Deterministic game-generation
-workload at the live sim budget, with bit-for-bit-identical search outputs
-(deterministic/no-noise/greedy mode is a pure function of model weights +
-opening + settings, so crossing a process boundary changes no numeric value).
+Why: with threads, the minimax opponent (then pure Python) held the GIL for its whole move, so the evaluation used
+about one of eight cores; the C++ search already released it. One process per concurrent game measured ~2.5x faster
+on the training laptop, with identical results (the evaluation plays without noise, so a game is a pure function of
+weights, opening and settings).
 
-Architecture: a worker-pool of up to os.cpu_count() processes each running
-worker_loop, pulling (game_idx, mcts_plays_x, opening) jobs from a shared
-queue until exhausted -- this avoids spawning more OS processes than there
-are cores when num_games (e.g. eval_games=20) exceeds the core count. Every
-worker's own C++ tree search (mcts_core.mcts_search_batched) and
-board-to-plane conversion happen locally (CPU-bound, parallel across
-processes, no CUDA). NN evaluation is routed to ONE centralized GPU-owning
-evaluator process over a persistent shared-memory channel per worker
-(see WorkerChannel/ChannelHandle), mirroring PooledEvaluator's own
-accumulate-until-target_batch-or-max_wait batching loop but across a process
-boundary instead of a thread boundary.
+How: up to os.cpu_count() worker processes run worker_loop, taking (game, side, opening) jobs from one queue. Each
+does its own C++ search and board encoding; network evaluations go to one GPU-owning evaluator process over a
+shared-memory channel per worker (WorkerChannel / ChannelHandle), batched like PooledEvaluator.
 
-Safety: evaluate_vs_deterministic_mp raises on ANY setup failure or a worker
-dying without completing its assigned games (rather than hanging or silently
-returning wrong stats), so its caller (evaluate_vs_deterministic in
-legacy_trainer_mcts.py) can fall back to the existing, long-proven threaded
-implementation. On an unattended 20000-epoch job, a periodic eval call
-failing over to the slower-but-solid path is fine; a hang is not.
+Safety: any setup failure, or a worker dying before finishing its games, raises instead of hanging or returning wrong
+numbers, so the caller can fall back.
 
-Not yet ported: generate_mcts_self_play_data, generate_mcts_vs_deterministic_data,
-generate_mcts_vs_league_data, and run_gating_check still use the threaded
-implementation -- their game-generation loops need per-move policy targets
-(training data) or a model-vs-model matchup (no GIL-heavy minimax opponent in
-the loop, so the same speedup would not obviously apply), which this module
-does not attempt. See the investigation report this was built from for the
-full reasoning on why those were left out of this pass.
+Only the evaluation is here. The training-game generators need per-move policy targets or play model against model
+(no GIL-bound opponent), so they were not ported.
 """
 import multiprocessing as mp
 import os
@@ -51,9 +23,8 @@ import time
 
 import numpy as np
 
-from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win, fast_check_draw
+from fast_board import BOARD_SIZE, NUM_CELLS, WIN_LENGTH, fast_check_win, fast_check_draw, sims_for_state
 
-NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 NUM_INPUT_CHANNELS = 5
 MAX_BATCH = 20  # eval_batch_size=16 in production + headroom
 
@@ -225,23 +196,6 @@ def make_remote_eval_batch_fn(handle, request_queue, board_to_input_array_from_n
 
 
 # ============================================================
-# sims_for_state -- duplicated on purpose to keep worker processes torch-free.
-# MUST stay identical to legacy_trainer_mcts.sims_for_state; that function is
-# the source of truth if the two ever need to be reconciled.
-# ============================================================
-def sims_for_state(num_empty, base_sims, boosted_sims=None, boost_threshold=0, boost_when_narrow=False):
-    if not boosted_sims:
-        return base_sims
-    if boost_when_narrow:
-        sims = boosted_sims if num_empty <= boost_threshold else base_sims
-    else:
-        sims = boosted_sims if num_empty > boost_threshold else base_sims
-    if num_empty > NUM_CELLS - 10:
-        sims = max(sims, boosted_sims)
-    return sims
-
-
-# ============================================================
 # Worker process: pulls jobs from a shared queue until exhausted
 # ============================================================
 def worker_loop(worker_id, job_queue, result_queue, req_shm_name, probs_shm_name, values_shm_name,
@@ -321,7 +275,7 @@ def evaluate_vs_deterministic_mp(model, device, num_games, num_simulations, boos
                                   det_max_depth=2, all_cells=None, max_workers=None,
                                   target_batch=48, max_wait=0.004, tmp_ckpt_dir="model"):
     """
-    Drop-in alternative to legacy_trainer_mcts.evaluate_vs_deterministic's
+    Drop-in alternative to naps_vsdet.evaluate_vs_deterministic's
     internals: same (win_rate, draw_rate, loss_rate) return, same opening
     assignment (game i -> all_cells[i % len(all_cells)], mcts_plays_x = i%2==0)
     so per-game outcomes are directly comparable to the threaded

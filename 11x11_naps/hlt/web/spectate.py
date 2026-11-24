@@ -34,7 +34,7 @@ engine_mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(engine_mod)
 engine_mod.set_vcf(10, 3000)
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "shared"))   # shared/: code common to every run
-from board_encoding import board_to_input_array_from_numeric
+from board_encoding import make_ev
 from nets import GomokuNetV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
 
@@ -113,14 +113,7 @@ def get_net(key):
         return net
 
 
-def make_ev(net):
-    def ev(bs, ps):
-        t = torch.from_numpy(np.stack([board_to_input_array_from_numeric(b, p) for b, p in zip(bs, ps)])).float().to(dev)
-        with torch.inference_mode():
-            pl, v = net(t)
-        return (torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1),
-                v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1))
-    return ev
+
 
 
 # ---- match state -------------------------------------------------------
@@ -184,7 +177,7 @@ def play_one(gen):
         S["board"] = [[' '] * N for _ in range(N)]
         S.update(moves=[], turn='X', over=False, result=None, winrate=[], last=None, error=None)
         sims, keys = S["sims"], {'X': S["black"], 'O': S["white"]}
-    evs = {p: make_ev(get_net(k)) for p, k in keys.items()}
+    evs = {p: make_ev(get_net(k), dev) for p, k in keys.items()}
     engines = {'X': engine_mod.MCTSEngine(), 'O': engine_mod.MCTSEngine()}
     while True:
         with LOCK:

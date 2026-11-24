@@ -76,12 +76,16 @@ v3의 성과(대등점, 문제 통과, 정오)는 측정된 사실이다. 다만
 | `alphago_lee.py` | `shared/board_encoding.py` (판 → 입력 평면) + `shared/nets.py` (V1 신경망) |
 | `alphago_lee_v2_seblock.py`, `alphago_lee_v3_survival.py` | `shared/nets.py` |
 | `AlphaZeroTicTacToe`, `AlphaZeroTicTacToeV2`, `AlphaZeroTicTacToeV3` (신경망 클래스) | `GomokuNetV1`, `GomokuNetV2`, `GomokuNetV3` |
-| `alphazero_mcts_make_lrfix.py` (NAPS 학습 본체, 4,080행 한 파일) | `shared/naps_trainer.py` (학습 루프) + `shared/naps_*.py` 8개 (게이트, 리그, 어려운 국면 등) |
+| `alphazero_mcts_make_lrfix.py` (NAPS 학습 본체, 4,080행 한 파일) | `shared/naps_trainer.py` (학습 루프) + `shared/naps_*.py` 10개 (게이트, 리그, 어려운 국면 등) |
 | `alphazero_mcts_lrfix.py` (C++ 엔진을 쓰는 MCTS) | `shared/mcts_cpp.py` |
-| `alphazero_mcts.py` (파이썬 MCTS) | `shared/mcts_python.py` |
-| `alphago_lee_make.py`, `alphazero_mcts_make.py` (옛 학습기) | `shared/legacy_trainer_basic.py`, `shared/legacy_trainer_mcts.py` |
+| `alphazero_mcts.py` (파이썬 MCTS) | `archive/shared/mcts_python.py` (더 쓰지 않음) |
+| `alphago_lee_make.py`, `alphazero_mcts_make.py` (옛 학습기) | `archive/shared/legacy_trainer_basic.py`, `archive/shared/legacy_trainer_mcts.py` (더 쓰지 않음) |
 | `determinisic_play.py` | `shared/deterministic_play.py` |
+| `selfplay_mp_unified.py` (통합 대국 풀) | `shared/selfplay_pool.py` + `selfplay_pool_tasks.py` + `selfplay_pool_evaluator.py` |
+| `selfplay_mp.py` (예전 자가대국 풀, 예비 경로) | `shared/selfplay_pool_fallback.py` |
 | `_restart_train.py`의 본문 | `shared/train_run.py` (실행 폴더의 `_restart_train.py`는 이것을 부른다) |
+| 다른 파일이 쓰는데 `_`로 시작하던 이름 39개 (`_play_one_mcts_game`, `_OPENING_SQUARES`, `_fork_mask` 등) | 앞의 `_`를 뺀 이름 (`play_one_mcts_game`, `OPENING_SQUARES`, `fork_mask` 등). `naps_common._SUFFIX`는 `FILE_SUFFIX` |
+| 대국 풀이 `naps_trainer`에서 가져다 쓰던 게임 함수 (`prod.X`) | `shared/naps_games.py` (`naps_games.X`) |
 | 실행 폴더마다 한 벌씩 있던 코드 | `shared/` 한 벌 + 실행 폴더의 `run_config.py` |
 
 코드 주석에 붙어 있던 날짜와 `(user)` 표시는 지우고 설명만 남겼다. 원래 주석은 [code_history.md](code_history.md)에 파일·함수별로 옮겨 두었다.
@@ -90,6 +94,7 @@ v3의 성과(대등점, 문제 통과, 정오)는 측정된 사실이다. 다만
 
 ## 확인하지 못한 것
 
+- `shared/mp_eval.py`의 평가 프로세스는 V1 신경망을 만든다. 그래서 V3 체크포인트를 읽지 못해 늘 스레드 경로로 넘어가는 것으로 보인다. 학습 설정에서는 이 평가를 부르지 않아(`eval_interval=0`) 실제로 돌려 확인하지 않았고, 동작을 바꾸지 않기 위해 고치지 않았다.
 - ep960 래더 승격 확률: `archive/paper_handover.md` 안에서 87%와 86%로 다르다. 원 기록(학습 로그)이 저장소에 없다.
 - Kaggle 계획(`11x11_v2/kaggle/kaggle_plan.py`)의 시드 4·5, E 팔(데이터 비용 통제), G 팔(적응형 메기): 결과 기록이 저장소에 없다.
 - `CATFISH_report.md` 참고문헌 11~13번의 서지 표기.

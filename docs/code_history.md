@@ -2,7 +2,7 @@
 
 2026-11 정리에서 코드 주석의 날짜와 `(user)` 표시를 지우고, 원래 주석을 여기에 그대로 옮겼다.
 코드에는 설명만 남아 있다. 줄 번호는 정리 직전 기준이라 지금 파일과 조금 어긋날 수 있다. 함수 이름으로 찾는 것이 정확하다.
-옛 학습기(`shared/legacy_trainer_*.py`)와 `archive/`의 주석은 원래대로 두었다.
+옛 학습기(`legacy_trainer_*.py`, 지금은 `archive/shared/`)와 `archive/`의 주석은 원래대로 두었다.
 
 ## `11x11_naps/gomokuwithai_match.py`
 
@@ -1921,3 +1921,1350 @@
 **`shared/watchdog_.py`**
 
 - 26행: `# 15x15: "_restart_train15.py", distinct from the 11x11 trainer (2026-10-14)`
+
+## 줄인 설명의 원문 (2026-11 3차 정리)
+
+핵심 학습 모듈의 긴 docstring과 주석 42개를 짧게 다시 쓰면서 지운 원문이다. 줄 번호는 다시 쓰기 직전 기준이다.
+일지 투 표현("this session", "today" 등)과 머리말의 `(날짜, user: ...)` 인용을 지운 작은 수정은 git 기록에 있다.
+
+**`shared/board_encoding.py`** _fork_mask_python (docstring)
+
+```text
+    """Returns a (BOARD_SIZE, BOARD_SIZE) float32 array with 1.0 at every
+    empty cell where placing a curr_plane-owner stone there would create 2
+    or more distinct empty cells that would each independently complete a
+    WIN_LENGTH-in-a-row on the following move (a "double threat" / fork).
+
+    O(num_lines) instead of the naive O(num_empty_cells * num_lines)
+    (simulate-every-candidate-then-rescan-everything) approach -- the naive
+    version was the dominant cost of MCTS search on the 10x10/11x11 boards
+    (measured: fork detection alone was ~60% of total simulation time).
+    Numerically verified identical to the naive simulate-per-candidate
+    version on 600+ random boards plus hand-built edge cases (including a
+    board with pre-existing separate threats before any hypothetical
+    placement, which the naive version's ">=2 total lit cells" definition
+    also counts).
+
+    Key fact this relies on: if a line already has exactly one empty cell
+    and candidate cell A (currently empty) belongs to that line, A MUST BE
+    that one empty cell -- so any line through A that is already an
+    immediate-win line has A itself as its target. That means placing at A
+    only removes A from the pre-existing lit set (if A itself was already
+    a winning move) and otherwise leaves every other pre-existing threat
+    untouched; the only NEW threats placing at A can create come from
+    lines that currently have exactly WIN_LENGTH-2 of curr's stones and
+    exactly 2 empty cells (one of which is A) -- filling A then completes
+    that line to WIN_LENGTH-1 with the OTHER empty cell as the new target.
+
+    2026-09-16: the per-candidate combination used to be a Python loop over
+    every empty cell (up to ~120 on a sparse board) that rebuilt a new set
+    via `(baseline_lit - {a}) | threats.get(a, set())` on EVERY iteration --
+    profiled as the single largest cost in the whole dataset-generation
+    pipeline (~74s of a 158s run, ~47%; board_to_input_array as a whole was
+    77%), because set construction/union has real per-call overhead even
+    when the sets involved are tiny. Rewritten to be fully vectorized: the
+    identity len((baseline_lit - {a}) | T) = baseline_count - [a in
+    baseline_lit] + len(T) - len(T & baseline_lit) (valid because `a` is
+    never a member of its own threat set T, by construction) is computed as
+    plain numpy array arithmetic over all cells at once -- the only
+    remaining Python loop is over `threats.items()`, bounded by ~2x the
+    count of "two-empty-cell" lines, not by empty-cell count. Verified
+    numerically identical to the original on 966+ boards (random densities
+    0-120 stones + hand-built edge cases including multiple simultaneous
+    baseline threats); measured ~1.25x faster in isolation, and this
+    function's overall dominance in board encoding means that carries
+    through to end-to-end dataset generation and self-play.
+    """
+```
+
+**`shared/fast_board.py`** sims_for_state (docstring)
+
+```text
+    """
+    A sim-budget diagnostic on this project's 5x5 board (see training
+    conversation) found a fixed budget badly under-converged on wide-open
+    boards but already converged on narrower ones: at 25 empty cells, the
+    top move's visit share was still climbing at 1600 sims (49% -> 79% from
+    100 -> 1600); at 14 empty cells, it was flat from 100 all the way to
+    1600 sims (~38%, unchanged). So only spend extra search while the board
+    is still wide open -- past boost_threshold empty cells, more search
+    doesn't change the answer, it just costs time.
+
+    boost_when_narrow=False (default) keeps that exact behavior. On 3x3,
+    a diagnosed critical defensive move stayed stuck at ~1/100 visits all
+    session, in the mid/late game (few empty cells) -- the opposite end
+    from what the 5x5 finding above boosts, since 3x3's branching factor
+    (<=9) is already narrower than 5x5's "already converged" 14-empty case
+    everywhere. boost_when_narrow=True inverts the comparison so extra sims
+    go to low-num_empty states instead, targeting that specific bug.
+
+    That inversion is all-or-nothing (narrow XOR open), so once 5x5 started
+    passing boost_when_narrow=True (for its own late-game precision), it
+    silently lost the original wide-open boost above -- confirmed still
+    needed by a live diagnostic: at 23 empty cells a 100-sim search picked a
+    move MCTS itself ranks far worse than the alternative it converges to
+    given 600+ sims (visit share 24% -> 92% for the better move as sims
+    100->2400, its q swinging from -0.37 to -0.90 in the eventual mover's
+    own favor), and that misjudged move was directly upstream of a loss.
+    So independently of the boost_when_narrow branch above, also always
+    boost the wide-open end (num_empty > NUM_CELLS - 10, i.e. before the
+    10th stone is placed) to boosted_sims -- covers both ends at once
+    instead of forcing a choice between them.
+    """
+```
+
+**`shared/mcts_cpp.py`** PooledEvaluator (docstring)
+
+```text
+    """
+    Combines eval_batch_fn calls from multiple concurrent self-play worker
+    threads into fewer, larger GPU forward passes. Measured on this machine
+    (GTX 1050): 6 threads each issuing independent batch=8 calls only hit
+    2.17x aggregate throughput (concurrent GPU access partly serializes,
+    unlike CPU cores) -- pooling those into shared batch~48 calls amortizes
+    per-call overhead (kernel launch, .cpu() sync) across more samples.
+
+    One dedicated background thread owns every model() call, so there is no
+    lock contention or race on who runs a batch. Worker threads call
+    submit() and block on a per-request threading.Event; the background
+    thread accumulates requests from the queue until either target_batch
+    samples are pending or max_wait seconds pass since the last flush, then
+    runs one batched forward pass and wakes every waiting thread with its
+    slice of the result.
+
+    Safe to construct once per training run (not per-epoch): it holds a
+    reference to the model object, not a snapshot of its weights, so it
+    keeps seeing the current weights across epochs as optimizer.step()
+    mutates the same nn.Module in place. Call stop() only at process exit.
+    """
+```
+
+**`shared/mcts_cpp.py`** MCTS.__init__ (docstring)
+
+```text
+        """
+        eval_batch_size=1 (default) runs the original one-leaf-per-simulation
+        search, unchanged. eval_batch_size>1 groups that many simulations'
+        selection phases together (via standard virtual loss) and sends their
+        leaves through the model in one batched forward call -- measured
+        ~1.5-2x faster self-play throughput at batch_size=4-8. This trades a
+        small amount of search-order fidelity for speed (a simulation's path
+        selection can see virtual-loss-inflated visit counts from other
+        in-flight simulations in the same group), so it is only wired into
+        the training self-play/vs-Det generation paths, not the formal
+        evaluate_vs_deterministic metric or the human-play API, which stay on
+        the exact eval_batch_size=1 sequential path.
+
+        shared_cache=None (default) keeps the original behavior: a private
+        cache cleared at the start of every search() call. Pass a dict to
+        share it across many search() calls instead (e.g. one dict per
+        training epoch, reused across every game and every move generated in
+        that epoch) -- valid because (board, player) -> (probs, value) is a
+        pure function of the model's weights, which are frozen for the whole
+        self-play/vs-Det generation phase each epoch. The caller is
+        responsible for building a fresh dict every epoch, since
+        optimizer.step() changes the weights and would otherwise make the
+        cache stale.
+        """
+```
+
+**`shared/mcts_cpp.py`** MCTS._cpp_eval_fn (docstring)
+
+```text
+        """Single-board eval callback for _mcts_core.mcts_search. Routes
+        through self._eval_cache first so eval_batch_size==1 callers keep the
+        exact same per-call-cleared-cache semantics as the pure-Python path
+        (no eval_batch_size==1 call site ever passes a shared_cache, so this
+        cache is always freshly cleared for this search() call anyway).
+
+        mcts_core.pyd (currently built from cpp_mcts\\mcts_core_tree_reuse.cpp
+        -- a stateful MCTSEngine with persistent-tree reuse, itself stacked
+        on cpp_mcts\\mcts_core_pruned_deploy.cpp) hands the leaf board to
+        Python as a (BOARD_SIZE, BOARD_SIZE) numpy int8 array (0=empty, 1=X, 2=O)
+        instead of a nested list of "X"/"O"/" " strings, so this routes
+        through board_to_input_array_from_numeric (integer comparisons)
+        instead of board_to_input_tensor (numpy string-equality), and the
+        cache key is board_arr.tobytes() instead of a tuple-of-tuples of
+        Python strings -- much cheaper to build/hash for this hot per-leaf
+        path (measured ~2.8x faster leaf-conversion in isolation)."""
+```
+
+**`shared/mcts_cpp.py`** MCTS._search_cpp (docstring)
+
+```text
+        """Delegates the whole search to the persistent C++ engine
+        (self._cpp_engine, one MCTSEngine per MCTS object -- see __init__),
+        then reconstructs a plain MCTSNode tree (root + direct children only
+        -- the only depth every call site actually reads) so every caller
+        of MCTS.search() keeps working unchanged.
+
+        Calling search()/search_batched() on the SAME self._cpp_engine every
+        ply (rather than a stateless module-level function) is what makes
+        tree reuse work: the engine itself decides, from a board diff
+        against what it last saw, whether to promote an already-explored
+        subtree or start fresh -- transparent to this method and to every
+        caller. See MCTSEngine's class docstring in
+        cpp_mcts/mcts_core_tree_reuse.cpp for the full design."""
+```
+
+**`shared/mp_eval.py`** <module> (docstring)
+
+```text
+"""
+Multiprocessing-based formal evaluation (evaluate_vs_deterministic) for the
+11x11 hybrid MCTS pipeline.
+
+Why this exists: evaluate_vs_deterministic's existing ThreadPoolExecutor +
+PooledEvaluator implementation caps effective CPU usage at roughly 1 of 8
+logical cores in production, because deterministic_play (the pure-Python
+minimax opponent every game plays against) holds the GIL for the entirety of
+its own call and therefore fully serializes across worker threads -- the C++
+MCTS engine itself already releases the GIL correctly during its own tree
+search (verified directly against the deployed mcts_core.pyd source), so that
+part was never the bottleneck. Giving each concurrent game a real OS process
+instead of a thread routes around the GIL entirely for the part that was
+actually serializing. Measured on this hardware (GTX 1050, 8 logical cores):
+~2.5x wall-clock speedup on a realistic vs-Deterministic game-generation
+workload at the live sim budget, with bit-for-bit-identical search outputs
+(deterministic/no-noise/greedy mode is a pure function of model weights +
+opening + settings, so crossing a process boundary changes no numeric value).
+
+Architecture: a worker-pool of up to os.cpu_count() processes each running
+worker_loop, pulling (game_idx, mcts_plays_x, opening) jobs from a shared
+queue until exhausted -- this avoids spawning more OS processes than there
+are cores when num_games (e.g. eval_games=20) exceeds the core count. Every
+worker's own C++ tree search (mcts_core.mcts_search_batched) and
+board-to-plane conversion happen locally (CPU-bound, parallel across
+processes, no CUDA). NN evaluation is routed to ONE centralized GPU-owning
+evaluator process over a persistent shared-memory channel per worker
+(see WorkerChannel/ChannelHandle), mirroring PooledEvaluator's own
+accumulate-until-target_batch-or-max_wait batching loop but across a process
+boundary instead of a thread boundary.
+
+Safety: evaluate_vs_deterministic_mp raises on ANY setup failure or a worker
+dying without completing its assigned games (rather than hanging or silently
+returning wrong stats), so its caller (evaluate_vs_deterministic in
+naps_vsdet.py) can fall back to the existing, long-proven threaded
+implementation. On an unattended 20000-epoch job, a periodic eval call
+failing over to the slower-but-solid path is fine; a hang is not.
+
+Not yet ported: generate_mcts_self_play_data, generate_mcts_vs_deterministic_data,
+generate_mcts_vs_league_data, and run_gating_check still use the threaded
+implementation -- their game-generation loops need per-move policy targets
+(training data) or a model-vs-model matchup (no GIL-heavy minimax opponent in
+the loop, so the same speedup would not obviously apply), which this module
+does not attempt. See the investigation report this was built from for the
+full reasoning on why those were left out of this pass.
+"""
+```
+
+**`shared/naps_gate.py`** run_gating_check (docstring)
+
+```text
+    """
+    Plays the currently-training `model` against the tracked best checkpoint
+    across all board-symmetry openings x both sides (fair games). If model's
+    score (win=1, draw=0.5) reaches GATE_PROMOTION_THRESHOLD, model's weights
+    become the new best. Bootstraps on first call (no best yet). `gen_model`
+    (the frozen model self-play/vs-Det/vs-League data generation actually
+    uses) is synced to the tracked best's weights on every promotion,
+    including the bootstrap case, so generation always reflects the latest
+    validated checkpoint.
+
+    Games run concurrently across a ThreadPoolExecutor (same pattern as
+    evaluate_vs_deterministic / the three generate_mcts_*_data functions).
+    Two frozen models are in play here (`model`, `best_model`), unlike the
+    single-model generation functions, so each gets its OWN PooledEvaluator
+    and its OWN shared eval_cache -- a cache entry or pooled batch is only
+    ever valid for the exact weights that produced it, so model's and
+    best_model's calls are never pooled or cached together. Behavior-
+    preserving for game OUTCOMES (see evaluate_vs_deterministic docstring
+    for why); only wall-clock time changes.
+    runner (2026-09-27): optional selfplay_pool task runner -- plays
+    the 20 gate games in the persistent multi-process pool (the two models
+    under separate eval tags/caches, same isolation as the two
+    PooledEvaluators below); any failure falls back to the threaded path.
+    Returns (win_rate, draw_rate, loss_rate, promoted).
+    """
+```
+
+**`shared/naps_hard_examples.py`** get_fork_mistake_samples (docstring)
+
+```text
+    """Per-epoch DEDICATED draw from the Hard-7 (general, template-free
+    fork) slice of the hard-mined pool, separate from
+    get_hard_example_samples' whole-pool draw.
+
+    2026-09-23: Hard-7 is currently a small fraction of the shared 8000-cap
+    pool (261/8000 the first time it was measured), so
+    get_hard_example_samples' n_positions=46 draw only pulls ~1-2 Hard-7
+    examples per epoch by chance -- measured directly
+    (hard7_adaptation_test.py): the live model still walked into 18/20
+    freshly-mined Hard-7 positions one epoch after mining, essentially no
+    real training exposure yet. This dedicated draw guarantees Hard-7 gets
+    real per-epoch volume regardless of how large the rest of the pool
+    (mostly Hard-5, outcome-based) grows around it. sample_weight=2.0
+    (higher than the shared draw's 1.5) since Hard-7 carries a confident
+    value=-1.0 label (see relabel_hard_examples), not a policy-only one.
+    """
+```
+
+**`shared/naps_hard_examples.py`** comment at line 148
+
+```text
+# Adds a second, outcome/disagreement-based mining criterion on top of the
+# pattern-only scan below (threat_gaps mirrors that scan's own "4-of-5+gap"
+# test exactly, factored out so both share one implementation). Approved
+# design (see this session's diagnosis workflow, agent "diag:hard-mining-spec"):
+#   Hard-1: a winning move was available (own threat_gaps) and not played.
+#   Hard-2: opponent had an immediate winning threat and it was not blocked.
+#   Hard-3: a fork (fork_geometries) was available/threatened and not taken/denied.
+#   Hard-5: position within the last HARD5_LOOKBACK of the mover's own plies
+#           in a game that mover actually lost.
+#   Hard-6 (an addition, not in the original spec): the search's own
+#           visit distribution came out suspicion-of-degenerate flat for its
+#           candidate count -- see entropy_complexity_probe.py's finding that
+#           ~19% of the live buffer is EXACTLY uniform over its candidate set,
+#           a PUCT round-robin degeneracy when prior+value are both flat.
+# Relabeling deliberately does NOT imitate the opponent's move (that review
+# rejected minimax-as-teacher: a shallow, fixed depth-2 opponent is most
+# likely to be WRONG exactly where the model's own search disagrees with it
+# most). Instead every flagged position is re-searched with the model's OWN
+# MCTS at a boosted sim count and the resulting visit distribution becomes
+# the policy target -- purely a bigger dose of the exact fix already applied
+# this morning (more search), targeted at the positions where today's smaller
+# production budget still isn't enough.
+```
+
+**`shared/naps_hard_examples.py`** comment at line 328
+
+```text
+        # 1.0 -> 0.95 (label smoothing). value_overfit_check.py
+        # found the live value head badly overconfident on FRESH,
+        # never-trained-on self-play games (held-out MSE 1.36 --
+        # worse than a constant-0 predictor; 61% of predictions
+        # saturated past |0.9|; the model's own "very confident"
+        # bucket only actually won ~67% of the time, not ~100%).
+        # Confident artificial labels (this class and Hard-7) are
+        # the most likely amplifier -- softening them off the
+        # tanh's saturated tail should reduce that overconfidence
+        # without giving up the corrective signal's direction.
+```
+
+**`shared/naps_hard_examples.py`** comment at line 340
+
+```text
+        # Unlike Hard-1/5, this is a confident NEGATIVE
+        # label, not a policy-only class -- letting `other` reach an
+        # unstoppable fork is a near-certain loss for `player`
+        # regardless of what happens afterward (session evidence:
+        # test_fork_prevention.py found 0/3 real HLT forks
+        # preventable even with a fresh 10000-sim search, so this
+        # needs a direct value correction, not just more search at
+        # relabel time). -1.0 -> -0.95: same label-smoothing
+        # rationale as Hard-1 above.
+        # REMOVED -- policy-only now (value=None). The
+        # board stored here is the position BEFORE the defender
+        # moves, where fork-safe replies exist, so "near-certain
+        # loss" was the value of the position AFTER a bad reply, not
+        # this one. pessimism_probe (14 Hard-7 positions, safe reply
+        # then best-vs-best playouts) measured raw value -0.78 vs an
+        # empirical outcome of -0.04: this label was teaching the
+        # value head that any fork threat means the game is lost.
+```
+
+**`shared/naps_league.py`** pick_league_opponent (docstring)
+
+```text
+    """Picks a frozen league opponent for this epoch's vs-League games.
+
+    With probability best_checkpoint_prob (checked first), loads the
+    tracked BEST_CHECKPOINT_PATH -- the strongest validated checkpoint,
+    always kept up to date by run_gating_check's promotion logic -- instead
+    of sampling from the snapshot pool at all. This guarantees a real,
+    strong sparring partner shows up in league play regardless of how the
+    plain recency-weighted draw below happens to fall.
+
+    Otherwise (or if that file doesn't exist), with probability
+    deep_history_prob (once epoch >= deep_history_min_epoch) samples
+    UNIFORMLY from the FULL snapshot history instead of just the most
+    recent pool_size -- the recency-weighted pool below permanently
+    excludes a snapshot once pool_size*10 epochs have passed it, so without
+    this the model would only ever face styles from its own recent past,
+    never its much-earlier (structurally weaker/more exploratory) self.
+    Kept low-probability and floored at deep_history_min_epoch so it stays
+    a small, occasional addition, not a replacement for the recency-weighted
+    pool that already does most of the work.
+
+    Otherwise, falls back to the existing snapshot pool: a random past
+    checkpoint snapshot from the most recent pool_size snapshots BY EPOCH
+    NUMBER, not filesystem mtime -- mtime can get scrambled by anything
+    that touches the files without touching training progress, e.g. a
+    backup pass or several snapshots written in quick succession right
+    around a restart. Sampling within that pool is recency-weighted
+    (linearly favoring the newest snapshot), not uniform, since the newest
+    snapshots are the most representative of the model's current style --
+    the whole point of league play is testing against strategies close to
+    what self-play might otherwise overfit to.
+
+    Returns (league_model, path), or None if the best-checkpoint load
+    failed, or if fewer than 2 snapshots exist yet -- too early in training
+    for league play to add anything over the fixed deterministic opponent
+    already in use."""
+```
+
+**`shared/naps_league.py`** play_one_mcts_vs_league_game (docstring)
+
+```text
+    """
+    Like play_one_mcts_vs_deterministic_game, but the opponent is a frozen
+    past checkpoint of this same model instead of deterministic_play. Both
+    sides' moves are recorded (the league opponent runs a real, always-full
+    search -- see league_sims below -- so its visit distribution is just as
+    valid a policy target as the live model's own): the live model was
+    previously only ever training on its own moves against the league pool,
+    never on the moves of the checkpoints that actually beat it, which
+    starved league-derived data of the one thing it could uniquely teach.
+
+    opening (see play_one_mcts_vs_deterministic_game): pre-places X's first
+    move there before normal play resumes. The league side's own moves use
+    add_noise=False (greedy), so when it moves first, every game with the
+    same side assignment would otherwise replay the identical opening move.
+
+    league_pooled_evaluator/league_eval_cache (2026-09-26, unified MP
+    game pool): route the LEAGUE side's leaf evaluations through a separate
+    evaluator/cache -- a worker process holds no weights, so it needs a
+    proxy that the GPU coordinator maps to the league model. Both default
+    to None, which keeps the original behavior (league side calls
+    league_model directly with a private per-search cache).
+
+    Returns (history, outcome, mcts_result): mcts_result is
+    'mcts'/'league'/'draw' from the live model's perspective.
+    """
+```
+
+**`shared/naps_openings.py`** sample_tactical_start (docstring)
+
+```text
+    """
+    Builds one REACHABLE board matching a random tactical curriculum pattern
+    (same "3-in-a-row + 1 gap" shapes as generate_tactical_examples), for
+    self-play to occasionally start a game from instead of always from an
+    empty board -- so self-play actually encounters this tactical family
+    (and must resolve it with its own search) more often than it arises
+    naturally from full-game rollouts. Unlike tactical_clutter, clutter
+    here is piece-count constrained: exactly 2 stones of the color NOT used
+    to fill the window, so count(X) == count(O) after placement -- the
+    parity a real alternating game reaching this position (with 'X' to
+    move next) requires. Mirrors _get_tactical_tensors' own convention
+    (board_to_input_tensor(board, 'X', ...)): 'X' is always the mover,
+    whether about to block an 'O' open line or complete its own.
+
+    This changes what positions self-play explores FROM, not what move is
+    labeled correct -- the move actually played is still whatever this
+    epoch's MCTS search (with its own noise/exploration) decides, same as
+    any other self-play game.
+
+    Returns (board, 'X'), or None if no valid placement is found within
+    max_attempts (caller should fall back to a normal empty-board start).
+    """
+```
+
+**`shared/naps_selfplay.py`** play_one_mcts_game (docstring)
+
+```text
+    """
+    Plays a single MCTS self-play game to completion and returns
+    (history, outcome), where history is a list of
+    (board_3d, player_turn, target_policy_map) tuples, pre-augmentation.
+    With return_ply_info=True it returns (history, outcome, ply_indices,
+    total_plies) instead: ply_indices[k] is the ply number (0-based, counted
+    from this game's start position) at which history[k] was recorded, and
+    total_plies is how many plies the game actually lasted. Needed for the
+    V3 survival target once Playout Cap Randomization skips recording
+    fast-search plies -- len(history) - k then undercounts the true
+    plies-to-end.
+
+    Builds its own MCTS() instance, but eval_cache (when passed) is shared
+    across every game and move in the calling epoch -- safe to call
+    concurrently from multiple worker threads because it's read-mostly
+    (dict get/set is GIL-atomic) and a pure function of the frozen weights
+    for the whole generation phase.
+
+    start_board/start_player (both or neither): start from this board
+    instead of empty -- see sample_tactical_start, used to occasionally
+    start self-play from a reachable "hard" tactical position instead of
+    always from scratch, so self-play encounters that family of positions
+    (and must resolve it with its own search) more often than it would
+    arise naturally from full-game rollouts.
+
+    full_search_prob/fast_sims: Playout Cap Randomization (KataGo). At each
+    move, with probability full_search_prob run the normal (possibly
+    boosted) search and record it as a training target; otherwise run a
+    cheap fast_sims-simulation search just to pick a move and advance the
+    game, without recording it (a low-sim search's visit distribution is
+    too noisy to be a good policy target). Same total game count spends
+    less average compute per move, so the freed budget can go to more
+    games/more full searches elsewhere. full_search_prob=1.0 (default)
+    disables this -- every move is a full search and recorded, matching
+    prior behavior exactly.
+
+    2026-09-26 PCR fixes (no effect at full_search_prob=1.0):
+      * temperature sampling is keyed on the number of plies actually played
+        (`ply`), not len(history) -- with PCR, len(history) only counts the
+        recorded (full-search) plies, which would have stretched the
+        temperature_moves exploratory window over ~1/full_search_prob times
+        as many real moves.
+      * fast searches run without Dirichlet noise (KataGo: fast searches
+        exist to play strong moves cheaply, not to explore -- they are never
+        recorded as training targets).
+    """
+```
+
+**`shared/naps_tactical_refresh.py`** refresh_mined_tactical_pool (docstring)
+
+```text
+    """
+    Periodic top-up for the real-game-mined tactical pool (see
+    _get_mined_tactical_tensors), called once per tactical_refresh cycle
+    (right before tactical_refresh itself) so the pool keeps tracking the
+    model's CURRENT play style instead of staying frozen at whatever epoch
+    it was first mined at.
+
+    Why this matters: the mined pool's board positions come from games the
+    model itself plays, so a one-time-only pool reflects only that
+    snapshot's blind spots (a self-referential limitation -- see project
+    discussion). As self-play's own exploration (Dirichlet noise + MCTS's
+    PUCT exploration bonus, which visits under-prior-weighted moves and
+    feeds back into training when they turn out good) gradually corrects
+    those blind spots over many epochs, re-mining periodically lets the
+    tactical curriculum's data source ride along with that improvement
+    instead of being stuck at its original snapshot forever.
+
+    Plays num_selfplay_games + num_vsdet_games real games with the CURRENT
+    model (threaded, mirroring generate_mcts_self_play_data's own
+    ThreadPoolExecutor pattern -- torch releases the GIL during the forward
+    pass so this is real concurrency), scans every ply of every game for
+    the same "4-of-5+gap" pattern tactical_windows() defines, appends any
+    matches to the on-disk pool at MINED_TACTICAL_EXAMPLES_PATH (capped at
+    `cap` total examples -- oldest examples dropped first once exceeded, so
+    the pool doesn't grow unboundedly over a 20000-epoch run), and
+    invalidates the in-memory tensor cache so the very next
+    _get_tactical_tensors() call (from the tactical_refresh() call right
+    after this one) picks up the fresh pool instead of stale cached tensors.
+
+    Uses a modest sims count (150, not the live training sim-ramp budget)
+    since realistic stone clustering matters more here than search
+    strength -- matches the original one-time mining's own choice (see
+    scratch/multiproc_investigation/mine_tactical_examples.py).
+
+    2026-09-11: the same games also feed a SECOND, outcome-based mining pass
+    (classify_hard_examples / relabel_hard_examples) writing to the
+    separate HARD_EXAMPLE_POOL_PATH -- see the block of comments/functions
+    just above this one for the full design. Kept in the same function
+    (rather than a second refresh call) so the expensive game-generation
+    itself is only paid once per tactical_refresh cycle.
+
+    runner (2026-09-27): optional selfplay_pool task runner. When
+    given, the mining games (+ their per-game hard-example classification)
+    and the relabel searches run in the persistent multi-process game pool
+    instead of threads in this process; any runner failure falls back to
+    the original threaded/sequential code below for that step.
+    """
+```
+
+**`shared/naps_tactical_refresh.py`** get_open_three_injection_samples (docstring)
+
+```text
+    """Per-epoch draw of open-three + open-3-3-fork (+ diagnosed-position)
+    examples for the regular replay buffer, same pattern as
+    get_hard_example_samples right below this.
+
+    2026-09-22: replaces tactical_refresh()'s periodic burst supervised
+    fine-tune as this curriculum's delivery mechanism. Isolated before/after
+    testing (scratch/.../tactical_refresh_destroy_test.py) found ONE
+    tactical_refresh() call immediately dropped vs-Det win rate 65%->25%
+    (a single 20-game/600-sim sample -- noisy, but the direction matches the
+    loss-spike pattern already documented in tactical_refresh's own
+    docstring at ep22/ep43/ep64). A separate retention check
+    (scratch/.../tactical_retention_check.py) found the ~100% tactical
+    accuracy right after a refresh had already decayed to ~70% just 2
+    epochs later, before the next refresh even fired -- so each burst was
+    paying a real, measured cost for a gain that mostly didn't survive to
+    the next cycle anyway. Blending a smaller amount of this curriculum into
+    EVERY epoch's ordinary training batch (like the hard-mined pool
+    already does) avoids both problems: no isolated-batch overfit spike,
+    and no burst to decay away between refreshes since there's no longer a
+    gap between applications.
+
+    n_examples=120 positions x up to 8-way dihedral augmentation ~= up to
+    ~960 samples/epoch -- deliberately a larger share of the epoch's buffer
+    than the hard-mined pool's ~368/epoch (n_positions=46), since this is
+    now the sole delivery path for the open-three curriculum rather than a
+    supplement to periodic bursts.
+    """
+```
+
+**`shared/naps_tactical_refresh.py`** _get_tactical_tensors (docstring)
+
+```text
+    """
+    Builds this refresh's tactical training pool as an EQUAL-WEIGHTED mix:
+    ALL currently-available real mined examples (naturally-clustered
+    positions mined from actual played games) combined with a FRESH random
+    subsample of the synthetic pool of equal size (drawn without
+    replacement, independently on every call -- not cached/fixed). This is
+    "candidate d" from the held-out generalization study (Phase 2:
+    scratch/multiproc_investigation/tactical_mix_experiment.py; Phase 3
+    independent re-verification: scratch/multiproc_investigation/
+    phase3_independent_reverify.py) -- the only mix among 5 tested that
+    materially improved held-out-REAL argmax accuracy (Phase 2: 0.5079 ->
+    0.6947; independent re-verification with a different seed/split:
+    0.3135 -> 0.6239) with no measurable cost to held-out-SYNTHETIC
+    accuracy (both runs: within ~0.2pp of the synthetic-only baseline).
+    Naive full-concatenation and real-upsampled-to-synthetic-volume mixes
+    were both measurably WORSE than synthetic-only on held-out real
+    accuracy in Phase 2 -- do not "simplify" this back to a plain
+    concatenation.
+
+    Re-drawing the synthetic subsample fresh every call (rather than fixing
+    it once) means the full synthetic pool's window/direction/color
+    coverage guarantee is still achieved in expectation across many refresh
+    cycles (every tactical_refresh_interval epochs), while any single
+    refresh's pool stays balanced 50/50 instead of being diluted the way a
+    naive full-concatenation was measured to be.
+    """
+```
+
+**`shared/naps_tactical_refresh.py`** _multi_label_targets_from_rows (docstring)
+
+```text
+    """2026-09-14 multi-label fix. rows_by_key: dict mapping a board(+player)
+    key -> list of ((gap_r, gap_c), mover_completes) tuples all scanned from
+    that EXACT SAME input position (it commonly matches more than one
+    tactical window at once, e.g. two simultaneous open threats). The old
+    scheme emitted one single-hot row per matching window, so the identical
+    network input got DIFFERENT "correct" one-hot targets across rows --
+    an argmax target that no single-output model can ever satisfy for all
+    of them. Measured on the live mined pool (2026-09-14,
+    scratch/multiproc_investigation/mine_tactical_conflict_check.py): 27.1%
+    of unique boards carried >=2 conflicting single-cell labels, capping the
+    theoretical MAX achievable argmax accuracy on the raw pool at 64.6% --
+    this is very likely the dominant reason tactical_refresh's own reported
+    accuracy has been flat at ~80% for weeks (98% synthetic + ~65% real,
+    averaged in the deployed 50/50 mix, ~= 80%).
+
+    Fix: one row per unique board(+player). If ANY matching window for that
+    board is a provable mover_completes=True win, the target concentrates
+    ONLY on those winning cells (playing a non-winning move when a win is
+    available is never correct, so diluting the target with defensive
+    cells would be actively wrong). Otherwise the target spreads uniformly
+    over every distinct labeled (defensive) gap cell -- all of them are
+    legitimately urgent, and this removes the artificial ceiling without
+    claiming false certainty about which single one is "the" answer.
+    Yields (key, target_vec[NUM_CELLS] summing to 1, has_winning_cell)."""
+```
+
+**`shared/naps_tactical_refresh.py`** tactical_refresh (docstring)
+
+```text
+    """
+    Runs a few epochs of supervised fine-tuning on the tactical curriculum.
+
+    Uses its OWN local Adam (2026-09-10) rather than the main RL loop's
+    optimizer. Sharing it meant 8 supervised epochs on a different objective
+    wrote into the shared Adam moment estimates, and every refresh was
+    followed by a 2-3 epoch loss spike as the main loop recovered (ep22:
+    P 0.98->2.04, V 0.06->0.26; ep43 and ep64 the same shape) -- roughly 14%
+    of all epochs spent undoing it. Meant to be called
+    periodically (every N epochs) during train_mcts_alpha_zero so this
+    signal doesn't get diluted back out by the much larger volume of
+    ordinary self-play samples between refreshes.
+
+    Policy loss is computed over the whole batch, as before. Value loss is
+    added ONLY over the subset of the batch carrying a real value label --
+    a per-row float value_target (NaN = no label, e.g. the pure-block-only
+    case, which gets none: "the defender played correctly" alone doesn't
+    prove a value by itself). 0.97 (not literal 1.0) stays off the tanh
+    output's saturated-gradient tail.
+    """
+```
+
+**`shared/naps_tactical_refresh.py`** _get_mined_tactical_tensors (docstring)
+
+```text
+    """Loads and tensorizes the real mined examples (board, current_player,
+    (gap_r, gap_c), mover_completes) tuples once and caches. Unlike the
+    synthetic boards (always encoded from 'X' mover's perspective), each
+    mined example carries its own real current_player -- passed through
+    as-is to board_to_input_tensor, whose perspective-relative encoding
+    (curr_plane = current_player's stones) needs no color canonicalization.
+
+    2026-09-09: an 8-way dihedral-augmented version of this (same
+    augment_sample every other data source gets) was tried and reverted --
+    it reproducibly stalled the live process for 2+ hours at the third
+    tactical_refresh cycle (ep63; the first two, ep21/ep42, ran fine), most
+    likely GPU-memory fragmentation from repeatedly building/discarding an
+    8x-larger (150K+) tensor cache every refresh compounding across cycles.
+    Not re-attempted here; a safer version would need to build the
+    per-example encoding via board_to_input_array (pure CPU numpy, no
+    per-item .to(device) round-trip) instead of board_to_input_tensor, and
+    ideally batch rather than rebuild-from-scratch every refresh.
+
+    Returns empty tensors (falls back to synthetic-only) if the pickle is
+    missing, so a fresh checkout without the mined-examples file still runs."""
+```
+
+**`shared/naps_tactical_refresh.py`** comment at line 228
+
+```text
+        # generate_fork_examples() (the open-3-3 / double-open-
+        # three geometry -- see fork_geometries) added to this SAME
+        # continuous pool. It was already implemented and already used to
+        # get delivered via tactical_refresh()'s burst fine-tune, but that
+        # call was removed from the main loop this session (see the
+        # tactical_refresh_interval guard's comment) and nothing replaced
+        # it for this specific curriculum the way open-three's own got
+        # migrated here -- so it silently went from
+        # "burst-delivered" to "never delivered". A held-out T-shape probe
+        # this session (test_t_shape_33fork_realistic.py) found this
+        # measurably regressing over the ~200 epochs since: raw policy
+        # rank for the correct denial cell 3rd/121 at the Gen12 reset
+        # point -> 47th/121 at the current live checkpoint, MCTS solving
+        # it correctly at epoch 0 and failing every checkpoint since --
+        # i.e. real forgetting of knowledge the supervised-pretrain
+        # checkpoint already had, not just slow acquisition. No new
+        # examples are being authored here -- this is reconnecting an
+        # existing generator to an existing delivery mechanism.
+```
+
+**`shared/naps_tactics.py`** generate_double_four_examples (docstring)
+
+```text
+    """
+    OFFENSE: the mover ('X') owns all 6 stones (3 per direction); playing
+    the shared center cell completes a four in both directions at once --
+    each threatens a win next move via its own open end, and the defender
+    can only block one, a strictly more decisive threat than the open-three
+    fork (generate_fork_examples) even though, like that fork, it is one
+    move short of an outright win itself. DEFENSE: 'O' owns all 6 stones
+    (would create the double-four if 'O' got to move next); the mover ('X')
+    must occupy the shared center FIRST to deny it -- same target cell
+    either way. mover_completes is always False for the same reason
+    generate_fork_examples' is: completing/denying this shape isn't itself
+    a provable 5-in-a-row.
+
+    Each geometry gets a clean variant plus a couple of clutter variants
+    (reusing tactical_clutter, same pattern as generate_fork_examples),
+    excluding both the stone cells and the required-open end cells so
+    clutter can't collide with either.
+    """
+```
+
+**`shared/naps_tactics.py`** generate_open_three_examples (docstring)
+
+```text
+    """
+    Reuses _closed_three_spans()'s exact 5-cell (k=-1..3) windows, but
+    treats BOTH end cells (index 0 and index 4) as empty and equally
+    correct, instead of one being an occupied blocker and the other the
+    sole target -- so each variant yields TWO rows for the SAME board (one
+    per valid end), which _multi_label_targets_from_rows groups back into a
+    single 50/50 target over both cells, exactly like the two symmetric
+    block cells in generate_tactical_examples' gap family.
+
+    OFFENSE: mover ('X') owns the three-stone line; either end extends it
+    into an open four. DEFENSE: 'O' owns the three-stone line; the mover
+    ('X') must occupy either end to prevent the open four. Neither is a
+    provable 5-in-a-row on its own, so mover_completes is always False --
+    same policy-only convention as generate_closed_three_examples/
+    generate_fork_examples/generate_double_four_examples.
+    """
+```
+
+**`shared/naps_tactics.py`** comment at line 358
+
+```text
+# Position A (epoch291 HLT loss) is a real open-three-defense
+# instance whose raw POLICY prior (not just the value head/MCTS search) has
+# drifted onto the historically-wrong move after repeated self-play/HLT
+# reinforcement -- confirmed by direct re-check against the live checkpoint
+# (rank 1/121, 12.6% prior on the wrong cell, vs the two correct blocks at
+# 3-5% each). A diffuse generic curriculum (generate_open_three_examples
+# above) teaches the general shape but has no special weight on this EXACT,
+# already-entrenched association -- unlearning it needs direct, repeated
+# counter-supervision on the specific pattern, not just broader coverage.
+# Position B (live test game, Claude vs the epoch462-promoted
+# checkpoint) -- a DIAGONAL open-three missed in a denser, real-game-like
+# position (5 X + 4 O stones already on the board, unlike Position A's
+# emptier board) despite the model correctly blocking a near-identical
+# horizontal open-three earlier in the SAME game. Confirms the open-three
+# fix from generate_open_three_examples works on the shape in isolation but
+# does not yet fully generalize to busier boards -- clutter density was
+# widened 3-36 (was 3-6, see tactical_clutter calls throughout this file)
+# specifically to close this gap generically, and this exact position is
+# also hard-mined directly, same rationale as Position A.
+```
+
+**`shared/naps_tactics.py`** comment at line 58
+
+```text
+# Two more tactical blind spots, diagnosed separately (see
+# scratch/multiproc_investigation/closed_three_diagnostic_newrun.py and
+# double_three_fork_diagnostic.py) as weak even on the latest checkpoint,
+# and NOT covered by the 4-of-5-gap family above (that family is always 4
+# stones + 1 gap; both shapes here are one filled square short of it):
+#   - closed-three: 3-in-a-row blocked on one end, open (with room to
+#     extend) on the other. Offense = extend into the open end. Defense =
+#     block the open end first.
+#   - double-three-fork: a single point that completes an open-three in
+#     two directions at once (unstoppable -- the defender can only block
+#     one line). Offense = play the shared point to create the fork.
+#     Defense = play it first to deny the opponent's fork.
+# Unlike the 4-of-5-gap family, NEITHER pattern's correct move is ever a
+# provable win on its own (extending/blocking a closed-three, or
+# creating/denying a fork, doesn't complete a 5-in-a-row) -- so both
+# offense and defense are policy-only here, mover_completes always False.
+# This keeps the two new curricula symmetric by construction, unlike the
+# existing family's offense/defense value-supervision asymmetry.
+```
+
+**`shared/naps_tactics.py`** comment at line 322
+
+```text
+            # 3->8 variants (1 clean + more clutter diversity) --
+            # open-three defense is the pattern the passive open3 tracker
+            # has shown persistently flat/noisy (0.2-0.7 miss rate) despite
+            # training, so this deliberately over-represents it relative to
+            # the other four tactical families in the combined curriculum.
+            # 8->14 -- tactical_refresh() (the periodic burst
+            # supervised re-injection this curriculum used to feed) was
+            # removed the same day: isolated testing
+            # (scratch/.../tactical_refresh_destroy_test.py) measured ONE
+            # refresh call immediately dropping vs-Det win rate 65%->25%,
+            # and a separate retention check
+            # (scratch/.../tactical_retention_check.py) found that gain
+            # decayed from ~100% back to ~70% tactical accuracy within just
+            # 2 epochs anyway -- net negative. Replaced by continuous
+            # per-epoch injection into the ordinary replay buffer (see
+            # get_open_three_injection_samples), so this pool now needs
+            # more inherent variant diversity since it's no longer refreshed
+            # by a dedicated fine-tuning pass, just sampled from directly.
+```
+
+**`shared/naps_tactics.py`** comment at line 274
+
+```text
+# (added after re-diagnosing the HLT-loss value/MCTS blind spot --
+# see scratch/multiproc_investigation/rediag_value_blindspot.py, run against
+# the live epoch443 checkpoint): a genuine OPEN three (3-in-a-row with BOTH
+# immediately-flanking cells empty) is a shape this curriculum never actually
+# covered. generate_tactical_examples' "4-of-5-gap" family is always one move
+# from a proven outcome (mover_completes or a single forced block);
+# generate_closed_three_examples' shape has only ONE open end. An open three
+# has TWO equally-correct response cells (either flank creates/denies an open
+# four), and re-testing 6 real/synthetic open-three positions against the
+# live checkpoint found the model still gets roughly half of them wrong --
+# MCTS converging on an unrelated move despite the raw policy prior usually
+# still ranking at least one true response cell near the top -- the same
+# "good-ish prior, MCTS/value diverges" pattern diagnosed earlier, just never
+# targeted by a dedicated curriculum shape until now.
+```
+
+**`shared/naps_threats.py`** fork_safe_cells (docstring)
+
+```text
+    """Every empty cell where `player` moving there does NOT hand `other` an
+    unstoppable next-move fork (winning outright always counts as safe too)
+    -- the Hard-7 analogue of threat_gaps' g_p/g_o: a verified, brute-force
+    ground truth for "which replies are actually correct here", not just
+    "is a fork possible". Used by relabel_hard_examples to force the
+    Hard-7 policy target onto a real safe cell when the re-searched MCTS
+    visit distribution doesn't already favor one -- mirrors how hard_class
+    1/2 force their policy onto g_p/g_o. Without this, Hard-7's policy
+    target was just whatever a RELABEL_SIMS-budget search happened to
+    converge to, which an artificial verified-answer puzzle test
+    (2026-09-24 session) showed can itself fail to concentrate visits on
+    the best-Q move -- i.e. the relabel step could silently inherit and
+    reinforce the same policy-prior blind spot it's meant to correct.
+    O(BOARD_SIZE^2) candidate moves x opponent_can_fork_next's own
+    O(BOARD_SIZE^2)-worst-case scan; only run inside
+    relabel_hard_examples's already-capped (RELABEL_CAP) pass, not the
+    self-play hot loop."""
+```
+
+**`shared/naps_threats.py`** _immediate_win_cells (docstring)
+
+```text
+    """Every empty cell where placing `color` right now completes 5-in-a-row.
+    Template-free (unlike fork_hits/fork_geometries, which only match the
+    clean symmetric double-open-three shape) -- brute-forces every empty
+    cell through fast_check_win, so it also catches irregular, real-game
+    multi-threat shapes fork_geometries structurally can't represent.
+    len(...) >= 2 means an UNSTOPPABLE fork for whoever must move next (no
+    single move blocks two simultaneous winning replies).
+
+    2026-09-23: added after 4 straight HLT (human) losses this session, all
+    ending in this exact kind of fork, NONE of which were caught by the
+    existing (narrow, template-based) Hard-3 detector below -- see the
+    session's find_fork_points.py/test_fork_prevention.py scratch analysis.
+    O(BOARD_SIZE^2) fast_check_win calls per invocation; only run on
+    already-mined game plies (a few hundred per refresh cycle), not inside
+    the hot self-play loop itself.
+    """
+```
+
+**`shared/naps_trainer.py`** comment at line 203
+
+```text
+    # Pools eval_batch_fn calls from concurrent self-play worker threads into
+    # fewer, larger GPU forward passes -- see PooledEvaluator docstring.
+    # Constructed once (not per-epoch): holds a reference to `gen_model`, not
+    # a weight snapshot, so it keeps working correctly as run_gating_check's
+    # promotions mutate those same weights in place across epochs.
+    # target_batch=24, max_wait=0.05 (was 48/0.005): live stats
+    # logging showed this PooledEvaluator hitting its target batch 0% of the
+    # time across 300K+ flushes (avg batch ~4, timing out every single time)
+    # -- PooledEvaluator._run's `timeout = self.max_wait if pending else None`
+    # re-arms a fresh wait window on every arrival (a silence-gap debounce,
+    # not a deadline from the first pending item), and with 10 CPU-bound
+    # self-play worker threads the gap between arrivals almost never stays
+    # under the old 5ms window. Benchmarked on this exact self-play path
+    # (scratch/multiproc_investigation/bench_pooled_evaluator.py, 3-run
+    # average): target_batch=24/max_wait=0.015 grows the achieved batch
+    # ~3.8->5.0 (+32%) and self-play games/sec +19% over the old operating
+    # point; CPU-bound MCTS tree search, not GPU eval, still dominates epoch
+    # wall-clock, so this is a real but modest gain, not a step-change. Kept
+    # consistent with evaluate_vs_deterministic / run_gating_check's own
+    # scoped PooledEvaluators below, which use the same values.
+```
+
+**`shared/naps_trainer.py`** comment at line 565
+
+```text
+            # Prioritized replay (Schaul et al. 2015), adapted to this
+            # project's full-buffer-pass-per-epoch training loop instead
+            # of a sampled minibatch replay: reweight each batch's loss
+            # by its own current policy/value-prediction "surprise"
+            # (computed fresh from this same forward pass, no stored/stale
+            # priority table needed) so samples the model is most surprised
+            # by contribute more gradient. b_weight is each sample's static,
+            # source-based weight (self-play's mover-won bonus, fixed
+            # vs-Det/vs-League weights -- see the raw_samples.append call
+            # sites) and is always applied; the surprise term on top of it
+            # only kicks in when use_prioritized_replay is True. NOTE: when
+            # prioritized, weights correlate with p_loss_per_sample/
+            # v_loss_per_sample by construction (weight = f(loss)), so the
+            # weighted mean is *not* comparable to the plain mean -- it's
+            # mechanically inflated (Cov(weight, loss) > 0). That's
+            # expected/intended (harder samples deliberately dominate the
+            # gradient), not a regression -- hence tracking the unweighted
+            # loss above separately for logging.
+```
+
+**`shared/naps_trainer.py`** comment at line 109
+
+```text
+    # lr-fix restart: base_lr 0.001->0.0001 and T_0 450->150.
+    # Weight-drift measurement (see conversation/workflow findings) showed
+    # lr=0.001 drifts the post-supervised-pretrain checkpoint 1.86x farther
+    # (matched-epoch comparison) than lr=0.0001, and drift never reverses
+    # even during low-instantaneous-LR windows of the T_0=450 schedule --
+    # consistent with the gate-check having stayed stuck at ~0% for 564+
+    # epochs after the Gen10 supervised-pretrain restart. The prior Gen7->
+    # Gen8 supervised-pretrain restart broke through gate-check right around
+    # the point its T_0=150 schedule decayed to ~1.2e-4 -- this restart
+    # starts there directly instead of spending hundreds of epochs decaying
+    # down to it.
+    # Gate stuck 15 checks (650-720) while losses kept falling ->
+    # halve the LR band (1e-4..5e-5 -> 5e-5..1e-5) to consolidate instead of drifting.
+    # ep937 cooldown ended -> LR jumped 1e-5 -> 4.4e-5 and ep940 fell to ~1,092 Rapfi nodes.
+    # Cosine peak 5e-5 -> 2e-5 (band 2e-5..1e-5) to polish rather than shake before the festival.
+    # LR band per run (run_config.py): 11x11 NAPS 2e-5..1e-5, 11x11_v2 5e-5..1e-5, 15x15 1e-4..2e-5
+    # (the 2e-5 polish band of the mature 11x11 net kept the young 15x15 net flat).
+```
+
+**`shared/naps_vsdet.py`** play_one_mcts_vs_deterministic_game (docstring)
+
+```text
+    """
+    Plays one training game between the in-memory model (MCTS with noise
+    and temperature sampling -- same exploration settings as self-play) and
+    deterministic_play's minimax AI. Only the MCTS side's decisions are
+    recorded, in the same (board_3d, player_turn, target_policy_map) format
+    play_one_mcts_game produces, so callers can mix both into one buffer.
+
+    Pure self-play never has to defend against or attack the specific
+    tactics deterministic_play actually uses, so the model can stay blind to
+    patterns that opponent exploits no matter how long training runs.
+    Mixing in games against it directly closes that loop.
+
+    deterministic_play is deterministic, so without `opening` every game
+    with the same mcts_plays_x replays the same line -- see
+    _play_vs_deterministic's docstring. Passing a (row, col) `opening`
+    pre-places X's first move there before normal play resumes.
+
+    det_max_depth (see sample_vs_det_max_depth) sets the deterministic
+    opponent's minimax search depth for this game; 0 means it plays a
+    uniformly random legal move instead of calling minimax at all.
+
+    Returns (history, outcome, mcts_result): outcome uses the same
+    X=1/O=-1/draw=0 convention as self-play; mcts_result is
+    'mcts'/'det'/'draw' from the trained model's perspective.
+    """
+```
+
+**`shared/naps_vsdet.py`** evaluate_vs_deterministic (docstring)
+
+```text
+    """
+    Plays num_games against deterministic_play (minimax/alpha-beta), alternating
+    who moves first, and returns (win_rate, draw_rate, loss_rate) from the
+    trained model's perspective. This is the direct metric for the research
+    goal ("beat the deterministic algorithm").
+
+    Tries the multiprocessing implementation (mp_eval.evaluate_vs_deterministic_mp)
+    first -- each game gets a real OS process instead of a thread, which
+    matters because deterministic_play (the pure-Python minimax opponent)
+    holds the GIL for its whole call and was found to fully serialize the
+    threaded implementation down to ~1 CPU core regardless of thread count
+    (the C++ MCTS engine itself already releases the GIL correctly and was
+    not the bottleneck). Verified against the threaded path at the real
+    production shape (20 games, 600/1350 sims, live checkpoint): identical
+    win/draw/loss rates (deterministic/no-noise/greedy + fixed openings is a
+    pure function of model weights, so crossing a process boundary changes
+    no numeric value), 2.35x wall-clock speedup. Falls back to the original
+    threaded implementation on ANY exception from the mp path (process spawn
+    failure, a worker dying mid-game, GPU OOM in the evaluator process,
+    etc.) so a transient multiprocessing hiccup degrades this call to
+    "slower" rather than crashing or hanging an unattended training run.
+
+    pooled_evaluator is only used by the threaded fallback path; the mp path
+    has no equivalent parameter (see _evaluate_vs_deterministic_threaded).
+    """
+```
+
+**`shared/naps_vsdet.py`** _evaluate_vs_deterministic_threaded (docstring)
+
+```text
+    """
+    Original ThreadPoolExecutor + PooledEvaluator implementation, kept as the
+    safety-net fallback for evaluate_vs_deterministic (see its docstring).
+
+    Games run concurrently across a ThreadPoolExecutor with a shared
+    eval_cache and PooledEvaluator, the same pattern
+    generate_mcts_vs_deterministic_data already uses (see its docstring) --
+    this is behavior-preserving for game OUTCOMES: no-noise/greedy MCTS vs
+    deterministic minimax is a pure function of (model weights, opening,
+    settings), and eval_cache only memoizes that pure function (a cache hit
+    returns the exact same value a fresh compute would have) -- only
+    wall-clock time changes.
+
+    pooled_evaluator: reuse a caller-owned PooledEvaluator wrapping this
+    exact `model` object if the caller already has one running; when
+    omitted (the default), a fresh one scoped to just this call is
+    constructed and torn down before returning, so this function stays
+    usable standalone. NOTE: the training loop's own pooled_evaluator is
+    scoped to gen_model, not model, so the existing call site cannot reuse
+    it.
+    """
+```
+
+**`shared/nets.py`** comment at line 129
+
+```text
+# Experimental fused-block architecture, built alongside (not
+# replacing) alphago_lee.py's V1 network (GomokuNetV1). Imports everything except
+# the model classes from board_encoding -- fork-mask helpers, board_to_input_array,
+# board_to_input_tensor, BOARD_SIZE/NUM_CELLS/NUM_INPUT_CHANNELS -- so there is
+# exactly one source of truth for the board/tensor representation; only the
+# network internals differ here.
+#
+# Combines three changes discussed in chat, each independently motivated:
+# 1. Depthwise-separable convolutions (MobileNetV3/EfficientNet-style) instead
+#    of full 3x3 convs -- ~8-9x fewer multiply-adds per conv layer at this
+#    channel count (256), directly targeting this project's recurring GPU
+#    bottleneck.
+# 2. GroupNorm instead of BatchNorm -- GroupNorm normalizes per-sample (no
+#    batch-wide running statistics), so it behaves identically regardless of
+#    batch size or train()/eval() mode. This eliminates an entire bug class
+#    this project has hit more than once (the 5x5 gate-check BatchNorm
+#    train-mode bug and others referenced in this session) at
+#    the source, rather than continuing to rely on callers remembering to
+#    call .eval() before every MCTS leaf batch.
+# 3. Squeeze-and-Excitation channel attention (KataGo uses this in its own
+#    trunk) -- lets the network dynamically emphasize/suppress channels based
+#    on GLOBAL board context, which suits whole-board pattern reasoning
+#    (open-three / fork detection) better than treating every channel with
+#    fixed importance regardless of position.
+#
+# This combination (depthwise-separable conv + SE, "MBConv"-style) is not
+# novel -- it is the standard building block of MobileNetV3 and EfficientNet,
+# chosen here because it is well-validated in the literature, not because it
+# is untested.
+#
+# IMPORTANT: this is architecturally incompatible with existing checkpoints
+# (nets.GomokuNetV1's ResBlock uses full Conv2d + BatchNorm2d
+# with different parameter shapes) -- a model built from this file must be
+# trained from scratch, it cannot load model/best_mcts_11x11.pth or any
+# existing checkpoint. Nothing under 11x11_naps/model/ is touched by this file
+# merely existing; it only takes effect wherever something explicitly
+# imports GomokuNetV2 instead of the original.
+```
+
+**`shared/nets.py`** comment at line 321
+
+```text
+# V3 = V2 (GroupNorm + SE, nets.py) + an auxiliary
+# "survival" head that predicts how many plies remain until the game ends.
+#
+# Why: in 11x11 free-style gomoku the first player wins almost every game
+# (elo_roundrobin.py: 68/72), so nearly every defender-side training
+# position carries the same -1 value label no matter how well it was
+# defended -- the value head has no reason to tell a good defence from a
+# bad one, and defence quality measurably fell during self-play
+# (elo_defense.py: the supervised start model survived 21.5 plies as the
+# defender, the self-play models 11-14). Predicting remaining plies gives
+# the shared trunk a dense per-position signal that does distinguish
+# "losing slowly" from "losing fast" (KataGo-style auxiliary target).
+#
+# Compatibility:
+# - forward(x) still returns (policy, value) exactly like V2, so every
+#   existing call site (MCTS eval callbacks, gating, league, self-play pool,
+#   test scripts) works unchanged. forward_all(x) additionally returns the
+#   survival prediction and is used only by the training step.
+# - load_state_dict() accepts V2 checkpoints: the survival_head.* keys are
+#   allowed to be missing (the head keeps its fresh init); any OTHER
+#   missing or unexpected key still raises, so a genuinely wrong checkpoint
+#   is not silently accepted.
+# - V3 checkpoints carry extra survival_head.* keys, so they do NOT load
+#   into the V2 class with strict=True. The last V2 best is kept at
+#   model/v2_final_best_ep284.pth for old-vs-new matches.
+#
+# Survival target: min(remaining_plies, SURVIVAL_CAP) / SURVIVAL_CAP, in
+# [0, 1]; the head ends in a sigmoid.
+```
+
+**`shared/selfplay_pool.py`** <module> (docstring)
+
+```text
+"""
+selfplay_pool (2026-09-26)
+================================
+One persistent multi-process pool that plays ALL of an epoch's training
+games at once -- self-play (including curriculum/opening starts),
+vs-Deterministic and vs-League -- instead of three back-to-back phases.
+
+Built from selfplay_pool_fallback.py (kept unchanged as the fallback path). Why:
+
+* The old sequence ran self-play (multi-process), then vs-Det (threaded),
+  then vs-League (threaded). Each phase ends only when its slowest game
+  does, so the tail of every phase left most workers idle, and the
+  2-game vs-League phase kept 8 of 10 workers and most of the GPU idle
+  for its whole duration (live log: evaluator avg batch 30 -> 22 during
+  it, "hit target" falling to 57%).
+* Here every game of the epoch goes onto ONE task queue that 10 worker
+  processes pull from (longest games first), so workers stay busy until
+  the queue drains and the GPU coordinator keeps getting full batches.
+
+What changed relative to selfplay_pool_fallback.py
+---------------------------------------
+* Workers accept three task kinds ('self', 'vsdet', 'league') and call the
+  UNMODIFIED production game functions for each (same principle as before:
+  no hand-ported game logic, so nothing can silently drift).
+* Eval requests carry a model TAG ('gen' or 'league'). The coordinator
+  groups a flush by tag and runs one forward pass per model, so a league
+  game's opponent side is evaluated by the league checkpoint while
+  everything else uses the generation model. Workers still hold no
+  weights; the league model is handed to the coordinator per call.
+* Each worker keeps two process-local eval caches (gen / league), both
+  reset per call (= per epoch), so cache validity is unchanged.
+* Samples are aggregated exactly like the production functions
+  (value = outcome from the mover's side, weights 1.15 mover-won /
+  1.5 vs-Det / 1.25 vs-League, survival label for self-play only) and in
+  the same order (self-play, then vs-Det, then vs-League).
+
+Safety (same model as selfplay_pool_fallback.py)
+-------------------------------------
+Any failure (worker death, coordinator/GPU error, IPC error, stall) tears
+the pool down and the epoch is re-run through `fallback()` -- the caller's
+original three-phase sequence -- so a bug here costs time, never the run.
+After MAX_STRIKES failures this path disables itself for the process.
+Kill switch mid-run: create PROD_DIR\\MP_UNIFIED_OFF (checked each epoch).
+"""
+```
+
+**`shared/selfplay_pool_fallback.py`** <module> (docstring)
+
+```text
+"""
+generate_mcts_self_play_data_mp
+===============================
+Multi-PROCESS drop-in replacement for
+``naps_trainer.generate_mcts_self_play_data`` (the
+ThreadPoolExecutor-based self-play game generator).
+
+Derived from the "pipe_batch_local" candidate, which was selected over the
+"queue_pool" and "shared_memory" candidates. See WINNER_deploy_notes.md for
+the full selection rationale and -- importantly -- for the honest status of
+the PERFORMANCE claim, which is summarized here too because nobody should
+deploy this without reading it:
+
+    NONE of the three candidates demonstrated a reproducible speedup.
+    Every benchmark was taken on a machine whose GPU and all 8 logical
+    cores were simultaneously saturated by the live production training
+    run, and the run-to-run noise (+-40%) was larger than any effect.
+    Independent re-measurements of this candidate landed at 0.78x and
+    1.21x -- i.e. indistinguishable from parity. This file is therefore a
+    DELIBERATE EXPERIMENT, not a proven optimization. It is built to be
+    safe to try in the live loop and trivial to back out, and it
+    instruments itself so the A/B answer can finally be measured under
+    real single-tenant conditions instead of under benchmark contention.
+
+============================================================
+WHY THIS ARCHITECTURE (and why it beat the other two)
+============================================================
+The diagnosed problem: the "glue" work around each leaf evaluation (numpy
+board encoding + the evaluator submit/wait round trip) does NOT release the
+GIL, while both the GPU forward pass and the C++ MCTS tree walk do. With
+max_workers=10 self-play THREADS in one process, CPython serializes that
+glue across all of them.
+
+Corroborating evidence that is NOT wall-clock (and therefore not corrupted
+by benchmark contention) -- straight out of the live training log:
+
+    [PooledEvaluator stats] 13500 flushes, avg batch 5.0, max 20,
+    target_batch=24, 0/13500 (0%) hit target vs timed out short
+
+Every single flush times out short, at an average batch of 5 against a
+target of 24. Ten concurrent self-play threads essentially never have more
+than one eval request pending at the same instant. That is the GIL
+serialization, visible in production, right now. The shared_memory
+candidate independently measured GPU utilization rising from 10-40%
+(threaded) to 55-76% (multi-process), confirming the architecture does fix
+the batching. What remains unproven is whether fixing it actually buys
+wall-clock, since the real bottleneck may simply be the CPU-bound C++ tree
+walk on 8 already-oversubscribed cores.
+
+This candidate's structure:
+
+1. Worker processes (persistent pool, spawned ONCE per training run, never
+   respawned per epoch). Each is a plain CPU-only OS process with NO CUDA
+   context. It plays games by calling the production
+   ``play_one_mcts_game`` COMPLETELY UNMODIFIED, imported read-only from
+   the live tree. This is the decisive advantage over the other two
+   candidates, both of which hand-ported the game loop, the board encoding
+   and/or the augmentation logic into their own files -- creating a second
+   copy of production logic that would silently drift the moment anyone
+   edits the real one. Here, the only thing that differs from production is
+   the *evaluator object* plugged into MCTS; every rule, every curriculum
+   branch, every sampling decision is literally the same bytes.
+
+2. The evaluator plugged into each worker's ``MCTS(pooled_evaluator=...)``
+   is ``_PipeEvalProxy``, a duck-type of ``PooledEvaluator.submit()``. It
+   sends ONE numpy array per already-batched leaf group down a dedicated
+   ``multiprocessing.Pipe`` and blocks for the paired result.
+
+   The "batch_local" part comes free: the C++ engine's ``search_batched()``
+   already groups eval_batch_size=16 simulations' leaves per round via
+   virtual loss BEFORE calling back into Python. So one pipe message
+   already carries up to 16 boards -- roughly ceil(sims/16) round trips per
+   ply, not one per simulation.
+
+   A dedicated Pipe per worker (rather than one shared Queue) means writers
+   never contend on a shared lock; the coordinator reads all of them with a
+   single multiplexed ``multiprocessing.connection.wait()``.
+
+3. Exactly ONE thing owns the GPU: ``PipePooledEvaluator``, a background
+   THREAD in the MAIN process -- the same process that already holds
+   ``model`` on ``device``. No second CUDA context, no checkpoint
+   save/reload handshake, no weight-shipping, and therefore ZERO weight
+   staleness: workers never hold weights at all. (This is the other reason
+   this beat "shared_memory", which needed a separate GPU-owning process
+   and a per-call torch.save/torch.load round trip -- extra VRAM on a 4GB
+   GTX 1050 and real per-call latency.)
+
+   Its accumulate-until-target_batch-or-silence-gap logic is a direct port
+   of ``PooledEvaluator._run``, including that implementation's
+   silence-gap-not-deadline quirk, so the two are apples-to-apples at the
+   same target_batch/max_wait operating point.
+
+4. Finished games come back over an ordinary Queue -- once per game, not
+   once per simulation, so pickling cost there is amortized to nothing.
+
+============================================================
+SAFETY DESIGN (what makes this safe to gamble on in a live run)
+============================================================
+This is going into a 20000-epoch run that must not die. Every known
+failure mode degrades to "the original threaded implementation runs this
+epoch instead", never to a crash or a hang:
+
+* ANY exception from the MP path (worker death, GPU OOM in the coordinator,
+  IPC breakage, timeout) is caught, the pool is torn down, and the epoch is
+  transparently re-run on the ORIGINAL production threaded function. The
+  epoch still produces correct data; it just doesn't get the experiment.
+* After ``MAX_MP_STRIKES`` such failures the MP path disables itself for
+  the rest of the process. A recurring problem degrades to "we're just
+  running the old code", quietly and permanently.
+* Kill switch without editing any code: set ``MP_SELFPLAY_DISABLE=1`` in
+  the environment and this becomes a pure pass-through to the original.
+* Stall detection is PROGRESS-based, not a fixed deadline: as long as the
+  coordinator keeps flushing eval batches or games keep finishing, the call
+  is considered healthy. A genuinely wedged pool is caught in ~3 minutes
+  and falls back, instead of hanging for the 24 minutes a naive
+  games x per-game deadline would have allowed.
+* If the coordinator thread ever dies mid-flush, every worker blocked on
+  ``recv()`` is explicitly woken with an error sentinel so it fails fast,
+  rather than blocking forever on a pipe nobody will ever write to again.
+* Workers are daemon processes AND are shut down via atexit, so they cannot
+  outlive the trainer.
+
+============================================================
+KNOWN, DELIBERATE DEVIATIONS FROM THE ORIGINAL
+============================================================
+* ``eval_cache`` is accepted but IGNORED. There is no way to share the
+  caller's in-process dict with separate processes. Each worker keeps its
+  own process-local cache, reset when it sees a new call_id (== a new
+  epoch's frozen weights), so cache VALIDITY is identical -- a cached entry
+  is still a pure function of frozen weights. What is reduced is the DEGREE
+  of cross-game de-dup: in the production shape (num_games=8 spread over 10
+  workers) most workers see exactly one game, so they get little cross-game
+  reuse, whereas the original's single shared dict saw every game's boards
+  AND was additionally shared with the vs-Det / vs-League phases that still
+  run threaded. Cost: some extra GPU forward passes. Never a wrong value.
+  This is a real, unquantified handicap against the threaded baseline and
+  it is included in every measured number.
+* ``pooled_evaluator`` is accepted but IGNORED: the MP path must use its
+  own cross-process evaluator. The caller's PooledEvaluator is untouched
+  and continues serving the still-threaded vs-Det / vs-League phases.
+* Per-game randomness comes from each worker's own unseeded RNG stream
+  rather than one shared in-process stream. Self-play was never
+  reproducible run-to-run either way.
+* Only ``generate_mcts_self_play_data`` is replaced. vs-Deterministic and
+  vs-League generation stay on the threaded path.
+"""
+```
+
+**`shared/selfplay_pool_fallback.py`** generate_mcts_self_play_data_mp (docstring)
+
+```text
+    """Multi-process drop-in for
+    ``naps_trainer.generate_mcts_self_play_data``.
+
+    Identical call signature (plus target_batch/max_wait, which the original
+    hard-codes at its PooledEvaluator construction site rather than exposing)
+    and identical ``(raw_samples, outcome_counts)`` return contract:
+    raw_samples is a list of ``(aug_board_3d, aug_policy_flat, final_val,
+    sample_weight)`` rows, 8x dihedral-augmented, and outcome_counts is
+    ``{'x_win', 'o_win', 'draw'}`` summing to num_games.
+
+    ``eval_cache`` and ``pooled_evaluator`` are accepted for signature
+    compatibility but ignored on the MP path -- see the module docstring.
+    They ARE forwarded intact to the threaded implementation whenever this
+    falls back, so fallback behavior is byte-for-byte the original.
+
+    On ANY multi-process failure this transparently re-runs the epoch on the
+    original threaded implementation, so a bug here can cost time but can
+    never cost the training run.
+    """
+```

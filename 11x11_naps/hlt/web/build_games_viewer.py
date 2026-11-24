@@ -1,4 +1,4 @@
-"""Static replay viewer for every web game (2026-10-15, user: "접속된 세션 판을 전부 보고 싶다").
+"""Static replay viewer for every web game.
 
 Reads games.jsonl (finished games) + live_games.json (games still in progress) and writes games_viewer.html with
 the data embedded. Local file only -- these are visitors' games, not for publishing.

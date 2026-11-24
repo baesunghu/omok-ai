@@ -2,17 +2,18 @@
 One-shot combined status check: general training status (status_check.py)
 + Hard-7 (double-four fork) adaptation rate + open-three organic-miss
 trend (from track_open3_progress.py's own log) + the open-3-3 (T-shape)
-fork probe -- all in a single run, so it can be launched standalone
-without a live Claude session.
+fork probe -- all in a single run.
 
 Usage (from a PowerShell prompt):
 
     cd 11x11_naps      (or 11x11_v2 / 15x15)
     python ../shared/fork_status_check.py
+    python ../shared/fork_status_check_solver.py   # the same check with the solver engine
 
 Read-only everywhere: reads the live checkpoint, the hard-mined pool, and
 the open-three progress log; writes nothing.
 """
+import importlib
 import sys
 import os
 import random
@@ -48,11 +49,13 @@ print("\n" + "=" * 70)
 print("Loading live checkpoint (shared by the fork checks below)...")
 print("=" * 70)
 
-import mcts_core as mcts_core_verbose  # production engine (virtual-loss fix + mate distance)
+# The engine searched with: the production mcts_core (virtual-loss fix + mate distance), or mcts_core_solver when
+# fork_status_check_solver.py runs this file with ENGINE_MODULE set.
+mcts_core_verbose = importlib.import_module(globals().get("ENGINE_MODULE", "mcts_core"))
 from nets import GomokuNetV3 as GomokuNet
-from board_encoding import preferred_memory_format, board_to_input_array_from_numeric
+from board_encoding import preferred_memory_format, board_to_input_array_from_numeric, make_batch_eval
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
-import naps_hard_examples as amk   # _opponent_can_fork_next (until 2026-11 in the trainer module)
+import naps_threats as threats   # opponent_can_fork_next (until 2026-11 in the trainer module)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CKPT = os.path.join(HERE, "model", f"best_mcts{FILE_SUFFIX}.pth")
@@ -63,17 +66,7 @@ model.eval()
 print("loaded.\n")
 
 
-def eval_batch_fn(boards, players):
-    inputs = [board_to_input_array_from_numeric(b, p) for b, p in zip(boards, players)]
-    batch = np.stack(inputs)
-    tensor = torch.from_numpy(batch).float().to(device).contiguous(memory_format=preferred_memory_format(device))
-    with torch.inference_mode():
-        policy_logits, value_tensor = model(tensor)
-    probs = torch.exp(policy_logits).cpu().numpy().astype(np.float64)
-    if probs.ndim == 1:
-        probs = probs.reshape(1, -1)
-    values = value_tensor.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
-    return probs, values
+eval_batch_fn = make_batch_eval(model, device)
 
 
 SUMMARY = {}
@@ -162,7 +155,7 @@ try:
         if fast_check_win(after, player):
             result = "AVOIDED (won outright)"
             avoided += 1
-        elif amk._opponent_can_fork_next(after, other):
+        elif threats.opponent_can_fork_next(after, other):
             result = "STILL FORKS"
         else:
             result = "AVOIDED"

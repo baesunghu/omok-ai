@@ -10,9 +10,8 @@ import os
 # GAME SETTINGS
 # ============================================================
 
-from fast_board import BOARD_SIZE, WIN_LENGTH  # noqa: E402  one source for the board size: fast_board.py
+from fast_board import BOARD_SIZE, NUM_CELLS, WIN_LENGTH  # noqa: E402  one source for the board size: fast_board.py
 
-NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 NUM_INPUT_CHANNELS = 5
 INPUT_SIZE = NUM_CELLS * NUM_INPUT_CHANNELS
 
@@ -24,7 +23,7 @@ INPUT_SIZE = NUM_CELLS * NUM_INPUT_CHANNELS
 # BOARD_SIZE=10, WIN_LENGTH=5 this is 192 windows total (60 horizontal +
 # 60 vertical + 36 diagonal "\" + 36 diagonal "/").
 
-# Optional native C++/pybind11 acceleration for _fork_mask
+# Optional native C++/pybind11 acceleration for fork_mask
 # (cpp_mcts/fork_mask_cpp.cpp, same build pattern as mcts_core/
 # deterministic_play_core -- see cpp_mcts/build_fork_mask_cpp.bat). Explored
 # via a workflow that tried 4 independent optimization strategies (numba
@@ -35,11 +34,10 @@ INPUT_SIZE = NUM_CELLS * NUM_INPUT_CHANNELS
 # (mcts_core, deterministic_play_core) rather than adding a new numba
 # runtime dependency to this hot path. Verified byte-for-byte identical to
 # the pure-Python version below on 374 random/edge-case boards (including a
-# duplicate-threat-pair dedup stress case) both by the workflow agent and
-# independently re-verified in this session. Falls back to the pure-Python
+# duplicate-threat-pair dedup stress case), checked twice independently. Falls back to the pure-Python
 # implementation if the compiled extension isn't present (e.g. a different
 # machine/Python ABI) -- same try/except ImportError pattern as
-# mcts_python.py's _mcts_core.
+# mcts_cpp.py's _mcts_core.
 try:
     import fork_mask_cpp as _fork_mask_native
 except ImportError:
@@ -76,36 +74,12 @@ _LINES = _generate_lines()
 # Flattened board-index form of _LINES (num_lines, WIN_LENGTH), precomputed once,
 # for a fully vectorized (no Python-level line loop) _immediate_win_mask -- the
 # naive per-line Python loop is fine on a 5x5/28-line board but far too slow on
-# a 10x10/192-line board once _fork_mask calls it once per empty candidate cell
+# a 10x10/192-line board once fork_mask calls it once per empty candidate cell
 # (up to ~100 times per call, called for every MCTS simulation).
 _LINES_IDX = np.array([[r * BOARD_SIZE + c for (r, c) in line] for line in _LINES], dtype=np.int64)
 
 
-def _immediate_win_mask(curr_plane, empty_plane):
-    """Returns a (BOARD_SIZE, BOARD_SIZE) float32 array with 1.0 at every
-    empty cell that would complete a WIN_LENGTH-in-a-row for the owner of
-    curr_plane if a stone were placed there right now. Numerically identical
-    to a per-line Python-loop implementation (verified against it on 300+
-    random boards plus hand-built edge cases), just vectorized via a
-    precomputed flat index array instead of iterating _LINES in Python."""
-    curr_flat = curr_plane.ravel()
-    empty_flat = empty_plane.ravel()
-    line_curr = curr_flat[_LINES_IDX]
-    line_empty = empty_flat[_LINES_IDX]
-    curr_counts = line_curr.sum(axis=1)
-    empty_counts = line_empty.sum(axis=1)
-    hit = (curr_counts == WIN_LENGTH - 1) & (empty_counts == 1)
-    mask = np.zeros(BOARD_SIZE * BOARD_SIZE, dtype=np.float32)
-    if hit.any():
-        hit_lines = _LINES_IDX[hit]
-        hit_empty = line_empty[hit]
-        slot = hit_empty.argmax(axis=1)
-        target = hit_lines[np.arange(len(slot)), slot]
-        mask[target] = 1.0
-    return mask.reshape(BOARD_SIZE, BOARD_SIZE)
-
-
-def _fork_mask(curr_plane, empty_plane):
+def fork_mask(curr_plane, empty_plane):
     """Dispatches to the native C++ extension (fork_mask_cpp, ~9-10x faster,
     see cpp_mcts/fork_mask_cpp.cpp) when available, else falls back to the
     pure-Python/numpy implementation below (_fork_mask_python) -- both are
@@ -117,50 +91,15 @@ def _fork_mask(curr_plane, empty_plane):
 
 
 def _fork_mask_python(curr_plane, empty_plane):
-    """Returns a (BOARD_SIZE, BOARD_SIZE) float32 array with 1.0 at every
-    empty cell where placing a curr_plane-owner stone there would create 2
-    or more distinct empty cells that would each independently complete a
-    WIN_LENGTH-in-a-row on the following move (a "double threat" / fork).
+    """1.0 at every empty cell where a stone of curr_plane's owner would make a fork: two or more distinct empty cells
+    that would each complete WIN_LENGTH in a row on the next move. Returns a (BOARD_SIZE, BOARD_SIZE) float32 array.
 
-    O(num_lines) instead of the naive O(num_empty_cells * num_lines)
-    (simulate-every-candidate-then-rescan-everything) approach -- the naive
-    version was the dominant cost of MCTS search on the 10x10/11x11 boards
-    (measured: fork detection alone was ~60% of total simulation time).
-    Numerically verified identical to the naive simulate-per-candidate
-    version on 600+ random boards plus hand-built edge cases (including a
-    board with pre-existing separate threats before any hypothetical
-    placement, which the naive version's ">=2 total lit cells" definition
-    also counts).
-
-    Key fact this relies on: if a line already has exactly one empty cell
-    and candidate cell A (currently empty) belongs to that line, A MUST BE
-    that one empty cell -- so any line through A that is already an
-    immediate-win line has A itself as its target. That means placing at A
-    only removes A from the pre-existing lit set (if A itself was already
-    a winning move) and otherwise leaves every other pre-existing threat
-    untouched; the only NEW threats placing at A can create come from
-    lines that currently have exactly WIN_LENGTH-2 of curr's stones and
-    exactly 2 empty cells (one of which is A) -- filling A then completes
-    that line to WIN_LENGTH-1 with the OTHER empty cell as the new target.
-
-    2026-09-16: the per-candidate combination used to be a Python loop over
-    every empty cell (up to ~120 on a sparse board) that rebuilt a new set
-    via `(baseline_lit - {a}) | threats.get(a, set())` on EVERY iteration --
-    profiled as the single largest cost in the whole dataset-generation
-    pipeline (~74s of a 158s run, ~47%; board_to_input_array as a whole was
-    77%), because set construction/union has real per-call overhead even
-    when the sets involved are tiny. Rewritten to be fully vectorized: the
-    identity len((baseline_lit - {a}) | T) = baseline_count - [a in
-    baseline_lit] + len(T) - len(T & baseline_lit) (valid because `a` is
-    never a member of its own threat set T, by construction) is computed as
-    plain numpy array arithmetic over all cells at once -- the only
-    remaining Python loop is over `threats.items()`, bounded by ~2x the
-    count of "two-empty-cell" lines, not by empty-cell count. Verified
-    numerically identical to the original on 966+ boards (random densities
-    0-120 stones + hand-built edge cases including multiple simultaneous
-    baseline threats); measured ~1.25x faster in isolation, and this
-    function's overall dominance in board encoding means that carries
-    through to end-to-end dataset generation and self-play.
+    Works per line instead of simulating every candidate (that was ~60% of search time). The key fact: a line that
+    already has exactly one empty cell can only contain a candidate A if A is that cell, so placing at A can only
+    remove A from the existing winning cells; the only NEW threats come from lines with WIN_LENGTH-2 own stones and
+    exactly two empty cells, one of them A. The per-candidate count is plain numpy arithmetic over all cells
+    (|(lit - {a}) | T| = lit - [a in lit] + |T| - |T & lit|, since a is never in its own T). Checked identical to the
+    simulate-every-candidate version on 966+ boards, including boards with several existing threats.
     """
     L = WIN_LENGTH
     n_cells = BOARD_SIZE * BOARD_SIZE
@@ -232,8 +171,8 @@ def board_to_input_array(board_state, current_player):
     curr_plane = (arr == current_player).astype(np.float32)
     opp_plane = (arr == opponent_player).astype(np.float32)
     empty_plane = (arr == ' ').astype(np.float32)
-    fork_self = _fork_mask(curr_plane, empty_plane)
-    fork_opp = _fork_mask(opp_plane, empty_plane)
+    fork_self = fork_mask(curr_plane, empty_plane)
+    fork_opp = fork_mask(opp_plane, empty_plane)
     return np.stack([curr_plane, opp_plane, empty_plane, fork_self, fork_opp])
 
 
@@ -249,7 +188,7 @@ def board_to_input_array_from_numeric(raw_board_int8_array, current_player):
     Returns the same (NUM_INPUT_CHANNELS, BOARD_SIZE, BOARD_SIZE) float32
     stack as board_to_input_array -- planes in order
     [curr, opp, empty, fork_self, fork_opp] -- computed via direct integer
-    comparisons instead of numpy string equality, reusing _fork_mask
+    comparisons instead of numpy string equality, reusing fork_mask
     verbatim (not re-derived) for the fork planes so that logic stays in
     exactly one place."""
     arr = np.asarray(raw_board_int8_array)
@@ -258,8 +197,8 @@ def board_to_input_array_from_numeric(raw_board_int8_array, current_player):
     curr_plane = (arr == curr_val).astype(np.float32)
     opp_plane = (arr == opp_val).astype(np.float32)
     empty_plane = (arr == 0).astype(np.float32)
-    fork_self = _fork_mask(curr_plane, empty_plane)
-    fork_opp = _fork_mask(opp_plane, empty_plane)
+    fork_self = fork_mask(curr_plane, empty_plane)
+    fork_opp = fork_mask(opp_plane, empty_plane)
     return np.stack([curr_plane, opp_plane, empty_plane, fork_self, fork_opp])
 
 
@@ -293,30 +232,55 @@ def board_to_input_tensor(board_state, current_player, device):
     return input_tensor.unsqueeze(0).contiguous(memory_format=preferred_memory_format(device))
 
 
-def check_win(board, player):
-    """Fast win check for BOARD_SIZE x BOARD_SIZE with WIN_LENGTH."""
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if board[r][c] != player:
-                continue
-            if c <= BOARD_SIZE - WIN_LENGTH:
-                if all(board[r][c + k] == player for k in range(1, WIN_LENGTH)):
-                    return True
-            if r <= BOARD_SIZE - WIN_LENGTH:
-                if all(board[r + k][c] == player for k in range(1, WIN_LENGTH)):
-                    return True
-            if r <= BOARD_SIZE - WIN_LENGTH and c <= BOARD_SIZE - WIN_LENGTH:
-                if all(board[r + k][c + k] == player for k in range(1, WIN_LENGTH)):
-                    return True
-            if r <= BOARD_SIZE - WIN_LENGTH and c >= WIN_LENGTH - 1:
-                if all(board[r + k][c - k] == player for k in range(1, WIN_LENGTH)):
-                    return True
-    return False
+# 8 symmetries of one training sample (until 2026-11 in the old trainer, legacy_trainer_basic.py)
+def augment_sample(board_tensor_3d, policy_2d):
+    """
+    Applies 8 symmetries (4 rotations x 2 flips) to a 3D board tensor
+    (channels, BOARD_SIZE, BOARD_SIZE) and 2D target policy map
+    (BOARD_SIZE, BOARD_SIZE). Channel-count-agnostic: rotation/flip only
+    ever touch axes 1 and 2 (the spatial dims), so this keeps working
+    unchanged regardless of how many planes board_tensor_3d has (e.g. if
+    board_to_input_array's channel count changes).
+    """
+    augmented = []
+    for k in range(4):
+        # Rotate 90 * k degrees
+        rot_b = np.rot90(board_tensor_3d, k, axes=(1, 2))
+        rot_p = np.rot90(policy_2d, k, axes=(0, 1))
+
+        # Original rotation
+        augmented.append((rot_b.copy(), rot_p.flatten().copy()))
+
+        # Horizontally flipped rotation
+        flip_b = np.flip(rot_b, axis=2)
+        flip_p = np.flip(rot_p, axis=1)
+        augmented.append((flip_b.copy(), flip_p.flatten().copy()))
+
+    return augmented
 
 
-def check_draw(board):
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if board[r][c] == ' ':
-                return False
-    return True
+def make_ev(model, dev):
+    """The C++ engine's evaluation callback for `model`: (boards, players) -> (move probabilities, values) from one
+    batched forward pass on `dev`."""
+    def ev(bs, ps):
+        t = torch.from_numpy(np.stack([board_to_input_array_from_numeric(b, p) for b, p in zip(bs, ps)])).float().to(dev)
+        with torch.inference_mode():
+            pl, v = model(t)
+        return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
+    return ev
+
+
+def make_batch_eval(model, device):
+    """Like make_ev, but the input batch uses the device's preferred memory format (channels_last on CUDA, as in
+    training) and a single-board batch still returns a 2-D probability array."""
+    def eval_batch_fn(boards, players):
+        inputs = [board_to_input_array_from_numeric(b, p) for b, p in zip(boards, players)]
+        t = torch.from_numpy(np.stack(inputs)).float().to(device).contiguous(
+            memory_format=preferred_memory_format(device))
+        with torch.inference_mode():
+            logits, v = model(t)
+        probs = torch.exp(logits).cpu().numpy().astype(np.float64)
+        if probs.ndim == 1:
+            probs = probs.reshape(1, -1)
+        return probs, v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
+    return eval_batch_fn

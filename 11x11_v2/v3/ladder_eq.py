@@ -1,4 +1,4 @@
-"""Draw- and colour-aware Rapfi equal point for v3 checkpoints (2026-10-25, user: draws now dominate the ladder).
+"""Draw- and colour-aware Rapfi equal point for v3 checkpoints (draws dominate the ladder).
 
 Model (Davidson with a first-move term), per game against Rapfi n nodes:
     x = (a + b*log10(n) + c*(+1 if we are X else -1)) * ln10/400      (Elo diff -> nats)

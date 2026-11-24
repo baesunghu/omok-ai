@@ -36,21 +36,25 @@ OMOK_RUN=11x11_v2 python shared/ladder_ci.py
 | `naps_trainer.py` | NAPS 학습 루프 `train_mcts_alpha_zero`: 대국 생성 → 버퍼 → 학습 → 게이트 → 측정. 아래 `naps_*` 모듈을 부른다 |
 | `naps_common.py` | 학습기 전체가 함께 쓰는 설정과 상태: `model/` 파일 경로, 보고 로거, 시뮬레이션 수·LR 설정, 가치 목표, 리플레이 버퍼, 에포크 수 |
 | `naps_openings.py` | 대국 시작 국면: 대칭으로 줄인 첫 수, 전술·강제 시작 국면 |
-| `naps_selfplay.py` | 자가대국 한 판(`_play_one_mcts_game`)과 여러 판 |
+| `naps_selfplay.py` | 자가대국 한 판(`play_one_mcts_game`)과 여러 판. 세 종류 학습 대국이 함께 쓰는 "모델의 한 수"(`pick_training_move`) |
 | `naps_gate.py` | 게이트: 후보가 현재 best와 둔다. 점수 = (승 + 0.5 × 무 − 벌점 × 패) / 판 수 |
 | `naps_vsdet.py` | 결정론적 미니맥스 상대와의 대국: 평가와 학습 데이터 |
 | `naps_league.py` | 리그: 지난 체크포인트와 best 모델을 상대로 두는 대국 |
 | `naps_tactics.py` | 합성 전술 국면: 닫힌 3, 포크, 쌍사, 열린 3, 진단 국면 |
 | `naps_hard_examples.py` | 어려운 국면: 끝난 대국에서 신경망이 틀리거나 망설인 국면을 깊은 탐색으로 다시 라벨해 풀에 모으고 학습에 섞는다 |
+| `naps_threats.py` | 판 위협 검사: 4목의 빈칸, 포크 자리, 바로 이기는 자리, 상대가 다음 수에 포크를 만들 수 있는지 |
+| `naps_tactical_refresh.py` | 전술 보강 학습: 합성·채굴 전술 국면으로 몇 에폭 지도학습, 에폭마다 열린 3 국면 주입 |
 | `mcts_cpp.py` | MCTS: 신경망 평가를 C++ 엔진에 연결 (v2 엔진이면 VCF·MEGA 인자도 넘김) |
-| `selfplay_mp_unified.py` | 자가대국·리그·게이트를 한 풀에서 두는 멀티프로세스 풀 (v2는 C++ 스레드 자가대국 `11x11_v2/selfplay_cpp.py`) |
-| `selfplay_mp.py`, `mp_eval.py` | 예전 멀티프로세스 자가대국과 평가 (일부 함수를 학습 본체가 가져다 씀) |
-| `fast_board.py` | 판 크기(`run_config`에서), 승리 판정, 파일 이름 접미사 `FILE_SUFFIX` (`_11x11`) |
-| `board_encoding.py` | 판을 신경망 입력 평면 5장으로 바꾸기 (내 돌, 상대 돌, 빈칸, 내·상대 포크 칸) |
+| `naps_games.py` | 대국 풀의 작업자가 부르는 게임 함수 목록 (자가대국·미니맥스·리그·게이트 한 판, 채굴, 재라벨). 학습기의 함수를 그대로 가져온다 |
+| `selfplay_pool.py` | 대국 풀 (주 경로): 한 에폭의 자가대국·미니맥스·리그 대국과 보강·게이트 작업을 프로세스 10개가 한 대기열에서 나눠 둔다 (v2는 C++ 스레드 자가대국 `11x11_v2/selfplay_cpp.py`) |
+| `selfplay_pool_tasks.py` | 대국 풀의 작업자가 작업 하나를 처리하는 법, 끝난 대국을 학습 표본으로 바꾸는 법 (출처별 가중치) |
+| `selfplay_pool_evaluator.py` | 대국 풀의 GPU 평가: 작업자들의 평가 요청을 모델별로 모아 한 번에 계산 |
+| `selfplay_pool_fallback.py` | 예비 대국 풀: 주 풀이 꺼졌거나(`MP_UNIFIED_OFF`) 실패했을 때 자가대국만 여러 프로세스로 둔다. 이것도 실패하면 스레드로 둔다 |
+| `mp_eval.py` | 미니맥스 상대 평가를 여러 프로세스로 (실패하면 스레드로). 평가 프로세스가 V1 신경망을 만들어서 지금의 V3 체크포인트를 읽지 못하므로, 불리면 늘 스레드 경로로 넘어간다. 학습 설정(`eval_interval=0`)에서는 불리지 않는다 |
+| `fast_board.py` | 판 크기(`run_config`에서)와 `NUM_CELLS`, 승리 판정, 파일 이름 접미사 `FILE_SUFFIX` (`_11x11`), 수마다 탐색 횟수(`sims_for_state`) |
+| `board_encoding.py` | 판을 신경망 입력 평면 5장으로 바꾸기 (내 돌, 상대 돌, 빈칸, 내·상대 포크 칸), 학습 표본의 8가지 대칭 (`augment_sample`), C++ 엔진에 넘길 평가 함수 (`make_ev`, `make_batch_eval`) |
 | `nets.py` | 신경망 `GomokuNetV1`, `GomokuNetV2` (SE 블록 + GroupNorm), `GomokuNetV3` (V2 + 생존 헤드, NAPS가 쓰는 구조). v3 실행의 `NetV3`도 이것을 바탕으로 한다 |
-| `mcts_python.py` | 파이썬 MCTS와 후보 수 가지치기 (C++ 엔진 이전) |
 | `deterministic_play.py` | 결정론적 미니맥스 상대 (C++ `deterministic_play_core`로 위임) |
-| `legacy_trainer_basic.py`, `legacy_trainer_mcts.py` | 옛 학습기. 데이터 증강·로거 등을 다른 모듈이 가져다 쓴다 |
 
 ## 측정과 감시
 
@@ -67,9 +71,12 @@ OMOK_RUN=11x11_v2 python shared/ladder_ci.py
 | `promotion_sms.py` | 승격 문자 알림 |
 | `ladder_ci.py` | 래더 대등점의 부트스트랩 신뢰구간 |
 | `rapfi_progress.py`, `status_all.py`, `hourly_status.py` | 진행 상황 보기, 총괄 현황, 한 시간마다 상태 기록 |
-| `fork_status_check.py`, `fork_status_check_solver.py`, `attack_ladder.py` | 포크(쌍삼·쌍사) 공격·방어 단계 검사 |
+| `fork_status_check.py`, `fork_status_check_solver.py`, `attack_ladder.py` | 포크(쌍삼·쌍사) 공격·방어 단계 검사 (`_solver`는 같은 검사를 solver 엔진으로 돌린다) |
 | `double_three_test.py` | 삼삼 측정 문제 |
-| `elo_defense.py`, `elo_roundrobin.py`, `elo_trend.py`, `eval_league_greedy.py` | 체크포인트끼리 Elo 비교 |
+| `elo_defense.py`, `elo_roundrobin.py`, `elo_trend.py` | 체크포인트끼리 Elo 비교 |
 | `draw_trend.py`, `loss_trend_annotated.py`, `matchup_chart.py` | 그래프 (`matchup_chart.py`는 NAPS 기록용, `11x11_naps`에서 실행) |
 | `human_rapfi_rating.py` | 웹 대국판 방문자의 수를 Rapfi 노드 단위로 평가 (`11x11_naps/hlt/web/games.jsonl`) |
-| `_vs_human_turn.py` | 채팅으로 사람 대 AI 대국을 한 수씩 진행 |
+
+옛 학습기(`legacy_trainer_basic.py`, `legacy_trainer_mcts.py`), 파이썬 MCTS(`mcts_python.py`), 그리고 이것들에 기대던 도구
+`_vs_human_turn.py`, `eval_league_greedy.py`는 `archive/shared/`로 옮겼다. 두 도구는 V1 신경망만 읽어서 Gen12 이후의 체크포인트(V3)를
+읽지 못한다. 사람 대 AI 대국은 웹 대국판(`11x11_naps/hlt/web/`)이 맡는다.

@@ -1,4 +1,4 @@
-"""Rapfi node count -> Elo curve (2026-10-27, user: "make a rapfi(node) -> elo function").
+"""Rapfi node count -> Elo curve.
 
 Why: the node ladder is a log ruler that also saturates at high nodes, so "50x the nodes" does not translate
 into a fixed Elo gap. This fits the ruler itself from every model-vs-Rapfi game we have, so node counts can
@@ -19,7 +19,6 @@ import collections
 import json
 import math
 import os
-import sys
 
 import numpy as np
 

@@ -1,4 +1,4 @@
-"""2026-11-11 (user: re-verify CATFISH at the original recipe, game-noise ~1 %): extra head-to-head games on the SAME checkpoints
+"""Re-verify CATFISH at the original recipe (game noise ~1%): extra head-to-head games on the SAME checkpoints
 but with openings that head2head.py's 100-opening set (H2H_ALL) never used. head2head is noiseless, so replaying old openings would
 only repeat the same games.
 Openings: first stone in rows/cols 3..7, second within +-2 of it (both on the board), minus the 100 of H2H_ALL, shuffled with the fixed

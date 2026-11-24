@@ -31,7 +31,7 @@ engine_mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(engine_mod)
 engine_mod.set_vcf(10, 3000)
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "shared"))   # shared/: code common to every run
-from board_encoding import board_to_input_array_from_numeric
+from board_encoding import make_ev
 from nets import GomokuNetV3
 from fast_board import BOARD_SIZE, WIN_LENGTH, fast_check_win
 
@@ -63,7 +63,6 @@ def _load_net(path):
 def last_promoted_epoch():
     """Epoch of the most recent gate promotion, read from the trainer logs
     (the best checkpoint file itself does not record which epoch it is)."""
-    import glob
     best = None
     # The training report holds every gate line across restarts (stdout logs are per run)
     for f in [os.path.join(TENX, "model", "training_report_11x11.txt")]:
@@ -101,7 +100,7 @@ for _ep, _note in ((880, "축제 1순위 후보, 졸업 3/3"), (890, "Rapfi 최�
         MODELS[f"ep{_ep}"] = {"net": _load_net(_p),
                               "info": {"key": f"ep{_ep}", "name": f"NAPS-{_ep} ({_note})", "checkpoint": f"ep{_ep}.pth",
                                        "promoted_epoch": _ep, "saved": "2026-10-10"}}
-# NOON model v3 ep530 (정오 충족 10/25 14:14:29), the festival pick
+# NOON (정오) model: v3 ep530, met the bar 10/25 14:14:29; the festival pick
 _V3_530 = os.path.join(V3_DIR, "model", "v3_ep530.pth")
 if os.path.exists(_V3_530):
     MODELS["v3_ep530"] = {"net": _load_net(_V3_530),
@@ -116,11 +115,7 @@ def public_info(key):
 
 
 def ev(bs, ps, key=DEFAULT_MODEL):
-    net = MODELS[key]["net"]
-    t = torch.from_numpy(np.stack([board_to_input_array_from_numeric(b, p) for b, p in zip(bs, ps)])).float().to(dev)
-    with torch.inference_mode():
-        pl, v = net(t)
-    return torch.exp(pl).cpu().numpy().astype(np.float64).reshape(len(bs), -1), v.squeeze(-1).cpu().numpy().astype(np.float64).reshape(-1)
+    return make_ev(MODELS[key]["net"], dev)(bs, ps)   # the net is looked up on every call, as before
 
 
 def num(board):
@@ -352,7 +347,7 @@ def ai_think(g, gen):
 
 
 def mate_info(g):
-    """2026-10-26 (user): chess-style 'M n' for the board -- each side's VCF (win by continuous fours) from the
+    """Chess-style 'M n' for the board -- each side's VCF (win by continuous fours) from the
     engine, n = the attacker's moves. Cached per position; VCF only, so a slower forced win (threes) shows nothing."""
     key = len(g["moves"])
     if g.get("_mate", (None,))[0] != key:

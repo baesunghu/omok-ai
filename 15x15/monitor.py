@@ -1,4 +1,4 @@
-"""15x15 live terminal monitor (2026-10-16, user): one screen, refreshed every second, no Claude needed.
+"""15x15 live terminal monitor: one screen, refreshed every second.
 Usage: python monitor.py      (Ctrl+C to quit)
 Shows: run-3 chain stage, data/pretraining progress, latest epochs, gates, ladder progress/results, processes, GPU.
 """

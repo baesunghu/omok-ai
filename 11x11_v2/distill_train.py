@@ -1,4 +1,4 @@
-"""Small-net distillation, round 2 (11x11_v2, 2026-10-21, user: "more and better data").
+"""Small-net distillation, round 2 (11x11_v2).
 
 Trains small nets of the main architecture on model/distill_data.npz (distill_data_gen.py: ~1M
 distinct teacher-play positions labelled with the teacher's raw policy and value). Held-out test set =

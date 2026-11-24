@@ -1,4 +1,4 @@
-"""11x11_v3 live terminal monitor (2026-10-22, user): one screen, refreshed every 2 s, no Claude needed.
+"""11x11_v3 live terminal monitor: one screen, refreshed every 2 s.
 Usage: python monitor_v3.py      (Ctrl+C to quit)
 Shows: latest epochs (losses, game length, X/O/D, speed), loss trend, Rapfi ladder results / progress,
 processes, GPU.

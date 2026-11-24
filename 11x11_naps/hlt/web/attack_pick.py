@@ -1,5 +1,4 @@
-"""Attack-leaning final move pick, no retraining (2026-10-26, user: "white is too defensive, ease it by a
-technical method, not training"). After the search, among candidates the search rates almost as good as
+"""Attack-leaning final move pick without retraining (white played too defensively). After the search, among candidates the search rates almost as good as
 the best (visits >= SHARE x top and Q >= best Q - QTOL), play the one that builds the most of our own
 lines instead of the most visited one. A proven win is never overridden and a proven loss is never picked."""
 SHARE = 0.3    # candidate must have at least this fraction of the top move's visits

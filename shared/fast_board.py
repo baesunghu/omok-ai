@@ -8,6 +8,7 @@ except ImportError:
 
 from run_config import BOARD_SIZE  # noqa: E402  (each run folder's run_config.py; 11 or 15)
 WIN_LENGTH = 5
+NUM_CELLS = BOARD_SIZE * BOARD_SIZE
 # every model / report / state file of a run carries this suffix (best_mcts_11x11.pth, training_report_11x11.txt)
 FILE_SUFFIX = "" if BOARD_SIZE == 3 else f"_{BOARD_SIZE}x{BOARD_SIZE}"
 
@@ -132,3 +133,26 @@ def fast_check_draw(board):
             if board[r][c] == ' ':
                 return False
     return True
+
+
+# Search budget per move (here, not in naps_common, so torch-free worker processes such as mp_eval's can use it)
+def sims_for_state(num_empty, base_sims, boosted_sims=None, boost_threshold=0, boost_when_narrow=False):
+    """
+    Simulations for one move. Extra search pays only where it changes the answer: on 5x5 a fixed budget had
+    not converged on a wide-open board (top move's visit share 49% -> 79% from 100 to 1,600 sims at 25 empty cells)
+    but had on narrower ones (flat ~38% at 14 empty). So boosted_sims applies while num_empty > boost_threshold.
+
+    boost_when_narrow=True inverts that, boosting the late game instead: on 3x3 a critical defensive move stayed at
+    ~1/100 visits in the mid/late game. Because that switch dropped the wide-open boost, the opening is boosted in
+    any case (num_empty > NUM_CELLS - 10, before the 10th stone): at 23 empty cells a 100-sim search picked a move the
+    search itself rejects with 600+ sims (24% -> 92% visit share), and that move led to a loss.
+    """
+    if not boosted_sims:
+        return base_sims
+    if boost_when_narrow:
+        sims = boosted_sims if num_empty <= boost_threshold else base_sims
+    else:
+        sims = boosted_sims if num_empty > boost_threshold else base_sims
+    if num_empty > NUM_CELLS - 10:
+        sims = max(sims, boosted_sims)
+    return sims

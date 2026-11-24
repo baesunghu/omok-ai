@@ -55,7 +55,7 @@ def restart_training():
     # Switched OFF the Task Scheduler path. Confirmed via
     # Task Scheduler that "AZ11x11_Training" also carries a LogonTrigger
     # (fires on every Windows logon, independent of whether a trainer is
-    # already running) -- after today's reboot this produced two
+    # already running) -- after one reboot this produced two
     # independently-advancing _restart_train.py processes at once (an
     # interleaved, offset-by-~10-epochs duplicate report sequence lasting
     # hours), and this watchdog has no admin rights to remove that trigger

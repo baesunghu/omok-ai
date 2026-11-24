@@ -8,13 +8,14 @@ import re
 import torch
 from concurrent.futures import ThreadPoolExecutor
 
+from fast_board import sims_for_state
 from mcts_cpp import BOARD_SIZE, MCTS, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH
 from nets import GomokuNetV3 as GomokuNet
-from legacy_trainer_basic import augment_sample
-from board_encoding import board_to_input_array, preferred_memory_format
-from naps_common import _SUFFIX, mixed_value_target, sims_for_state
-from naps_openings import _OPENING_SQUARES
+from board_encoding import augment_sample, board_to_input_array, preferred_memory_format
+from naps_common import FILE_SUFFIX, mixed_value_target
+from naps_selfplay import pick_training_move
+from naps_openings import OPENING_SQUARES
 from naps_gate import BEST_CHECKPOINT_PATH, RECORD_LEAGUE_SIDE
 
 
@@ -26,17 +27,17 @@ from naps_gate import BEST_CHECKPOINT_PATH, RECORD_LEAGUE_SIDE
 # gets tested against unless that one opponent happens to exploit it. League
 # training (AlphaStar/OpenAI Five) mixes in games against a pool of the
 # model's OWN past checkpoints (already saved every 10 epochs as
-# model_MCTS_ep{N}{_SUFFIX}.pth snapshots -- no new storage needed), so
+# model_MCTS_ep{N}{FILE_SUFFIX}.pth snapshots -- no new storage needed), so
 # self-play sees a diversity of strategies instead of one fixed target.
 
 
 LEAGUE_ANCHOR_PROB = 0.0   # random anchor draw (first try) -- superseded by the rotation below
 LEAGUE_ANCHOR_ROTATION = True  # epoch%3 -> Dawn / ep645 / normal draw
-_LEAGUE_SNAPSHOT_RE = re.compile(r"model_MCTS_ep(\d+)" + re.escape(_SUFFIX) + r"\.pth$")
+_LEAGUE_SNAPSHOT_RE = re.compile(r"model_MCTS_ep(\d+)" + re.escape(FILE_SUFFIX) + r"\.pth$")
 
 
 def _load_league_model(path, device):
-    """Shared checkpoint-load helper for _pick_league_opponent's two
+    """Shared checkpoint-load helper for pick_league_opponent's two
     branches (tracked-best / snapshot-pool). Returns the loaded, eval()'d
     model, or None on any load failure (caller treats None as "skip league
     games this epoch", same as the pre-existing failure behavior)."""
@@ -51,43 +52,20 @@ def _load_league_model(path, device):
     return league_model
 
 
-def _pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch=0,
+def pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch=0,
                            deep_history_prob=0.10, deep_history_min_epoch=100):
-    """Picks a frozen league opponent for this epoch's vs-League games.
+    """Picks the frozen opponent for this epoch's vs-League games. Returns (league_model, path), or None when
+    loading the best checkpoint failed or fewer than 2 snapshots exist (too early for league play to add anything).
 
-    With probability best_checkpoint_prob (checked first), loads the
-    tracked BEST_CHECKPOINT_PATH -- the strongest validated checkpoint,
-    always kept up to date by run_gating_check's promotion logic -- instead
-    of sampling from the snapshot pool at all. This guarantees a real,
-    strong sparring partner shows up in league play regardless of how the
-    plain recency-weighted draw below happens to fall.
-
-    Otherwise (or if that file doesn't exist), with probability
-    deep_history_prob (once epoch >= deep_history_min_epoch) samples
-    UNIFORMLY from the FULL snapshot history instead of just the most
-    recent pool_size -- the recency-weighted pool below permanently
-    excludes a snapshot once pool_size*10 epochs have passed it, so without
-    this the model would only ever face styles from its own recent past,
-    never its much-earlier (structurally weaker/more exploratory) self.
-    Kept low-probability and floored at deep_history_min_epoch so it stays
-    a small, occasional addition, not a replacement for the recency-weighted
-    pool that already does most of the work.
-
-    Otherwise, falls back to the existing snapshot pool: a random past
-    checkpoint snapshot from the most recent pool_size snapshots BY EPOCH
-    NUMBER, not filesystem mtime -- mtime can get scrambled by anything
-    that touches the files without touching training progress, e.g. a
-    backup pass or several snapshots written in quick succession right
-    around a restart. Sampling within that pool is recency-weighted
-    (linearly favoring the newest snapshot), not uniform, since the newest
-    snapshots are the most representative of the model's current style --
-    the whole point of league play is testing against strategies close to
-    what self-play might otherwise overfit to.
-
-    Returns (league_model, path), or None if the best-checkpoint load
-    failed, or if fewer than 2 snapshots exist yet -- too early in training
-    for league play to add anything over the fixed deterministic opponent
-    already in use."""
+    In this order:
+      * with probability best_checkpoint_prob, the tracked best checkpoint (BEST_CHECKPOINT_PATH) -- a strong
+        sparring partner whatever the draw below does;
+      * from epoch deep_history_min_epoch on, with probability deep_history_prob, a snapshot drawn uniformly from the
+        whole history -- the recent pool below never revisits old snapshots, so without this the model would only
+        meet its recent selves;
+      * otherwise one of the newest pool_size snapshots by epoch number (not file time, which backups and restarts
+        scramble), weighted toward the newest, since those play most like the current model.
+    """
     # Deterministic rotation over epochs --
     # epoch % 3 == 0 -> first anchor (Dawn ep625), == 1 -> second anchor (ep645),
     # == 2 -> the normal draw below (best / deep history / recency pool).
@@ -115,7 +93,7 @@ def _pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch
             return None
         return league_model, chosen
 
-    pattern = f"model/model_MCTS_ep*{_SUFFIX}.pth"
+    pattern = f"model/model_MCTS_ep*{FILE_SUFFIX}.pth"
     numbered = []
     for path in glob.glob(pattern):
         m = _LEAGUE_SNAPSHOT_RE.search(os.path.basename(path))
@@ -148,8 +126,8 @@ def _pick_league_opponent(device, pool_size=20, best_checkpoint_prob=0.28, epoch
 LEAGUE_NUM_OPPONENTS = 12  # Many opponents per epoch instead of one
 
 
-def _pick_league_opponents_multi(device, k, pool_size=40, epoch=0):
-    """2026-10-08 (user, option A): k distinct league opponents for ONE epoch --
+def pick_league_opponents_multi(device, k, pool_size=40, epoch=0):
+    """k distinct league opponents for ONE epoch --
     the fixed anchors (Dawn ep625, ep645), the current best, one uniform pick from
     the whole snapshot history, and the rest recency-weighted from the newest
     pool_size snapshots without replacement. Returns [(model, path), ...]."""
@@ -169,7 +147,7 @@ def _pick_league_opponents_multi(device, k, pool_size=40, epoch=0):
     if os.path.exists(BEST_CHECKPOINT_PATH):
         add(BEST_CHECKPOINT_PATH)
     numbered = []
-    for path in glob.glob(f"model/model_MCTS_ep*{_SUFFIX}.pth"):
+    for path in glob.glob(f"model/model_MCTS_ep*{FILE_SUFFIX}.pth"):
         mm = _LEAGUE_SNAPSHOT_RE.search(os.path.basename(path))
         if mm:
             numbered.append((int(mm.group(1)), path))
@@ -185,7 +163,7 @@ def _pick_league_opponents_multi(device, k, pool_size=40, epoch=0):
     return chosen
 
 
-def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, mcts_plays_x,
+def play_one_mcts_vs_league_game(model, league_model, device, num_simulations, mcts_plays_x,
                                    boosted_sims=None, boost_threshold=0,
                                    temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25,
                                    c_puct=1.414, eval_cache=None, boost_when_narrow=False,
@@ -193,29 +171,16 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
                                    opening=None, league_pooled_evaluator=None, league_eval_cache=None,
                                    max_plies=None):
     """
-    Like _play_one_mcts_vs_deterministic_game, but the opponent is a frozen
-    past checkpoint of this same model instead of deterministic_play. Both
-    sides' moves are recorded (the league opponent runs a real, always-full
-    search -- see league_sims below -- so its visit distribution is just as
-    valid a policy target as the live model's own): the live model was
-    previously only ever training on its own moves against the league pool,
-    never on the moves of the checkpoints that actually beat it, which
-    starved league-derived data of the one thing it could uniquely teach.
+    Like play_one_mcts_vs_deterministic_game, but the opponent is a frozen past checkpoint of the same model,
+    searching without noise. The league side's moves are recorded only when RECORD_LEAGUE_SIDE is on (off now: the
+    opponents are older and weaker, so their visit counts taught weaker moves).
 
-    opening (see _play_one_mcts_vs_deterministic_game): pre-places X's first
-    move there before normal play resumes. The league side's own moves use
-    add_noise=False (greedy), so when it moves first, every game with the
-    same side assignment would otherwise replay the identical opening move.
+    opening: X's first stone is placed there first (the greedy league side would otherwise open identically in
+    every game with the same sides). league_pooled_evaluator / league_eval_cache route the league side's evaluations
+    separately -- a pool worker holds no weights, so its proxy must point at the league model; None (default) calls
+    league_model directly.
 
-    league_pooled_evaluator/league_eval_cache (2026-09-26, unified MP
-    game pool): route the LEAGUE side's leaf evaluations through a separate
-    evaluator/cache -- a worker process holds no weights, so it needs a
-    proxy that the GPU coordinator maps to the league model. Both default
-    to None, which keeps the original behavior (league side calls
-    league_model directly with a private per-search cache).
-
-    Returns (history, outcome, mcts_result): mcts_result is
-    'mcts'/'league'/'draw' from the live model's perspective.
+    Returns (history, outcome, result): result is 'mcts' / 'league' / 'draw' from the live model's side.
     """
     mcts_player = 'X' if mcts_plays_x else 'O'
     mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
@@ -250,36 +215,14 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
             outcome = 0
             break
 
-        num_empty = sum(1 for row in board for cell in row if cell == ' ')
-
         if current_player == mcts_player:
-            is_full_search = full_search_prob >= 1.0 or random.random() < full_search_prob
-            if is_full_search:
-                sims_this_move = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
-            else:
-                sims_this_move = fast_sims or max(1, num_simulations // 6)
-            root = mcts.search(board, current_player, model, device,
-                                num_simulations=sims_this_move, add_noise=is_full_search,
-                                dirichlet_alpha=dirichlet_alpha, noise_weight=noise_weight)
-            if not root.children:
+            move = pick_training_move(mcts, board, current_player, model, device, decisions, num_simulations,
+                                      boosted_sims, boost_threshold, boost_when_narrow, full_search_prob, fast_sims,
+                                      temperature_moves, dirichlet_alpha, noise_weight)
+            if move is None:
                 outcome = 0
                 break
-
-            total_visits = sum(child.n_visits for child in root.children.values())
-            target_policy_map = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
-            for act, child in root.children.items():
-                r, c = divmod(act, BOARD_SIZE)
-                target_policy_map[r, c] = child.n_visits / total_visits if total_visits > 0 else 0.0
-
-            move_count = decisions
-            actions = list(root.children.keys())
-            visits = np.array([root.children[a].n_visits for a in actions], dtype=np.float32)
-            if move_count < temperature_moves:
-                probs = visits / visits.sum()
-                chosen_act = np.random.choice(actions, p=probs)
-            else:
-                chosen_act = actions[np.argmax(visits)]
-            r, c = divmod(chosen_act, BOARD_SIZE)
+            r, c, is_full_search, target_policy_map, root = move
             decisions += 1
 
             if is_full_search:
@@ -289,6 +232,7 @@ def _play_one_mcts_vs_league_game(model, league_model, device, num_simulations, 
             # PCR on the league side too (same full_search_prob
             # as the MCTS side): a fast search only picks the move and is not
             # recorded. At full_search_prob=1.0 this is the old behavior.
+            num_empty = sum(1 for row in board for cell in row if cell == ' ')
             league_full = full_search_prob >= 1.0 or random.random() < full_search_prob
             if league_full:
                 league_sims = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
@@ -338,7 +282,7 @@ def generate_mcts_vs_league_data(model, league_model, device, num_games=6, num_s
                                   value_q_weight=0.0, max_plies=None):
     """
     Same shape as generate_mcts_vs_deterministic_data, but the opponent is a
-    frozen past checkpoint of this model (see _play_one_mcts_vs_league_game).
+    frozen past checkpoint of this model (see play_one_mcts_vs_league_game).
     """
     max_workers = max_workers or max(1, min(num_games, os.cpu_count() or 1))
     print(f"Generating {num_games} MCTS-vs-League training games "
@@ -349,11 +293,11 @@ def generate_mcts_vs_league_data(model, league_model, device, num_games=6, num_s
     outcome_counts = {'mcts_win': 0, 'league_win': 0, 'draw': 0}
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [pool.submit(_play_one_mcts_vs_league_game, model, league_model, device, num_simulations,
+        futures = [pool.submit(play_one_mcts_vs_league_game, model, league_model, device, num_simulations,
                                 i % 2 == 0, boosted_sims, boost_threshold,
                                 temperature_moves, dirichlet_alpha, noise_weight, c_puct, eval_cache,
                                 boost_when_narrow, pooled_evaluator, full_search_prob, fast_sims,
-                                _OPENING_SQUARES[(i + epoch) % len(_OPENING_SQUARES)],
+                                OPENING_SQUARES[(i + epoch) % len(OPENING_SQUARES)],
                                 None, None, max_plies)
                    for i in range(num_games)]
         for future in futures:

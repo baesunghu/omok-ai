@@ -1,5 +1,5 @@
-"""Local live dashboard of the web board's games (2026-10-16, user: "see the games in progress like a dashboard
-before opening the spectator view").
+"""Local live dashboard of the web board's games -- the games in progress at a glance, before
+opening the spectator view.
 
 Reads live_games.json (written by server.py on every move) once a second, remembers when each session last
 changed, and serves a page with a mini board per session plus its spectator link. Bound to 127.0.0.1 only: the

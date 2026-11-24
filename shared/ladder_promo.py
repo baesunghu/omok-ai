@@ -65,7 +65,7 @@ TACT = os.path.join(HERE, "model", "tactical_problem_log.jsonl")
 
 def grad_score(ckpt_name):
     """(graduation passed, total, all passed) from the newest problem check of this checkpoint, or None.
-    2026-10-12 (user): guard against Rapfi bias -- a ladder promotion must not do worse on the
+    Guard against Rapfi bias -- a ladder promotion must not do worse on the
     graduation problems than the current best."""
     last = None
     if os.path.exists(TACT):

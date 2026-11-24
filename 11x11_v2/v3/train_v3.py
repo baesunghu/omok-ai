@@ -1,4 +1,4 @@
-"""11x11_v3 trainer (2026-10-22, user: "도박"): pure cold start, no outside data.
+"""11x11_v3 trainer: pure cold start, no outside data.
 
   * network      net_v3.NetV3, 128 ch x 8 blocks, fresh random init
   * search       C++ SelfPlayRunner with the Gumbel AlphaZero root (Danihelka et al. 2022):
@@ -18,8 +18,6 @@ Arms of the CATFISH controlled experiment (v3/arms.py) run with the same file:
     python train_v3.py B_catfish_s2     arm B_catfish_s2, working folder v3/ab_scratch/B_catfish_s2/
                                         (NAPS_ARM=B_catfish_s2 does the same)
 """
-import json
-import math
 import os
 import random
 import sys
@@ -79,7 +77,7 @@ SIMS_FULL = 400          # Gumbel full search (recorded). 200 -> 400: stronger p
 SIMS_FAST = 48           # fast search (not recorded)
 FULL_PROB = 0.25         # playout-cap randomization
 GUMBEL_M_FULL, GUMBEL_M_FAST = 32, 16   # 16/8 -> 32/16, low-prior moves reach the candidate set more often
-# Exploration for self-play ("창발적 수"): random opening stones, early-move temperature
+# Exploration for self-play (for emergent moves): random opening stones, early-move temperature
 # (sampled from the Gumbel improved policy), Dirichlet noise on the Gumbel candidate sampling.
 OPEN_FRAC = 0.25         # share of self-play games that start from a random opening (0.5 -> 0.25 against black-win drift)
 OPEN_STONES = (2, 4)     # random stones placed (alternating X, O) within OPEN_RADIUS of the centre

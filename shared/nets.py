@@ -7,17 +7,9 @@
 The v3 run's network (11x11_v2/v3/net_v3.py, NetV3: 128 channels x 8 blocks, auxiliary heads) is a different,
 smaller net built from GomokuNetV3. Checkpoints are state_dicts, so they load under the new class names.
 """
-import os
-
-import torch
 import torch.nn as nn
 
-from board_encoding import (  # noqa: F401 -- re-exported for convenience
-    BOARD_SIZE, WIN_LENGTH, NUM_CELLS, NUM_INPUT_CHANNELS, INPUT_SIZE,
-    board_to_input_array, board_to_input_array_from_numeric,
-    board_to_input_tensor, boards_to_input_tensor, preferred_memory_format,
-    _fork_mask,
-)
+from board_encoding import BOARD_SIZE, NUM_INPUT_CHANNELS
 
 
 # ======================================================================
@@ -131,132 +123,22 @@ class GomokuNetV1(nn.Module):
         return policy, value
 
 
-# ============================================================
-# Global Model / Device State Caching
-# ============================================================
-
-_current_model = None
-_current_device = None
-_current_model_path = None
-
-
-def _get_model_and_device_internal():
-    global _current_model
-    global _current_device
-
-    if _current_model is None or _current_device is None:
-        _current_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        _current_model = GomokuNetV1()
-        _current_model.to(_current_device)
-
-    return _current_model, _current_device
-
-
-# ============================================================
-# AI Move Selection
-# ============================================================
-
-def _ai_make_move_with_model_internal(model, device, board_state, ai_player):
-    model_input = board_to_input_tensor(board_state, ai_player, device)
-    model.eval()
-
-    with torch.no_grad():
-        policy_logits, _ = model(model_input)
-
-    move_probabilities = torch.exp(policy_logits).squeeze().cpu().numpy()
-
-    valid_moves = []
-    for i in range(NUM_CELLS):
-        r, c = divmod(i, BOARD_SIZE)
-        if board_state[r][c] == ' ':
-            valid_moves.append((move_probabilities[i], r, c))
-
-    if not valid_moves:
-        return -1, -1
-
-    valid_moves.sort(key=lambda x: x[0], reverse=True)
-    return valid_moves[0][1], valid_moves[0][2]
-
-
-def _load_model_internal(model, path, device):
-    global _current_model_path
-    if _current_model_path == path:
-        return  # Model already loaded in memory!
-
-    try:
-        if os.path.exists(path):
-            model.load_state_dict(torch.load(path, map_location=device))
-            model.eval()
-            _current_model_path = path
-    except Exception as e:
-        print(f"AlphaGoLee Notice: Model load fallback ({e}).")
-
-
-# ============================================================
-# Public API
-# ============================================================
-
-def play(board, turn, model_name):
-    global _current_model
-    global _current_device
-
-    if _current_model is None or _current_device is None:
-        _current_model, _current_device = _get_model_and_device_internal()
-
-    model_path = os.path.join('model', model_name)
-    _load_model_internal(_current_model, model_path, _current_device)
-
-    row, col = _ai_make_move_with_model_internal(_current_model, _current_device, board, turn)
-
-    if row == -1 and col == -1:
-        return None
-
-    return (row, col)
-
-
 # ======================================================================
 # V2 (until 2026-11 alphago_lee_v2_seblock.py)
 # ======================================================================
-# Experimental fused-block architecture, built alongside (not
-# replacing) alphago_lee.py's V1 network (GomokuNetV1). Imports everything except
-# the model classes from board_encoding -- fork-mask helpers, board_to_input_array,
-# board_to_input_tensor, BOARD_SIZE/NUM_CELLS/NUM_INPUT_CHANNELS -- so there is
-# exactly one source of truth for the board/tensor representation; only the
-# network internals differ here.
-#
-# Combines three changes discussed in chat, each independently motivated:
-# 1. Depthwise-separable convolutions (MobileNetV3/EfficientNet-style) instead
-#    of full 3x3 convs -- ~8-9x fewer multiply-adds per conv layer at this
-#    channel count (256), directly targeting this project's recurring GPU
-#    bottleneck.
-# 2. GroupNorm instead of BatchNorm -- GroupNorm normalizes per-sample (no
-#    batch-wide running statistics), so it behaves identically regardless of
-#    batch size or train()/eval() mode. This eliminates an entire bug class
-#    this project has hit more than once (the 5x5 gate-check BatchNorm
-#    train-mode bug and others referenced in this session) at
-#    the source, rather than continuing to rely on callers remembering to
-#    call .eval() before every MCTS leaf batch.
-# 3. Squeeze-and-Excitation channel attention (KataGo uses this in its own
-#    trunk) -- lets the network dynamically emphasize/suppress channels based
-#    on GLOBAL board context, which suits whole-board pattern reasoning
-#    (open-three / fork detection) better than treating every channel with
-#    fixed importance regardless of position.
-#
-# This combination (depthwise-separable conv + SE, "MBConv"-style) is not
-# novel -- it is the standard building block of MobileNetV3 and EfficientNet,
-# chosen here because it is well-validated in the literature, not because it
-# is untested.
-#
-# IMPORTANT: this is architecturally incompatible with existing checkpoints
-# (nets.GomokuNetV1's ResBlock uses full Conv2d + BatchNorm2d
-# with different parameter shapes) -- a model built from this file must be
-# trained from scratch, it cannot load model/best_mcts_11x11.pth or any
-# existing checkpoint. Nothing under 11x11_naps/model/ is touched by this file
-# merely existing; it only takes effect wherever something explicitly
-# imports GomokuNetV2 instead of the original.
+# SE blocks + GroupNorm. Shares the board encoding with V1 (board_encoding); only the network differs. Three changes:
+# 1. Depthwise-separable convolutions instead of full 3x3 -- about 8-9x fewer multiply-adds per layer at 256 channels,
+#    aimed at the GPU bottleneck.
+# 2. GroupNorm instead of BatchNorm -- normalizes per sample, so it behaves the same at any batch size and in
+#    train() or eval() mode. This removes the BatchNorm-mode bug class (e.g. a gate check that ran in train mode) at
+#    the source instead of relying on every caller to call .eval().
+# 3. Squeeze-and-excitation channel attention (as in KataGo's trunk): channels weighted by global board context,
+#    which suits whole-board patterns such as open threes and forks.
+# Depthwise-separable conv + SE is the standard MobileNetV3 / EfficientNet block. V2 cannot load V1 checkpoints
+# (different parameter shapes); it was trained from scratch.
 
 
-def _group_norm(channels, max_groups=32):
+def group_norm(channels, max_groups=32):
     """GroupNorm needs channels % groups == 0 -- pick the largest divisor
     of `channels` that is <= max_groups instead of assuming 32 always
     divides evenly (true for 256, not guaranteed for arbitrary channel
@@ -306,7 +188,7 @@ class DSConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.norm = _group_norm(out_channels)
+        self.norm = group_norm(out_channels)
 
     def forward(self, x):
         x = self.conv(x)
@@ -370,14 +252,14 @@ class GomokuNetV2(nn.Module):
 
         self.conv_in = nn.Sequential(
             nn.Conv2d(NUM_INPUT_CHANNELS, num_channels, kernel_size=3, padding=1),
-            _group_norm(num_channels),
+            group_norm(num_channels),
             nn.ReLU(inplace=True)
         )
         self.res_blocks = nn.ModuleList([FusedSEResBlock(num_channels) for _ in range(num_res_blocks)])
 
         self.policy_head = nn.Sequential(
             nn.Conv2d(num_channels, 8, kernel_size=1),
-            _group_norm(8),
+            group_norm(8),
             nn.ReLU(inplace=True),
             nn.Flatten(),
             nn.Linear(8 * self.num_cells, self.num_cells),
@@ -386,7 +268,7 @@ class GomokuNetV2(nn.Module):
 
         self.value_head = nn.Sequential(
             nn.Conv2d(num_channels, 4, kernel_size=1),
-            _group_norm(4),
+            group_norm(4),
             nn.ReLU(inplace=True),
             nn.Flatten(),
             nn.Linear(4 * self.num_cells, value_hidden),
@@ -409,34 +291,20 @@ class GomokuNetV2(nn.Module):
 # ======================================================================
 # V3 (until 2026-11 alphago_lee_v3_survival.py)
 # ======================================================================
-# V3 = V2 (GroupNorm + SE, nets.py) + an auxiliary
-# "survival" head that predicts how many plies remain until the game ends.
+# V3 = V2 + an auxiliary "survival" head that predicts how many plies remain.
 #
-# Why: in 11x11 free-style gomoku the first player wins almost every game
-# (elo_roundrobin.py: 68/72), so nearly every defender-side training
-# position carries the same -1 value label no matter how well it was
-# defended -- the value head has no reason to tell a good defence from a
-# bad one, and defence quality measurably fell during self-play
-# (elo_defense.py: the supervised start model survived 21.5 plies as the
-# defender, the self-play models 11-14). Predicting remaining plies gives
-# the shared trunk a dense per-position signal that does distinguish
-# "losing slowly" from "losing fast" (KataGo-style auxiliary target).
+# Why: in 11x11 free-style the first player wins almost every game (elo_roundrobin.py: 68/72), so nearly every
+# defender position carries the value label -1 however well it was defended; the value head cannot tell good
+# defence from bad, and defence measurably got worse in self-play (elo_defense.py: the supervised start model lasted
+# 21.5 plies as defender, the self-play models 11-14). Remaining plies is a dense per-position signal that separates
+# losing slowly from losing fast (a KataGo-style auxiliary target).
 #
-# Compatibility:
-# - forward(x) still returns (policy, value) exactly like V2, so every
-#   existing call site (MCTS eval callbacks, gating, league, self-play pool,
-#   test scripts) works unchanged. forward_all(x) additionally returns the
-#   survival prediction and is used only by the training step.
-# - load_state_dict() accepts V2 checkpoints: the survival_head.* keys are
-#   allowed to be missing (the head keeps its fresh init); any OTHER
-#   missing or unexpected key still raises, so a genuinely wrong checkpoint
-#   is not silently accepted.
-# - V3 checkpoints carry extra survival_head.* keys, so they do NOT load
-#   into the V2 class with strict=True. The last V2 best is kept at
-#   model/v2_final_best_ep284.pth for old-vs-new matches.
+# Compatibility: forward(x) still returns (policy, value), so every caller works unchanged; forward_all(x) adds the
+# survival prediction for the training step. load_state_dict accepts V2 checkpoints (survival_head.* may be missing;
+# any other missing or unexpected key still raises). V3 checkpoints do not load into V2 with strict=True; the last V2
+# best is model/v2_final_best_ep284.pth.
 #
-# Survival target: min(remaining_plies, SURVIVAL_CAP) / SURVIVAL_CAP, in
-# [0, 1]; the head ends in a sigmoid.
+# Target: min(remaining plies, SURVIVAL_CAP) / SURVIVAL_CAP in [0, 1]; the head ends in a sigmoid.
 
 SURVIVAL_CAP = 40
 
@@ -447,7 +315,7 @@ class GomokuNetV3(GomokuNetV2):
         num_channels = self.conv_in[0].out_channels
         self.survival_head = nn.Sequential(
             nn.Conv2d(num_channels, 2, kernel_size=1),
-            _group_norm(2),
+            group_norm(2),
             nn.ReLU(inplace=True),
             nn.Flatten(),
             nn.Linear(2 * self.num_cells, survival_hidden),

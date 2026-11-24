@@ -1,70 +1,75 @@
-"""One self-play game with the C++ MCTS (_play_one_mcts_game) and a batch of them (generate_mcts_self_play_data).
-The multiprocess pools (selfplay_mp.py, selfplay_mp_unified.py) call _play_one_mcts_game directly.
+"""One self-play game with the C++ MCTS (play_one_mcts_game) and a batch of them (generate_mcts_self_play_data).
+The multiprocess pools (selfplay_pool_fallback.py, selfplay_pool.py) call play_one_mcts_game directly.
 """
 import numpy as np
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor
 
+from fast_board import sims_for_state
 from mcts_cpp import BOARD_SIZE, MCTS, fast_check_draw, fast_check_win
 from run_config import EVAL_BATCH
 from nets import SURVIVAL_CAP
-from legacy_trainer_basic import augment_sample
-from board_encoding import board_to_input_array
-from naps_common import mixed_value_target, sims_for_state
-from naps_openings import _sample_forced_opening_start, _sample_tactical_start
+from board_encoding import augment_sample, board_to_input_array
+from naps_common import mixed_value_target
+from naps_openings import sample_forced_opening_start, sample_tactical_start
 
 
-def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost_threshold=0,
+def pick_training_move(mcts, board, player, model, device, decisions, num_simulations, boosted_sims, boost_threshold,
+                       boost_when_narrow, full_search_prob, fast_sims, temperature_moves, dirichlet_alpha, noise_weight):
+    """The model's move in a training game (self-play, vs-Det, vs-League). A full search -- always at
+    full_search_prob=1.0, else with that probability (playout-cap randomization) -- gets sims_for_state's budget and
+    Dirichlet noise and is the one callers record; a fast search only picks the move. While `decisions` (this side's
+    moves so far) < temperature_moves the move is sampled in proportion to visits, later it is the most visited one.
+    Returns None when the search found no move, else (r, c, is_full_search, target_policy_map, root)."""
+    num_empty = sum(1 for row in board for cell in row if cell == ' ')
+    is_full_search = full_search_prob >= 1.0 or random.random() < full_search_prob
+    if is_full_search:
+        sims_this_move = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
+    else:
+        sims_this_move = fast_sims or max(1, num_simulations // 6)
+    root = mcts.search(board, player, model, device, num_simulations=sims_this_move, add_noise=is_full_search,
+                       dirichlet_alpha=dirichlet_alpha, noise_weight=noise_weight)
+    if not root.children:
+        return None
+    total_visits = sum(child.n_visits for child in root.children.values())
+    target_policy_map = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+    for act, child in root.children.items():
+        r, c = divmod(act, BOARD_SIZE)
+        target_policy_map[r, c] = child.n_visits / total_visits if total_visits > 0 else 0.0
+    actions = list(root.children.keys())
+    visits = np.array([root.children[a].n_visits for a in actions], dtype=np.float32)
+    if decisions < temperature_moves:
+        probs = visits / visits.sum()
+        chosen_act = np.random.choice(actions, p=probs)
+    else:
+        chosen_act = actions[np.argmax(visits)]
+    r, c = divmod(chosen_act, BOARD_SIZE)
+    return r, c, is_full_search, target_policy_map, root
+
+
+def play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost_threshold=0,
                          temperature_moves=6, dirichlet_alpha=0.3, noise_weight=0.25, c_puct=1.414,
                          eval_cache=None, boost_when_narrow=False, start_board=None, start_player=None,
                          pooled_evaluator=None, full_search_prob=1.0, fast_sims=None,
                          return_ply_info=False, max_plies=None):
     """
-    Plays a single MCTS self-play game to completion and returns
-    (history, outcome), where history is a list of
-    (board_3d, player_turn, target_policy_map) tuples, pre-augmentation.
-    With return_ply_info=True it returns (history, outcome, ply_indices,
-    total_plies) instead: ply_indices[k] is the ply number (0-based, counted
-    from this game's start position) at which history[k] was recorded, and
-    total_plies is how many plies the game actually lasted. Needed for the
-    V3 survival target once Playout Cap Randomization skips recording
-    fast-search plies -- len(history) - k then undercounts the true
-    plies-to-end.
+    One self-play game. Returns (history, outcome): history holds (board_3d, player, target_policy_map, root value)
+    per recorded move, before augmentation. With return_ply_info=True it returns (history, outcome, ply_indices,
+    total_plies): the ply at which each history entry was recorded and the game's length, which the survival target
+    needs because skipped fast-search plies make len(history) undercount the plies left.
 
-    Builds its own MCTS() instance, but eval_cache (when passed) is shared
-    across every game and move in the calling epoch -- safe to call
-    concurrently from multiple worker threads because it's read-mostly
-    (dict get/set is GIL-atomic) and a pure function of the frozen weights
-    for the whole generation phase.
+    eval_cache, when given, is shared by every game of the epoch; that is safe across threads (dict get/set is atomic
+    under the GIL) and correct because the weights are frozen for the whole generation phase.
 
-    start_board/start_player (both or neither): start from this board
-    instead of empty -- see _sample_tactical_start, used to occasionally
-    start self-play from a reachable "hard" tactical position instead of
-    always from scratch, so self-play encounters that family of positions
-    (and must resolve it with its own search) more often than it would
-    arise naturally from full-game rollouts.
+    start_board / start_player (both or neither): start from that position instead of an empty board (see
+    sample_tactical_start), so self-play meets hard tactical positions more often than full games would produce.
 
-    full_search_prob/fast_sims: Playout Cap Randomization (KataGo). At each
-    move, with probability full_search_prob run the normal (possibly
-    boosted) search and record it as a training target; otherwise run a
-    cheap fast_sims-simulation search just to pick a move and advance the
-    game, without recording it (a low-sim search's visit distribution is
-    too noisy to be a good policy target). Same total game count spends
-    less average compute per move, so the freed budget can go to more
-    games/more full searches elsewhere. full_search_prob=1.0 (default)
-    disables this -- every move is a full search and recorded, matching
-    prior behavior exactly.
-
-    2026-09-26 PCR fixes (no effect at full_search_prob=1.0):
-      * temperature sampling is keyed on the number of plies actually played
-        (`ply`), not len(history) -- with PCR, len(history) only counts the
-        recorded (full-search) plies, which would have stretched the
-        temperature_moves exploratory window over ~1/full_search_prob times
-        as many real moves.
-      * fast searches run without Dirichlet noise (KataGo: fast searches
-        exist to play strong moves cheaply, not to explore -- they are never
-        recorded as training targets).
+    full_search_prob / fast_sims: playout-cap randomization (KataGo). Each move is a full search (recorded as a
+    training target) with probability full_search_prob, else a cheap fast_sims search that only picks the move -- its
+    visit counts are too noisy to train on. full_search_prob=1.0 (default) records every move. Temperature counts plies
+    actually played, not recorded entries, and fast searches get no Dirichlet noise (they exist to play well cheaply,
+    not to explore).
     """
     mcts = MCTS(c_puct=c_puct, eval_batch_size=EVAL_BATCH, shared_cache=eval_cache, pooled_evaluator=pooled_evaluator)
     if start_board is not None:
@@ -98,41 +103,13 @@ def _play_one_mcts_game(model, device, num_simulations, boosted_sims=None, boost
             outcome = 0
             break
 
-        num_empty = sum(1 for row in board for cell in row if cell == ' ')
-        is_full_search = full_search_prob >= 1.0 or random.random() < full_search_prob
-        if is_full_search:
-            sims_this_move = sims_for_state(num_empty, num_simulations, boosted_sims, boost_threshold, boost_when_narrow)
-        else:
-            sims_this_move = fast_sims or max(1, num_simulations // 6)
-
-        # Run MCTS search (Dirichlet noise on full searches only -- see docstring)
-        root = mcts.search(board, current_player, model, device, num_simulations=sims_this_move,
-                            add_noise=is_full_search,
-                            dirichlet_alpha=dirichlet_alpha, noise_weight=noise_weight)
-
-        if not root.children:
+        # temperature is keyed on plies actually played (equals len(history) at full_search_prob=1.0)
+        move = pick_training_move(mcts, board, current_player, model, device, ply, num_simulations,
+                                  boosted_sims, boost_threshold, boost_when_narrow, full_search_prob, fast_sims,
+                                  temperature_moves, dirichlet_alpha, noise_weight)
+        if move is None:
             break
-
-        total_visits = sum(child.n_visits for child in root.children.values())
-        target_policy_map = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
-
-        for act, child in root.children.items():
-            r, c = divmod(act, BOARD_SIZE)
-            target_policy_map[r, c] = child.n_visits / total_visits if total_visits > 0 else 0.0
-
-        # Action selection: Temperature sampling for early moves, greedy for late moves
-        # (keyed on plies actually played -- equals len(history) at full_search_prob=1.0)
-        move_count = ply
-        actions = list(root.children.keys())
-        visits = np.array([root.children[a].n_visits for a in actions], dtype=np.float32)
-
-        if move_count < temperature_moves:
-            probs = visits / visits.sum()
-            chosen_act = np.random.choice(actions, p=probs)
-        else:
-            chosen_act = actions[np.argmax(visits)]
-
-        r, c = divmod(chosen_act, BOARD_SIZE)
+        r, c, is_full_search, target_policy_map, root = move
 
         if is_full_search:
             # Store board state (3, BOARD_SIZE, BOARD_SIZE)
@@ -184,12 +161,12 @@ def generate_mcts_self_play_data(model, device, num_games=10, num_simulations=40
         for i in range(num_games):
             start_board, start_player = None, None
             if i < num_curriculum_games:
-                sampled = _sample_tactical_start()
+                sampled = sample_tactical_start()
                 if sampled is not None:
                     start_board, start_player = sampled
             elif i < num_curriculum_games + num_opening_games:
-                start_board, start_player = _sample_forced_opening_start()
-            futures.append(pool.submit(_play_one_mcts_game, model, device, num_simulations, boosted_sims,
+                start_board, start_player = sample_forced_opening_start()
+            futures.append(pool.submit(play_one_mcts_game, model, device, num_simulations, boosted_sims,
                                         boost_threshold, temperature_moves, dirichlet_alpha, noise_weight, c_puct,
                                         eval_cache, boost_when_narrow, start_board, start_player, pooled_evaluator,
                                         full_search_prob, fast_sims, True, max_plies))
@@ -202,9 +179,7 @@ def generate_mcts_self_play_data(model, device, num_games=10, num_simulations=40
             else:
                 outcome_counts['draw'] += 1
             if history and ply_indices and ply_indices[0] == 0:
-                board_3d0 = history[0][0]
-                # board_3d0's plane 0 is "current player's stones" -- at
-                # history[0] no move has landed yet, so this is always empty;
+                # history[0]'s board planes are still empty (no stone has landed yet);
                 # the first ACTUAL stone is recorded as target_policy_map's
                 # single argmax entry (a one-hot visit distribution isn't
                 # guaranteed, but for a diagnostic row-coverage count the

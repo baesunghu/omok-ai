@@ -1,10 +1,7 @@
 """The NAPS training loop (train_mcts_alpha_zero): generate games, fill the replay buffer, train, gate, measure.
 Started by shared/train_run.py (each run folder's _restart_train.py). Until 2026-11 this file also held
-everything now in naps_common / naps_openings / naps_selfplay / naps_gate / naps_vsdet / naps_league /
-naps_tactics / naps_hard_examples.
+everything now in the other naps_*.py modules.
 """
-# The self-play pools (selfplay_mp.py, selfplay_mp_unified.py) import this module by name and use
-# prod._play_one_mcts_game, prod._OPENING_SQUARES, ... -- those names are imported here for them too.
 import numpy as np
 import os
 import random
@@ -13,54 +10,26 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from run_config import EVAL_BATCH, LR_MIN, LR_PEAK, POOLED_TARGET_BATCH
+from run_config import LR_MIN, LR_PEAK, POOLED_TARGET_BATCH
 from nets import GomokuNetV3 as GomokuNet
 from mcts_cpp import PooledEvaluator
-from selfplay_mp_unified import generate_epoch_games_unified, get_task_runner
-from selfplay_mp import generate_mcts_self_play_data_mp
-from legacy_trainer_basic import logger
+from selfplay_pool import generate_epoch_games_unified, get_task_runner
+from selfplay_pool_fallback import generate_mcts_self_play_data_mp
 from board_encoding import preferred_memory_format
 from naps_common import (
     BOOST_RAMP_CEILING, BOOST_RAMP_STEP, LR_COOLDOWN_EPOCHS, SIM_RAMP_CEILING, SIM_RAMP_STEP, STAGNATION_RAMP_LIMIT,
-    SURVIVAL_LOSS_WEIGHT, TRAIN_SAMPLES_PER_EPOCH, TRAIN_STATE_PATH, _SUFFIX, annealed_value, compute_policy_entropy,
-    get_devices, load_replay_buffer, load_sim_budget, load_start_epoch, model, report_logger,
+    SURVIVAL_LOSS_WEIGHT, TRAIN_SAMPLES_PER_EPOCH, TRAIN_STATE_PATH, FILE_SUFFIX, annealed_value, compute_policy_entropy,
+    get_devices, load_replay_buffer, logger, load_sim_budget, load_start_epoch, model, report_logger,
     save_cumulative_epoch, save_replay_buffer, save_sim_budget,
 )
-from naps_openings import _ALL_CELLS
-from naps_gate import BEST_CHECKPOINT_PATH, _GATE_OPENING_SQUARES, _LAST_GATE_CANDIDATE, run_gating_check
+from naps_openings import ALL_CELLS
+from naps_gate import BEST_CHECKPOINT_PATH, GATE_OPENING_SQUARES, LAST_GATE_CANDIDATE, run_gating_check
 from naps_vsdet import evaluate_vs_deterministic, format_by_depth, generate_mcts_vs_deterministic_data
 from naps_league import (
-    LEAGUE_NUM_OPPONENTS, _pick_league_opponent, _pick_league_opponents_multi, generate_mcts_vs_league_data,
+    LEAGUE_NUM_OPPONENTS, pick_league_opponent, pick_league_opponents_multi, generate_mcts_vs_league_data,
 )
-from naps_hard_examples import (
-    _get_fork_mistake_samples, _get_hard_example_samples, _get_open_three_injection_samples, refresh_mined_tactical_pool,
-)
-# for the self-play pools, which use them as prod.<name> (see the note at the top)
-from naps_common import (  # noqa: F401
-    mixed_value_target,
-)
-from naps_openings import (  # noqa: F401
-    _OPENING_SQUARES, _sample_forced_opening_start, _sample_tactical_start, _tactical_windows,
-)
-from naps_selfplay import (  # noqa: F401
-    _play_one_mcts_game, generate_mcts_self_play_data,
-)
-from naps_gate import (  # noqa: F401
-    RECORD_LEAGUE_SIDE, _play_gate_match_game,
-)
-from naps_vsdet import (  # noqa: F401
-    _play_one_mcts_vs_deterministic_game, _sample_vs_det_max_depth,
-)
-from naps_league import (  # noqa: F401
-    _play_one_mcts_vs_league_game,
-)
-from naps_tactics import (  # noqa: F401
-    _fork_geometries,
-)
-from naps_hard_examples import (  # noqa: F401
-    _classify_hard_examples, _mine_one_selfplay_game, _mine_one_vsdet_game, _mine_one_vsleague_game,
-    _relabel_one,
-)
+from naps_hard_examples import get_fork_mistake_samples, get_hard_example_samples
+from naps_tactical_refresh import get_open_three_injection_samples, refresh_mined_tactical_pool
 
 
 def train_mcts_alpha_zero(
@@ -107,7 +76,7 @@ def train_mcts_alpha_zero(
     # previous behavior, where one value was passed to all three).
     full_search_prob_other=None,
     # Play self-play + vs-Det + vs-League games in ONE
-    # multi-process pool (selfplay_mp_unified) instead of three sequential
+    # multi-process pool (selfplay_pool) instead of three sequential
     # phases. False = the previous sequential path (which is also the
     # automatic fallback whenever the unified pool fails).
     use_unified_game_pool=False,
@@ -137,23 +106,15 @@ def train_mcts_alpha_zero(
     use_prioritized_replay=False,
 ):
     self_play_device, train_device = get_devices()
-    # lr-fix restart: base_lr 0.001->0.0001 and T_0 450->150.
-    # Weight-drift measurement (see conversation/workflow findings) showed
-    # lr=0.001 drifts the post-supervised-pretrain checkpoint 1.86x farther
-    # (matched-epoch comparison) than lr=0.0001, and drift never reverses
-    # even during low-instantaneous-LR windows of the T_0=450 schedule --
-    # consistent with the gate-check having stayed stuck at ~0% for 564+
-    # epochs after the Gen10 supervised-pretrain restart. The prior Gen7->
-    # Gen8 supervised-pretrain restart broke through gate-check right around
-    # the point its T_0=150 schedule decayed to ~1.2e-4 -- this restart
-    # starts there directly instead of spending hundreds of epochs decaying
-    # down to it.
-    # Gate stuck 15 checks (650-720) while losses kept falling ->
-    # halve the LR band (1e-4..5e-5 -> 5e-5..1e-5) to consolidate instead of drifting.
-    # ep937 cooldown ended -> LR jumped 1e-5 -> 4.4e-5 and ep940 fell to ~1,092 Rapfi nodes.
-    # Cosine peak 5e-5 -> 2e-5 (band 2e-5..1e-5) to polish rather than shake before the festival.
-    # LR band per run (run_config.py): 11x11 NAPS 2e-5..1e-5, 11x11_v2 5e-5..1e-5, 15x15 1e-4..2e-5
-    # (the 2e-5 polish band of the mature 11x11 net kept the young 15x15 net flat).
+    # Learning rate, in the order it changed:
+    # - 1e-3 -> 1e-4 and T_0 450 -> 150 (the "lr-fix" restart): at 1e-3 the weights drifted 1.86x farther from the
+    #   supervised start than at 1e-4 and never came back, matching a gate stuck at ~0% for 564+ epochs; the earlier
+    #   Gen7 -> Gen8 restart broke through when its schedule had decayed to ~1.2e-4, so this one starts there.
+    # - Gate stuck for 15 checks (ep650-720) while losses kept falling -> band 1e-4..5e-5 halved to 5e-5..1e-5.
+    # - After the ep937 cooldown the LR jumped 1e-5 -> 4.4e-5 and ep940 fell to ~1,092 Rapfi nodes -> peak 2e-5
+    #   (band 2e-5..1e-5) to polish rather than shake.
+    # The band is per run (run_config.py): 11x11 NAPS 2e-5..1e-5, 11x11_v2 5e-5..1e-5, 15x15 1e-4..2e-5 (the mature
+    # 11x11 net's polish band kept the young 15x15 net flat).
     optimizer = optim.Adam(model.parameters(), lr=LR_PEAK, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150, T_mult=1, eta_min=LR_MIN)
     start_epoch = load_start_epoch()
@@ -162,7 +123,7 @@ def train_mcts_alpha_zero(
     # Restore Adam's moments across restarts. Every restart used to reset them
     # (loss spikes at 905/911/913/945). Loaded only if saved right after the epoch we resume at;
     # the LR stays whatever the schedule/cooldown says now (the saved param_groups LR is discarded).
-    OPT_STATE_PATH = f"model/optimizer_state{_SUFFIX}.pth"
+    OPT_STATE_PATH = f"model/optimizer_state{FILE_SUFFIX}.pth"
     # A fresh Adam moves every weight by ~LR on its first steps (bias-corrected m/sqrt(v) ~ sign(g)),
     # which caused the loss spikes after every restart/rollback (ep1003 0.38, ep1047 0.41). If the moments
     # are not restored, ramp the LR over the first epochs instead.
@@ -202,7 +163,7 @@ def train_mcts_alpha_zero(
     self_play_workers = self_play_workers or max(1, (os.cpu_count() or 4) - 2)
 
     os.makedirs('model', exist_ok=True)
-    checkpoint_path = f"model/alphazero_mcts{_SUFFIX}.pth"
+    checkpoint_path = f"model/alphazero_mcts{FILE_SUFFIX}.pth"
     if os.path.exists(checkpoint_path):
         try:
             model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
@@ -231,26 +192,13 @@ def train_mcts_alpha_zero(
     gen_model.to(self_play_device, memory_format=preferred_memory_format(self_play_device))
     gen_model.eval()
 
-    # Pools eval_batch_fn calls from concurrent self-play worker threads into
-    # fewer, larger GPU forward passes -- see PooledEvaluator docstring.
-    # Constructed once (not per-epoch): holds a reference to `gen_model`, not
-    # a weight snapshot, so it keeps working correctly as run_gating_check's
-    # promotions mutate those same weights in place across epochs.
-    # target_batch=24, max_wait=0.05 (was 48/0.005): live stats
-    # logging showed this PooledEvaluator hitting its target batch 0% of the
-    # time across 300K+ flushes (avg batch ~4, timing out every single time)
-    # -- PooledEvaluator._run's `timeout = self.max_wait if pending else None`
-    # re-arms a fresh wait window on every arrival (a silence-gap debounce,
-    # not a deadline from the first pending item), and with 10 CPU-bound
-    # self-play worker threads the gap between arrivals almost never stays
-    # under the old 5ms window. Benchmarked on this exact self-play path
-    # (scratch/multiproc_investigation/bench_pooled_evaluator.py, 3-run
-    # average): target_batch=24/max_wait=0.015 grows the achieved batch
-    # ~3.8->5.0 (+32%) and self-play games/sec +19% over the old operating
-    # point; CPU-bound MCTS tree search, not GPU eval, still dominates epoch
-    # wall-clock, so this is a real but modest gain, not a step-change. Kept
-    # consistent with evaluate_vs_deterministic / run_gating_check's own
-    # scoped PooledEvaluators below, which use the same values.
+    # Merges the self-play threads' evaluation calls into larger GPU batches (see PooledEvaluator). Built once: it
+    # holds gen_model itself, so it follows the weights as promotions change them.
+    # max_wait=0.05 (was 0.005, with target 48): the wait restarts at every arrival (a silence gap, not a deadline),
+    # and with 10 CPU-bound threads arrivals were almost never 5 ms apart -- 0% of 300K+ flushes reached the target,
+    # average batch ~4. In a benchmark, target 24 / 15 ms raised the average batch 3.8 -> 5.0 and self-play
+    # games/sec +19%; tree search on the CPU, not evaluation, still dominates an epoch. The target batch is now
+    # run_config.POOLED_TARGET_BATCH.
     pooled_evaluator = PooledEvaluator(gen_model, self_play_device, target_batch=POOLED_TARGET_BATCH, max_wait=0.05) \
         if self_play_device.type == "cuda" else None
 
@@ -294,7 +242,7 @@ def train_mcts_alpha_zero(
                 cur_q_weight = 0.0
         print(f"  [value target] epoch {epoch}: q weight {cur_q_weight:.4f} (z weight {1 - cur_q_weight:.4f})", flush=True)
         # Second promotion path -- Rapfi ladder. The gate (vs the current best only)
-        # can be blocked by a matchup ("상성"); if the ladder watcher finds a measured checkpoint stronger
+        # can be blocked by a matchup; if the ladder watcher finds a measured checkpoint stronger
         # than the best with P >= 80% (bootstrap), it writes model/ladder_promote.json and the checkpoint
         # becomes the best AND the self-play generation model here, at the start of the next epoch.
         try:
@@ -320,7 +268,7 @@ def train_mcts_alpha_zero(
         except Exception as _e:
             print(f"  [ladder promotion] notice: {_e!r}", flush=True)
         if epoch % 10 == 0:
-            snap_path = f"model/model_MCTS_ep{epoch}{_SUFFIX}.pth"
+            snap_path = f"model/model_MCTS_ep{epoch}{FILE_SUFFIX}.pth"
             torch.save(model.state_dict(), snap_path)
             print(f"Snapshot saved to {snap_path}")
 
@@ -367,15 +315,15 @@ def train_mcts_alpha_zero(
         league_model = None
         league_opponent_name = None
         if num_league_games > 0 and LEAGUE_NUM_OPPONENTS > 1:
-            _picks = _pick_league_opponents_multi(self_play_device, min(LEAGUE_NUM_OPPONENTS, num_league_games),
+            _picks = pick_league_opponents_multi(self_play_device, min(LEAGUE_NUM_OPPONENTS, num_league_games),
                                                   league_pool_size, epoch=epoch)
             if _picks:
                 league_model = [m for m, _ in _picks]
                 league_opponent_name = f"{len(_picks)} opponents: " + ", ".join(
-                    os.path.basename(p).replace("model_MCTS_", "").replace(f"{_SUFFIX}.pth", "").replace(".pth", "")
+                    os.path.basename(p).replace("model_MCTS_", "").replace(f"{FILE_SUFFIX}.pth", "").replace(".pth", "")
                     for _, p in _picks)
         elif num_league_games > 0:
-            league_pick = _pick_league_opponent(self_play_device, league_pool_size, league_best_checkpoint_prob,
+            league_pick = pick_league_opponent(self_play_device, league_pool_size, league_best_checkpoint_prob,
                                                  epoch=epoch)
             if league_pick is not None:
                 league_model, league_path = league_pick
@@ -463,23 +411,23 @@ def train_mcts_alpha_zero(
         # refresh. n_positions=46 -> ~368 augmented samples/epoch, in the same
         # ballpark as this epoch's vs-Det/league volume (the target ~0.70/
         # 0.15/0.15 self/league/hard split from the approved mining spec).
-        hard_samples = _get_hard_example_samples(self_play_device, n_positions=46)
+        hard_samples = get_hard_example_samples(self_play_device, n_positions=46)
         if hard_samples:
             replay_buffer.extend(hard_samples)
 
         # Continuous per-epoch open-three curriculum injection,
         # replacing tactical_refresh()'s periodic burst (see
-        # _get_open_three_injection_samples docstring for why).
-        open_three_samples = _get_open_three_injection_samples(n_examples=120)
+        # get_open_three_injection_samples docstring for why).
+        open_three_samples = get_open_three_injection_samples(n_examples=120)
         if open_three_samples:
             replay_buffer.extend(open_three_samples)
 
         # Dedicated Hard-7 (general fork) quota, on top of
         # hard_samples' whole-pool draw above -- see
-        # _get_fork_mistake_samples docstring (measured: without this,
+        # get_fork_mistake_samples docstring (measured: without this,
         # Hard-7 got ~1-2 exposures/epoch by chance, essentially no real
         # training signal one full mining cycle after being added).
-        fork_mistake_samples = _get_fork_mistake_samples(n_positions=60)
+        fork_mistake_samples = get_fork_mistake_samples(n_positions=60)
         if fork_mistake_samples:
             replay_buffer.extend(fork_mistake_samples)
 
@@ -593,24 +541,12 @@ def train_mcts_alpha_zero(
             p_loss_unweighted = p_loss_per_sample.mean()
             v_loss_unweighted = v_loss_per_sample.sum() / v_mask.sum().clamp_min(1)
 
-            # Prioritized replay (Schaul et al. 2015), adapted to this
-            # project's full-buffer-pass-per-epoch training loop instead
-            # of a sampled minibatch replay: reweight each batch's loss
-            # by its own current policy/value-prediction "surprise"
-            # (computed fresh from this same forward pass, no stored/stale
-            # priority table needed) so samples the model is most surprised
-            # by contribute more gradient. b_weight is each sample's static,
-            # source-based weight (self-play's mover-won bonus, fixed
-            # vs-Det/vs-League weights -- see the raw_samples.append call
-            # sites) and is always applied; the surprise term on top of it
-            # only kicks in when use_prioritized_replay is True. NOTE: when
-            # prioritized, weights correlate with p_loss_per_sample/
-            # v_loss_per_sample by construction (weight = f(loss)), so the
-            # weighted mean is *not* comparable to the plain mean -- it's
-            # mechanically inflated (Cov(weight, loss) > 0). That's
-            # expected/intended (harder samples deliberately dominate the
-            # gradient), not a regression -- hence tracking the unweighted
-            # loss above separately for logging.
+            # Prioritized replay (Schaul et al. 2015), adapted to a full pass over the buffer each epoch: each
+            # sample's loss is reweighted by how surprised the model is by it (computed from this same forward
+            # pass, so no stale priority table). b_weight, the fixed per-source weight (self-play mover-won
+            # bonus, vs-Det / vs-League weights), always applies; the surprise term only with
+            # use_prioritized_replay. The weighted mean is then inflated by construction (weight grows with
+            # loss), so the unweighted loss above is what gets logged.
             policy_surprise = p_loss_per_sample.detach()
             value_surprise = v_loss_per_sample.detach().sqrt()
             if use_prioritized_replay:
@@ -672,7 +608,7 @@ def train_mcts_alpha_zero(
 
         # tactical_refresh() (the periodic burst supervised
         # re-injection that used to run here) was REMOVED -- see
-        # _get_open_three_injection_samples docstring for the measured
+        # get_open_three_injection_samples docstring for the measured
         # before/after evidence (immediate vs-Det win-rate drop, decays back
         # within ~2 epochs anyway). The open-three/diagnosed-position
         # curriculum is now injected continuously every epoch instead (see
@@ -702,7 +638,7 @@ def train_mcts_alpha_zero(
             # would add unnecessary cost for no extra signal at this pace.
             model.to(self_play_device, memory_format=preferred_memory_format(self_play_device))
             torch.set_num_threads(1)
-            _LAST_GATE_CANDIDATE["path"] = None
+            LAST_GATE_CANDIDATE["path"] = None
             gate_win, gate_draw, gate_loss, promoted = run_gating_check(
                 model, gen_model, self_play_device, eval_simulations, boosted_sims=boosted_sims,
                 boost_threshold=boost_threshold, boost_when_narrow=boost_when_narrow, c_puct=c_puct_exploit,
@@ -713,7 +649,7 @@ def train_mcts_alpha_zero(
             # later (e.g. Rapfi ladder). Only these disagreements are saved (~34 MB each).
             if not promoted and gate_win + 0.5 * gate_draw >= 0.55:
                 os.makedirs("model/gate_disagree", exist_ok=True)
-                _gd_path = f"model/gate_disagree/ep{epoch}{_SUFFIX}.pth"
+                _gd_path = f"model/gate_disagree/ep{epoch}{FILE_SUFFIX}.pth"
                 torch.save(model.state_dict(), _gd_path)
                 print(f"  [gate] old rule would have promoted ep{epoch}; weights kept at {_gd_path}", flush=True)
             print(f"  [refresh-timing] mining+relabel {_t_refresh1 - _t_refresh0:.1f}s | "
@@ -739,8 +675,8 @@ def train_mcts_alpha_zero(
                         cur_num_simulations, cur_boosted_sims = new_sims, new_boost
                         ramp_note = f" -> sim budget now {cur_num_simulations}/{cur_boosted_sims} (stagnation bump)"
                 save_sim_budget(cur_num_simulations, cur_boosted_sims, cur_stagnation_count, cur_lr_cooldown)
-            gate_note = (f" | Gate vs best ({len(_GATE_OPENING_SQUARES) * 2} games): Win {gate_win:.0%} / "
-                         f"Draw {gate_draw:.0%} / Loss {gate_loss:.0%} -> {'PROMOTED' if promoted else ('CANDIDATE (ladder check pending)' if _LAST_GATE_CANDIDATE['path'] else 'kept')}{ramp_note}")
+            gate_note = (f" | Gate vs best ({len(GATE_OPENING_SQUARES) * 2} games): Win {gate_win:.0%} / "
+                         f"Draw {gate_draw:.0%} / Loss {gate_loss:.0%} -> {'PROMOTED' if promoted else ('CANDIDATE (ladder check pending)' if LAST_GATE_CANDIDATE['path'] else 'kept')}{ramp_note}")
             model.train()
 
         _t_gate_done = time.monotonic()
@@ -769,8 +705,8 @@ def train_mcts_alpha_zero(
         # had already STARTED. A manual stop anytime between epoch N's report
         # line printing and epoch N+1 beginning left the state file at N-1,
         # so a restart silently redid the whole already-completed epoch N
-        # (confirmed live: two differently-valued "Epoch 240" report lines
-        # from today's stop/restart, status_check's reset-heuristic then
+        # (seen live: two differently-valued "Epoch 240" report lines after a
+        # stop/restart, status_check's reset-heuristic then
         # misread the non-monotonic epoch number as a full history reset).
         # Saving epoch+1 here, right after this epoch's own checkpoint write,
         # closes that window: a kill after this line correctly resumes at
@@ -793,7 +729,7 @@ def train_mcts_alpha_zero(
             # narrow/edge-heavy bias a fixed opening set had -- while a given
             # epoch's result stays exactly reproducible (re-evaluating the
             # same saved checkpoint later draws the same openings).
-            eval_opening_cells = list(_ALL_CELLS)
+            eval_opening_cells = list(ALL_CELLS)
             random.Random(epoch + 1).shuffle(eval_opening_cells)
             win_rate, draw_rate, loss_rate = evaluate_vs_deterministic(
                 model, self_play_device, num_games=eval_games, num_simulations=eval_simulations,
@@ -816,22 +752,12 @@ def train_mcts_alpha_zero(
               f"train {_t_train_done - _t_gen_done:.1f}s | refresh+gate {_t_gate_done - _t_train_done:.1f}s | "
               f"eval {_t_end - _t_gate_done:.1f}s | total {_t_end - _t_epoch_start:.1f}s", flush=True)
 
-    final_path = f"model/model_MCTS_ep{epoch + 1}_final{_SUFFIX}.pth"
+    final_path = f"model/model_MCTS_ep{epoch + 1}_final{FILE_SUFFIX}.pth"
     torch.save(model.state_dict(), checkpoint_path)
     torch.save(model.state_dict(), final_path)
     print(f"MCTS Model saved to {checkpoint_path} and {final_path}")
 
 
-def load_model(model, path="model/model_ep2.pth"):
-    if os.path.exists(path):
-        try:
-            model.load_state_dict(torch.load(path, map_location="cpu"))
-            model.eval()
-            print(f"Loaded model checkpoint from {path}")
-        except Exception as e:
-            print(f"Could not load checkpoint ({e}). Starting fresh.")
-    else:
-        print(f"No checkpoint found at {path}. Starting fresh.")
 # load_model(model, "model/model_MCTS_ep70.pth")
 
 if __name__ == '__main__':

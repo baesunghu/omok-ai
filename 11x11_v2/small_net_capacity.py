@@ -1,4 +1,4 @@
-"""Small-network capacity test (11x11_v2, 2026-10-21, user: "can a smaller net cover this board?").
+"""Small-network capacity test (11x11_v2): can a smaller net cover this board?.
 
 Distills the current big net (256 ch x 7 blocks, ~8.6M params) into smaller nets of the same
 architecture (GroupNorm + SE res blocks, same heads) and measures, on held-out positions:
